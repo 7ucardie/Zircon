@@ -51,9 +51,13 @@
     <Content Include="Zircon.ico" />
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="Vortice.Windows" Version="3.9.0" />
-    <PackageReference Include="Vortice.Multimedia" Version="3.9.0" />
-    <PackageReference Include="Vortice.D3DCompiler" Version="3.9.0" />
+    <PackageReference Include="Vortice.Direct3D9" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct2D1" Version="3.8.3" />
+    <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
+    <PackageReference Include="Vortice.DirectSound" Version="3.8.3" />
+    <PackageReference Include="Vortice.D3DCompiler" Version="3.8.3" />
+    <PackageReference Include="Vortice.Multimedia" Version="2.0.20-beta" />
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
     <PackageReference Include="NVorbis" Version="0.10.5" />

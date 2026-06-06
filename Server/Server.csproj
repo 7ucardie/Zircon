@@ -32,7 +32,7 @@
     <NoWarn>1701;1702;CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Vortice.Windows" Version="3.9.0" />
+    <PackageReference Include="Vortice.Direct3D9" Version="3.8.3" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\LibraryCore\LibraryCore.csproj" />
