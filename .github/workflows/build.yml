@@ -1,0 +1,48 @@
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    name: Build (${{ matrix.configuration }})
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore dependencies
+        # NU1701 - SharpDX ships .NET Framework assemblies; suppressed here
+        # because the migration to Vortice.Windows is tracked in phase/0-stabilize.
+        run: dotnet restore "Zircon Server.sln" -p:NoWarn=NU1701
+
+      - name: Build
+        run: >
+          dotnet build "Zircon Server.sln"
+          --no-restore
+          --configuration ${{ matrix.configuration }}
+          -p:NoWarn=NU1701
+
+      - name: Upload build artifacts
+        if: matrix.configuration == 'Release'
+        uses: actions/upload-artifact@v4
+        with:
+          name: zircon-release
+          path: |
+            Release/
+          if-no-files-found: warn
+          retention-days: 7

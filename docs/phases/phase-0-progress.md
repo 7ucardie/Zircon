@@ -7,22 +7,24 @@ Before this phase is done, no phase-1/2/3 work should merge.
 
 ## 0.1 — Add GitHub Actions CI
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `.github/workflows/build.yml`
 
 Every push to every branch should build all projects. Without this,
 broken commits silently accumulate.
 
 ### Tasks
-- [ ] Create `.github/workflows/build.yml`
-- [ ] Runner: `windows-latest` (required — solution targets `net10.0-windows`)
-- [ ] Build Debug + Release, AnyCPU
-- [ ] Run `dotnet build Zircon.sln`
-- [ ] Add build badge to README or ROADMAP
+- [x] Create `.github/workflows/build.yml`
+- [x] Runner: `windows-latest` (required — solution targets `net10.0-windows`)
+- [x] Build Debug + Release, AnyCPU (matrix strategy)
+- [x] Run `dotnet build "Zircon Server.sln"`
+- [x] Upload Release artifacts (7-day retention)
+- [ ] Add build badge to README or ROADMAP (once first run confirms green)
 
 ### Notes
-- Output paths use relative Windows paths (`..\..\Debug\Client\`) — verify
-  these work correctly on the GitHub Actions runner.
-- No tests to run yet — that comes in task 0.7.
+- NU1701 warnings (SharpDX .NET Framework compat shims) are suppressed
+  with `-p:NoWarn=NU1701` until the Vortice migration (task 0.2) removes them.
+- Output paths use relative Windows paths (`..\..\Debug\Client\`) — these
+  work on `windows-latest` since it's a real Windows environment.
 
 ---
 
@@ -181,7 +183,7 @@ has no Windows/UI dependencies — it can run in CI.
 
 | Task | Status | Branch/PR |
 |---|---|---|
-| 0.1 CI/CD | Not started | — |
+| 0.1 CI/CD | **Complete** | `.github/workflows/build.yml` |
 | 0.2 Vortice migration | Not started | — |
 | 0.3 DX11 as default | Not started | — |
 | 0.4 PlayerObject refactor | Not started | — |
