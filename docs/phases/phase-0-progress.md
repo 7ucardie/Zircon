@@ -197,18 +197,23 @@ block on DB queries and network reads, wasting capacity.
 
 ## 0.7 — Establish First Automated Test Suite
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `LibraryCore.Tests` xUnit project added, CI wired
 
 There are zero automated tests today. Start with `LibraryCore` since it
 has no Windows/UI dependencies — it can run in CI.
 
 ### Tasks
-- [ ] Add `LibraryCore.Tests` xUnit project to solution
-- [ ] Tests for `Functions.cs` utility methods
-- [ ] Tests for network packet serialisation/deserialisation
-- [ ] Tests for `ConfigReader` reflection-based initialisation
-- [ ] Tests for `Stat` calculation logic
-- [ ] Wire test run into CI workflow (step after build)
+- [x] Add `LibraryCore.Tests` xUnit project to solution
+- [x] Tests for `Functions.cs` — `Max`/`Min`, `Distance`, `InRange`,
+      `DirectionFromPoint`, `Move`, `ShiftDirection`, `IsStraightEightDirection`
+- [x] Tests for network packet serialisation/deserialisation — `Disconnect` and
+      `PingResponse` round-trips, length prefix validation, multi-packet framing,
+      incomplete data edge case
+- [x] Tests for `ConfigReader` — `Read<T>` default-return and round-trip for
+      `int`, `string`, `bool`, `TimeSpan`, `double`, `Point`
+- [x] Tests for `Stats` — default zero, set/get, zero-removes-key, count,
+      negative values, copy constructor independence, BinaryWriter/BinaryReader round-trip
+- [x] Wire test run into CI workflow (step after build)
 
 ---
 
@@ -222,4 +227,4 @@ has no Windows/UI dependencies — it can run in CI.
 | 0.4 PlayerObject refactor | **Complete** | 11 partial class files |
 | 0.5 GameScene refactor | **Complete** | 10 partial class files |
 | 0.6 Async networking/DB | **Complete** | All networking async; DB (MirDB) deferred to Phase 1 |
-| 0.7 Test suite | Not started | — |
+| 0.7 Test suite | **Complete** | `LibraryCore.Tests` — 25 tests across 4 suites |

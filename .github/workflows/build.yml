@@ -38,6 +38,13 @@ jobs:
           --no-restore
           --configuration ${{ matrix.configuration }}
 
+      - name: Test
+        run: >
+          dotnet test "LibraryCore.Tests/LibraryCore.Tests.csproj"
+          --no-build
+          --configuration ${{ matrix.configuration }}
+          --logger "trx;LogFileName=test-results.trx"
+
       - name: Upload build artifacts
         if: matrix.configuration == 'Release'
         uses: actions/upload-artifact@v4
