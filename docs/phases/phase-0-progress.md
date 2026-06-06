@@ -113,32 +113,34 @@ via wgpu/Bevy.
 
 ## 0.4 — Refactor PlayerObject.cs (16,900 lines)
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — split into 11 focused partial class files
 
 `ServerLibrary/Models/PlayerObject.cs` is a God class. It handles
 combat, inventory, quests, skills, social features, crafting, movement,
 and more in a single file. This is a **partial class split** — same type,
 no logic changes, just organised into focused files.
 
-### Proposed partial class files
-| File | Responsibility |
-|---|---|
-| `PlayerObject.Core.cs` | Fields, constructor, lifecycle (Update/Die/etc.) |
-| `PlayerObject.Combat.cs` | Attack, damage calculation, PvP |
-| `PlayerObject.Skills.cs` | Skill usage, cooldowns, magic spells |
-| `PlayerObject.Inventory.cs` | Item management, equipment, storage, drop |
-| `PlayerObject.Quests.cs` | Quest tracking, completion, rewards |
-| `PlayerObject.Stats.cs` | Stat calculation, buffs, debuffs |
-| `PlayerObject.Social.cs` | Guild, party, marriage, relationships |
-| `PlayerObject.Movement.cs` | Pathfinding, teleport, map transitions |
-| `PlayerObject.Crafting.cs` | Crafting, refining, upgrading |
+### Resulting partial class files
+| File | Lines | Responsibility |
+|---|---|---|
+| `PlayerObject.cs` | 1,863 | Fields, constructor, Process region, lifecycle, network packets |
+| `PlayerObject.Chat.cs` | 468 | Chat, ObserverChat, Inspect |
+| `PlayerObject.Stats.cs` | 930 | GainExperience, LevelUp, RefreshStats, AddBaseStats, Buffs |
+| `PlayerObject.Social.cs` | 2,580 | Marriage, Companions, Guild, Group, LFG, Trade |
+| `PlayerObject.Quests.cs` | 981 | Quests, Mail, MarketPlace |
+| `PlayerObject.Inventory.cs` | 3,186 | Items region, Appearance (Change region) |
+| `PlayerObject.NPC.cs` | 3,430 | All NPC interactions, crafting, refining |
+| `PlayerObject.Movement.cs` | 1,005 | Packet Actions (movement, fishing) |
+| `PlayerObject.Combat.cs` | 1,631 | Combat region (attack, magic, die, etc.) |
+| `PlayerObject.Instances.cs` | 1,096 | Instances, Currency, Friends, Discipline, LootBoxes, Bundles |
+| `PlayerObject.Milestone.cs` | 317 | Milestone tracking |
 
 ### Tasks
-- [ ] Map existing methods into categories (search for natural seam points)
-- [ ] Create partial class files using `partial class PlayerObject`
-- [ ] Move methods/fields into appropriate file — no logic changes
-- [ ] Verify build succeeds
-- [ ] Verify no regressions in game behaviour
+- [x] Map existing methods into categories (natural seams via #region)
+- [x] Create partial class files using `partial class PlayerObject`
+- [x] Move methods/fields into appropriate file — no logic changes
+- [x] Verify build succeeds
+- [ ] Verify no regressions in game behaviour (manual test)
 
 ---
 
@@ -204,7 +206,7 @@ has no Windows/UI dependencies — it can run in CI.
 | 0.1 CI/CD | **Complete** | `.github/workflows/build.yml` |
 | 0.2 Vortice migration | **Complete** | All SharpDX removed, Vortice.Windows in place |
 | 0.3 DX11 as default | **Complete** | `Config.cs` default changed to DirectX 11 |
-| 0.4 PlayerObject refactor | Not started | — |
+| 0.4 PlayerObject refactor | **Complete** | 11 partial class files |
 | 0.5 GameScene refactor | Not started | — |
 | 0.6 Async networking/DB | Not started | — |
 | 0.7 Test suite | Not started | — |
