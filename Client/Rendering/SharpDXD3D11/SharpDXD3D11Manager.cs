@@ -186,11 +186,9 @@ namespace Client.Rendering.SharpDXD3D11
                 D2DFactory.CreateDevice(dxgiDevice, out ID2D1Device d2dDevice).CheckError();
                 D2DDevice = d2dDevice;
                 D2DDevice.CreateDeviceContext(DeviceContextOptions.None, out ID2D1DeviceContext d2dContext).CheckError();
-                D2DContext = d2dContext
-                {
-                    UnitMode = UnitMode.Pixels,
-                    PrimitiveBlend = PrimitiveBlend.SourceOver
-                };
+                D2DContext = d2dContext;
+                D2DContext.UnitMode = UnitMode.Pixels;
+                D2DContext.PrimitiveBlend = PrimitiveBlend.SourceOver;
             }
 
             SpriteRenderer = new SharpDXD3D11SpriteRenderer(Device);

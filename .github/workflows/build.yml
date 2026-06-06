@@ -7,8 +7,8 @@ on:
     branches: [master]
 
 jobs:
-  build:
-    name: Build (${{ matrix.configuration }})
+  build-windows:
+    name: Build Windows (${{ matrix.configuration }})
     runs-on: windows-latest
 
     strategy:
@@ -56,3 +56,42 @@ jobs:
             Release/
           if-no-files-found: warn
           retention-days: 7
+
+  build-linux:
+    name: Build Linux (${{ matrix.configuration }})
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        configuration: [Debug, Release]
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Restore cross-platform projects
+        run: |
+          dotnet restore "LibraryCore/LibraryCore.csproj"
+          dotnet restore "ServerLibrary/ServerLibrary.csproj"
+          dotnet restore "ServerCore/ServerCore.csproj"
+          dotnet restore "LibraryCore.Tests/LibraryCore.Tests.csproj"
+
+      - name: Build cross-platform projects
+        run: |
+          dotnet build "LibraryCore/LibraryCore.csproj" --no-restore --configuration ${{ matrix.configuration }}
+          dotnet build "ServerLibrary/ServerLibrary.csproj" --no-restore --configuration ${{ matrix.configuration }}
+          dotnet build "ServerCore/ServerCore.csproj" --no-restore --configuration ${{ matrix.configuration }}
+          dotnet build "LibraryCore.Tests/LibraryCore.Tests.csproj" --no-restore --configuration ${{ matrix.configuration }}
+
+      - name: Test
+        run: >
+          dotnet test "LibraryCore.Tests/LibraryCore.Tests.csproj"
+          --no-build
+          --configuration ${{ matrix.configuration }}
+          --logger "trx;LogFileName=test-results.trx"
