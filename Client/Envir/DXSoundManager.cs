@@ -1,6 +1,6 @@
 ﻿using Client.Rendering;
 using Library;
-using SharpDX.DirectSound;
+using Vortice.DirectSound;
 using System;
 using System.Collections.Generic;
 

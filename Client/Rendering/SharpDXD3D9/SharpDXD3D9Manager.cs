@@ -1,7 +1,7 @@
 ﻿using Client.Controls;
 using Client.Envir;
-using SharpDX;
-using SharpDX.Direct3D9;
+using Vortice.Direct3D9;
+using Vortice.Mathematics;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -11,8 +11,8 @@ using System.Drawing.Text;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using Blend = SharpDX.Direct3D9.Blend;
-using DxColor = SharpDX.Color;
+using Blend = Vortice.Direct3D9.Blend;
+using DxColor = Vortice.Mathematics.ColorBGRA;
 using GdiColor = System.Drawing.Color;
 using GdiPoint = System.Drawing.Point;
 using GdiRectangle = System.Drawing.Rectangle;
@@ -29,11 +29,11 @@ namespace Client.Rendering.SharpDXD3D9
         public static List<Size> ValidDisplays = new List<Size>();
         private static PresentParameters _parameters;
         public static PresentParameters Parameters => _parameters;
-        private static Direct3D _direct3D;
+        private static IDirect3D9 _direct3D;
         private static int _adapterIndex;
         private static readonly DisplayModeManager _displayMode = new DisplayModeManager();
         private static System.Windows.Forms.Timer _postTogglePlacementTimer;
-        public static Device Device { get; private set; }
+        public static Device9 Device { get; private set; }
         public static Sprite Sprite { get; private set; }
         public static Line Line { get; private set; }
         public static SharpDXD3D9SpriteRenderer SpriteRenderer { get; private set; }
@@ -69,7 +69,7 @@ namespace Client.Rendering.SharpDXD3D9
                     if (PalleteData != null)
                     {
                         _ColourPallete = new Texture(Device, 200, 149, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
-                        DataRectangle rect = _ColourPallete.LockRectangle(0, LockFlags.Discard);
+                        LockedRectangle rect = _ColourPallete.LockRectangle(0, LockFlags.Discard);
                         Marshal.Copy(PalleteData, 0, rect.DataPointer, PalleteData.Length);
                         _ColourPallete.UnlockRectangle(0);
                     }
@@ -133,7 +133,7 @@ namespace Client.Rendering.SharpDXD3D9
 
             ApplyWindowBounds();
 
-            _direct3D = new Direct3D();
+            _direct3D = D3D9.Direct3DCreate9();
 
             int adapterIndex = GetSelectedAdapterIndex();
             _adapterIndex = adapterIndex;
@@ -155,16 +155,13 @@ namespace Client.Rendering.SharpDXD3D9
                 _parameters.BackBufferWidth = backBufferSize.Width;
                 _parameters.BackBufferHeight = backBufferSize.Height;
 
-                // Use the determined adapter index when creating the Device.
-                //Debug.WriteLine($"Attempting to create device on Adapter Index: {adapterIndex}");
-                Device = new Device(_direct3D, adapterIndex, DeviceType.Hardware, CEnvir.Target.Handle, CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve, _parameters);
+                Device = D3D9.CreateDevice(_direct3D, adapterIndex, DeviceType.Hardware, CEnvir.Target.Handle, CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve, _parameters);
 
                 if (Config.FullScreen)
                     ApplyWindowBounds();
 
                 // The rest of your code remains unchanged
-                AdapterInformation adapterInfo = _direct3D.Adapters[adapterIndex];
-                var modes = adapterInfo.GetDisplayModes(Format.X8R8G8B8);
+                var modes = _direct3D.EnumAdapterModes(adapterIndex, Format.X8R8G8B8);
 
                 foreach (DisplayMode mode in modes)
                 {
@@ -193,7 +190,7 @@ namespace Client.Rendering.SharpDXD3D9
                     }
                 }
             }
-            catch (SharpDXException ex)
+            catch (Exception ex) when (ex.HResult < 0)
             {
                 CEnvir.SaveException(ex);
                 throw;
@@ -216,7 +213,7 @@ namespace Client.Rendering.SharpDXD3D9
 
             PoisonTexture = new Texture(Device, 6, 6, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
 
-            DataRectangle rect = PoisonTexture.LockRectangle(0, LockFlags.Discard);
+            LockedRectangle rect = PoisonTexture.LockRectangle(0, LockFlags.Discard);
 
             int* data = (int*)rect.DataPointer;
 
@@ -238,7 +235,7 @@ namespace Client.Rendering.SharpDXD3D9
 
             LightData = LightGenerator.CreateLightData(LightWidth, LightHeight);
 
-            DataRectangle rect = light.LockRectangle(0, LockFlags.Discard);
+            LockedRectangle rect = light.LockRectangle(0, LockFlags.Discard);
             Marshal.Copy(LightData, 0, rect.DataPointer, LightData.Length);
             light.UnlockRectangle(0);
 
@@ -611,18 +608,18 @@ namespace Client.Rendering.SharpDXD3D9
             {
                 Result result = Device.TestCooperativeLevel();
 
-                if (result.Code == ResultCode.DeviceLost.Code)
+                if (result == Result.DeviceLost)
                 {
                     return;
                 }
 
-                if (result.Code == ResultCode.DeviceNotReset.Code)
+                if (result == Result.DeviceNotReset)
                 {
                     ResetDevice();
                     return;
                 }
 
-                if (result.Code != ResultCode.Success.Code)
+                if (result.Failure)
                 {
                     return;
                 }
@@ -706,7 +703,7 @@ namespace Client.Rendering.SharpDXD3D9
                 return;
             }
 
-            Device.Clear(ClearFlags.Target, DxColor.Black, 0, 0);
+            Device.Clear(ClearFlags.Target, new DxColor(0, 0, 0, 255), 0, 0);
             Device.Present();
 
             CEnvir.Target.ClientSize = size;
@@ -893,20 +890,22 @@ namespace Client.Rendering.SharpDXD3D9
 
             Screen selectedScreen = RenderingPipelineManager.GetSelectedScreen();
 
-            for (int i = 0; i < _direct3D.Adapters.Count; i++)
+            int adapterCount = _direct3D.GetAdapterCount();
+            for (int i = 0; i < adapterCount; i++)
             {
-                AdapterInformation adapter = _direct3D.Adapters[i];
-                if (string.Equals(adapter.Details.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
+                AdapterIdentifier identifier = _direct3D.GetAdapterIdentifier(i);
+                if (string.Equals(identifier.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
                     return i;
 
-                Screen adapterScreen = Screen.FromHandle(adapter.Monitor);
+                nint monitorHandle = _direct3D.GetAdapterMonitor(i);
+                Screen adapterScreen = Screen.FromHandle(monitorHandle);
 
                 if (string.Equals(adapterScreen.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
                     return i;
             }
 
             int fallbackIndex = RenderingPipelineManager.GetSelectedMonitorIndex();
-            if (fallbackIndex < 0 || fallbackIndex >= _direct3D.Adapters.Count)
+            if (fallbackIndex < 0 || fallbackIndex >= adapterCount)
                 fallbackIndex = 0;
 
             return fallbackIndex;

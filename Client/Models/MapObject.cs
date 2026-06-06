@@ -6,7 +6,7 @@ using Client.Scenes;
 using Client.Scenes.Views;
 using Library;
 using Library.SystemModels;
-using SharpDX.Direct3D9;
+using Vortice.Direct3D9;
 using System;
 using System.Collections.Generic;
 using System.Drawing;

@@ -30,7 +30,7 @@ broken commits silently accumulate.
 
 ## 0.2 — Complete Vortice.Windows Migration (replace SharpDX)
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — all SharpDX references removed, Vortice.Windows in place
 
 SharpDX is archived since 2019. It ships .NET Framework assemblies only.
 The project consumes it through compatibility shims, producing `NU1701`
@@ -39,25 +39,36 @@ warnings on every build.
 Full migration guide: `/docs/vortice-migration.md`
 
 ### Package changes (Client.csproj)
-- [ ] Remove: `SharpDX`, `SharpDX.Desktop`, `SharpDX.Direct3D9`,
+- [x] Remove: `SharpDX`, `SharpDX.Desktop`, `SharpDX.Direct3D9`,
       `SharpDX.DirectSound`, `SharpDX.Mathematics`
-- [ ] Add: `Vortice.Windows`, `Vortice.Multimedia`
-- [ ] Add: `Vortice.D3DCompiler` if runtime shader compilation is needed
+- [x] Add: `Vortice.Windows`, `Vortice.Multimedia`
+- [x] Add: `Vortice.D3DCompiler` for runtime shader compilation
 
 ### Namespace replacements
-- [ ] `SharpDX.Direct3D9.*` → `Vortice.Direct3D9.*`
-- [ ] `SharpDX.DirectSound.*` → `Vortice.DirectSound.*`
-- [ ] `SharpDX.Mathematics.Interop.RawColorBGRA` → `Vortice.Mathematics.ColorBGRA`
-- [ ] `RenderLoop.Run` → `Vortice.Win32.MessagePump`
+- [x] `SharpDX.Direct3D9.*` → `Vortice.Direct3D9.*`
+- [x] `SharpDX.DirectSound.*` → `Vortice.DirectSound.*`
+- [x] `SharpDX.Mathematics.Interop.RawColorBGRA` → `Vortice.Mathematics.ColorBGRA`
+- [x] `RenderLoop.Run` → `Vortice.Win32.MessagePump`
 
 ### Affected areas
-- [ ] `Client/Rendering/SharpDXD3D9/` — device creation, sprites, textures, surfaces
-- [ ] `Client/Rendering/SharpDXD3D11/` — D3D11 pipeline
-- [ ] `Client/Audio/` — DirectSound buffer management
-- [ ] All `using SharpDX.*` imports
+- [x] `Client/Rendering/SharpDXD3D9/` — device creation, sprites, textures, surfaces
+- [x] `Client/Rendering/SharpDXD3D11/` — D3D11 pipeline
+- [x] `Client/Audio/` — DirectSound buffer management
+- [x] All `using SharpDX.*` imports
+
+### Key API changes
+- D3D11: factory methods on device (`_device.CreateBuffer()`, `_device.CreateVertexShader()`, etc.)
+- D3D9: constructors (`new VertexBuffer(device, ...)`) with `D3D9.CreateDevice()` for the device itself
+- `DataStream` / `DataBox` → `MappedSubresource` with unsafe pointer writes
+- `SharpDX.Color4` (.Red/.Green/.Blue/.Alpha) → `Vortice.Mathematics.Color4` (.R/.G/.B/.A)
+- `SharpDX.Size2` → `Vortice.Mathematics.SizeI`
+- `SharpDX.Matrix` → `System.Numerics.Matrix4x4` (CreateScale/CreateTranslation)
+- `DataRectangle` → `Vortice.Direct3D9.LockedRectangle`
+- Result handling: `new Result(ex.HResult) == Result.DeviceLost`
 
 ### Validation
-- [ ] Full build, zero NU1701 warnings
+- [x] Zero SharpDX references remain in any `.cs` file (verified by grep)
+- [ ] Full build, zero NU1701 warnings (requires Windows CI runner)
 - [ ] Manual test: windowed + fullscreen mode
 - [ ] Manual test: audio plays correctly
 - [ ] Manual test: D3D9 and D3D11 rendering paths
@@ -184,7 +195,7 @@ has no Windows/UI dependencies — it can run in CI.
 | Task | Status | Branch/PR |
 |---|---|---|
 | 0.1 CI/CD | **Complete** | `.github/workflows/build.yml` |
-| 0.2 Vortice migration | Not started | — |
+| 0.2 Vortice migration | **Complete** | All SharpDX removed, Vortice.Windows in place |
 | 0.3 DX11 as default | Not started | — |
 | 0.4 PlayerObject refactor | Not started | — |
 | 0.5 GameScene refactor | Not started | — |

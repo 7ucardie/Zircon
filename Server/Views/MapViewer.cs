@@ -3,7 +3,8 @@ using Library.SystemModels;
 using Server.Envir;
 using Server.Extensions;
 using Server.Views.DirectX;
-using SharpDX.Direct3D9;
+using Vortice.Direct3D9;
+using Vortice.Mathematics;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -14,14 +15,13 @@ using System.Drawing.Text;
 using System.IO;
 using System.Linq;
 using System.Numerics;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
-using Blend = SharpDX.Direct3D9.Blend;
-using Color4 = SharpDX.Color4;
-using D3DResultCode = SharpDX.Direct3D9.ResultCode;
-using DataRectangle = SharpDX.DataRectangle;
-using Matrix = SharpDX.Matrix;
-using Result = SharpDX.Result;
+using Blend = Vortice.Direct3D9.Blend;
+using Color4 = Vortice.Mathematics.Color4;
+using DataRectangle = Vortice.Direct3D9.LockedRectangle;
+using Matrix = System.Numerics.Matrix4x4;
 
 namespace Server.Views
 {
@@ -218,9 +218,9 @@ namespace Server.Views
                 Manager.Device.Present();
 
             }
-            catch (SharpDX.SharpDXException ex)
+            catch (Exception ex) when (ex.HResult < 0)
             {
-                if (ex.ResultCode == D3DResultCode.DeviceLost)
+                if (new Result(ex.HResult) == Result.DeviceLost)
                 {
                     Manager.DeviceLost = true;
                 }
@@ -396,7 +396,7 @@ namespace Server.Views.DirectX
         public Dictionary<LibraryFile, MirLibrary> LibraryList = new Dictionary<LibraryFile, MirLibrary>();
 
         public PresentParameters Parameters { get; private set; }
-        public Device Device { get; private set; }
+        public Device9 Device { get; private set; }
         public Sprite Sprite { get; private set; }
         public Line Line { get; private set; }
 
@@ -445,9 +445,9 @@ namespace Server.Views.DirectX
                 PresentFlags = PresentFlags.LockableBackBuffer,
             };
 
-            Direct3D direct3D = new Direct3D();
+            IDirect3D9 direct3D = D3D9.Direct3DCreate9();
 
-            Device = new Device(direct3D, 0, DeviceType.Hardware, Target.Handle, CreateFlags.HardwareVertexProcessing, Parameters);
+            Device = D3D9.CreateDevice(direct3D, 0, DeviceType.Hardware, Target.Handle, CreateFlags.HardwareVertexProcessing, Parameters);
 
             LoadTextures();
         }
@@ -623,15 +623,15 @@ namespace Server.Views.DirectX
             {
                 Result result = Device.TestCooperativeLevel();
 
-                if (result.Code == D3DResultCode.DeviceLost.Code) return;
+                if (result == Result.DeviceLost) return;
 
-                if (result.Code == D3DResultCode.DeviceNotReset.Code)
+                if (result == Result.DeviceNotReset)
                 {
                     ResetDevice();
                     return;
                 }
 
-                if (result.Code != D3DResultCode.Success.Code) return;
+                if (result.Failure) return;
 
                 DeviceLost = false;
             }
@@ -942,10 +942,10 @@ namespace Server.Views.DirectX
                             case 177:
                             case 176:
                             case 49:
-                                Matrix m = Matrix.Scaling(1F, 0.5f, 0);
+                                Matrix m = Matrix.CreateScale(1F, 0.5f, 1f);
 
                                 m.M21 = -0.50F;
-                                Manager.Sprite.Transform = m * Matrix.Translation(x + image.Height / 2, y, 0);
+                                Manager.Sprite.Transform = m * Matrix.CreateTranslation(x + image.Height / 2, y, 0);
 
                                 Manager.Device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.None);
                                 if (oldOpacity != 0.5F) Manager.SetOpacity(0.5F);
@@ -1038,10 +1038,10 @@ namespace Server.Views.DirectX
                             case 177:
                             case 176:
                             case 49:
-                                Matrix m = Matrix.Scaling(1F, 0.5f, 0);
+                                Matrix m = Matrix.CreateScale(1F, 0.5f, 1f);
 
                                 m.M21 = -0.50F;
-                                Manager.Sprite.Transform = m * Matrix.Translation(x + image.Height / 2, y, 0);
+                                Manager.Sprite.Transform = m * Matrix.CreateTranslation(x + image.Height / 2, y, 0);
 
                                 Manager.Device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.None);
                                 if (oldOpacity != 0.5F) Manager.SetOpacity(0.5F);
@@ -1396,7 +1396,7 @@ namespace Server.Views.DirectX
             {
                 reader.BaseStream.Seek(Position, SeekOrigin.Begin);
                 byte[] buffer = reader.ReadBytes(ImageDataSize);
-                SharpDX.Utilities.Write(rect.DataPointer, buffer, 0, buffer.Length);
+                Marshal.Copy(buffer, 0, rect.DataPointer, buffer.Length);
             }
 
             Image.UnlockRectangle(0);
@@ -1425,7 +1425,7 @@ namespace Server.Views.DirectX
             {
                 reader.BaseStream.Seek(Position + ImageDataSize, SeekOrigin.Begin);
                 byte[] buffer = reader.ReadBytes(ShadowDataSize);
-                SharpDX.Utilities.Write(rect.DataPointer, buffer, 0, buffer.Length);
+                Marshal.Copy(buffer, 0, rect.DataPointer, buffer.Length);
             }
 
             Shadow.UnlockRectangle(0);
@@ -1452,7 +1452,7 @@ namespace Server.Views.DirectX
             {
                 reader.BaseStream.Seek(Position + ImageDataSize + ShadowDataSize, SeekOrigin.Begin);
                 byte[] buffer = reader.ReadBytes(OverlayDataSize);
-                SharpDX.Utilities.Write(rect.DataPointer, buffer, 0, buffer.Length);
+                Marshal.Copy(buffer, 0, rect.DataPointer, buffer.Length);
             }
 
             Overlay.UnlockRectangle(0);
@@ -1914,7 +1914,7 @@ namespace Server.Views.DirectX
             int minY = Math.Max(0, StartY - 1);
             int maxY = Math.Min(Height - 1, StartY + (int)Math.Ceiling(Size.Height / CellHeight));
 
-            Matrix scale = Matrix.Scaling(Zoom, Zoom, 1);
+            Matrix scale = Matrix.CreateScale(Zoom, Zoom, 1f);
 
             for (int y = minY; y <= maxY; y++)
             {
@@ -1937,7 +1937,7 @@ namespace Server.Views.DirectX
 
                     if (!Manager.LibraryList.TryGetValue(file, out library)) continue;
 
-                    Manager.Sprite.Transform = Matrix.Multiply(Matrix.Translation(drawX, drawY, 0), scale);
+                    Manager.Sprite.Transform = Matrix.CreateTranslation(drawX, drawY, 0) * scale;
 
                     library.Draw(tile.BackImage, 0, 0, Color.White, false, 1F, ImageType.Image);
                 }
@@ -1967,7 +1967,7 @@ namespace Server.Views.DirectX
 
                         if ((s.Width == CellWidth && s.Height == CellHeight) || (s.Width == CellWidth * 2 && s.Height == CellHeight * 2))
                         {
-                            Manager.Sprite.Transform = Matrix.Multiply(Matrix.Translation(drawX, drawY - BaseCellHeight, 0), scale);
+                            Manager.Sprite.Transform = Matrix.CreateTranslation(drawX, drawY - BaseCellHeight, 0) * scale;
 
                             library.Draw(index, 0, 0, Color.White, false, 1F, ImageType.Image);
                         }
@@ -1985,7 +1985,7 @@ namespace Server.Views.DirectX
 
                         if ((s.Width == CellWidth && s.Height == CellHeight) || (s.Width == CellWidth * 2 && s.Height == CellHeight * 2))
                         {
-                            Manager.Sprite.Transform = Matrix.Multiply(Matrix.Translation(drawX, drawY - BaseCellHeight, 0), scale);
+                            Manager.Sprite.Transform = Matrix.CreateTranslation(drawX, drawY - BaseCellHeight, 0) * scale;
 
                             library.Draw(index, 0, 0, Color.White, false, 1F, ImageType.Image);
                         }
@@ -2022,7 +2022,7 @@ namespace Server.Views.DirectX
 
                         if ((s.Width != CellWidth || s.Height != CellHeight) && (s.Width != CellWidth * 2 || s.Height != CellHeight * 2))
                         {
-                            Manager.Sprite.Transform = Matrix.Multiply(Matrix.Translation(drawX, drawY - s.Height, 0), scale);
+                            Manager.Sprite.Transform = Matrix.CreateTranslation(drawX, drawY - s.Height, 0) * scale;
 
                             if (!blend)
                                 library.Draw(index, 0, 0, Color.White, false, 1F, ImageType.Image);
@@ -2048,7 +2048,7 @@ namespace Server.Views.DirectX
 
                         if ((s.Width != CellWidth || s.Height != CellHeight) && (s.Width != CellWidth * 2 || s.Height != CellHeight * 2))
                         {
-                            Manager.Sprite.Transform = Matrix.Multiply(Matrix.Translation(drawX, drawY - s.Height, 0), scale);
+                            Manager.Sprite.Transform = Matrix.CreateTranslation(drawX, drawY - s.Height, 0) * scale;
 
                             if (!blend)
                                 library.Draw(index, 0, 0, Color.White, false, 1F, ImageType.Image);
@@ -2081,7 +2081,7 @@ namespace Server.Views.DirectX
                     {
                         if (!DrawAttributes) continue;
 
-                        Manager.Sprite.Transform = Matrix.Multiply(Matrix.Translation(drawX, drawY, 0), scale);
+                        Manager.Sprite.Transform = Matrix.CreateTranslation(drawX, drawY, 0) * scale;
 
                         //markLibrary.Draw(59, 0, 0, Color.White, false, 1F, ImageType.Image);
                         Manager.Sprite.Draw(Manager.AttributeTexture, Vector3.Zero, Vector3.Zero, Color.Red);
@@ -2091,7 +2091,7 @@ namespace Server.Views.DirectX
                         if (!DrawSelection) continue;
                         if (!Selection.Contains(new Point(x, y))) continue;
 
-                        Manager.Sprite.Transform = Matrix.Multiply(Matrix.Translation(drawX, drawY, 0), scale);
+                        Manager.Sprite.Transform = Matrix.CreateTranslation(drawX, drawY, 0) * scale;
 
                         Manager.Sprite.Draw(Manager.AttributeTexture, Vector3.Zero, Vector3.Zero, Color.Yellow);
 

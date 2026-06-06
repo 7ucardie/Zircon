@@ -1,27 +1,28 @@
 using Client.Controls;
 using Client.Envir;
 using Client.Extensions;
-using SharpDX;
-using SharpDX.Direct3D9;
+using Vortice.Direct3D9;
+using Vortice.Mathematics;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using DrawingFont = System.Drawing.Font;
-using DxColor = SharpDX.ColorBGRA;
-using DxMatrix = SharpDX.Matrix;
-using DxVector2 = SharpDX.Vector2;
+using DxColor = Vortice.Mathematics.ColorBGRA;
+using DxMatrix = System.Numerics.Matrix4x4;
+using DxVector2 = System.Numerics.Vector2;
 using GdiColor = System.Drawing.Color;
 using GdiPoint = System.Drawing.Point;
 using GdiRectangle = System.Drawing.Rectangle;
 using GdiRectangleF = System.Drawing.RectangleF;
 using NumericsMatrix3x2 = System.Numerics.Matrix3x2;
 using NumericsVector3 = System.Numerics.Vector3;
-using RawColorBGRA = SharpDX.Mathematics.Interop.RawColorBGRA;
-using RawRectangle = SharpDX.Mathematics.Interop.RawRectangle;
-using RawVector3 = SharpDX.Mathematics.Interop.RawVector3;
+using RawColorBGRA = Vortice.Mathematics.ColorBGRA;
+using RawRectangle = Vortice.Mathematics.RawRect;
+using RawVector3 = System.Numerics.Vector3;
 
 namespace Client.Rendering.SharpDXD3D9
 {
@@ -122,7 +123,7 @@ namespace Client.Rendering.SharpDXD3D9
 
                 return true;
             }
-            catch (SharpDXException ex)
+            catch (Exception ex)
             {
                 SharpDXD3D9Manager.DeviceLost = true;
                 CEnvir.SaveException(ex);
@@ -735,7 +736,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         private static ClearFlags ConvertClearFlags(RenderClearFlags flags)
         {
-            ClearFlags result = 0;
+            ClearFlags result = ClearFlags.None;
 
             if ((flags & RenderClearFlags.Target) != 0)
                 result |= ClearFlags.Target;

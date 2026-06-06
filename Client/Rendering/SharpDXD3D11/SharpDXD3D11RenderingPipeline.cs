@@ -1,15 +1,20 @@
 using Client.Controls;
 using Client.Envir;
-using SharpDX.Direct2D1;
-using SharpDX.Direct2D1.Effects;
-using SharpDX.Direct3D11;
-using SharpDX.Mathematics.Interop;
+using Vortice.Direct2D;
+using Vortice.Direct2D.Effects;
+using Vortice.Direct3D11;
+using Vortice.Mathematics;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using ColorMatrix = Vortice.Direct2D.Effects.ColorMatrix;
+using UnPremultiply = Vortice.Direct2D.Effects.UnPremultiply;
+using Premultiply = Vortice.Direct2D.Effects.Premultiply;
+using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
+using ShaderResourceView = Vortice.Direct3D11.ID3D11ShaderResourceView;
 
 namespace Client.Rendering.SharpDXD3D11
 {
@@ -96,7 +101,7 @@ namespace Client.Rendering.SharpDXD3D11
                 SharpDXD3D11Manager.EndDraw();
                 return true;
             }
-            catch (SharpDX.SharpDXException ex)
+            catch (Exception ex) when (ex.HResult < 0)
             {
                 CEnvir.SaveException(ex);
             }
@@ -719,7 +724,7 @@ namespace Client.Rendering.SharpDXD3D11
 
         public TextureFilterMode GetTextureFilter()
         {
-            return SharpDXD3D11Manager.InterpolationMode == SharpDX.Direct2D1.BitmapInterpolationMode.Linear ? TextureFilterMode.Linear : TextureFilterMode.Point;
+            return SharpDXD3D11Manager.InterpolationMode == BitmapInterpolationMode.Linear ? TextureFilterMode.Linear : TextureFilterMode.Point;
         }
 
         public void SetTextureFilter(TextureFilterMode mode)
@@ -807,7 +812,7 @@ namespace Client.Rendering.SharpDXD3D11
                     ctx.Transform = Multiply(originalTransform, local);
                 }
 
-                SharpDX.Direct2D1.Image effectOutput = _tintEffect.Output;
+                ID2D1Image effectOutput = _tintEffect.Output;
 
                 ctx.DrawImage(effectOutput, null, source, interpolation, compositeMode);
 
@@ -880,7 +885,7 @@ namespace Client.Rendering.SharpDXD3D11
                 _lightTintEffect.SetEnumValue((int)ColorMatrixProperties.AlphaMode, ColorMatrixAlphaMode.Straight);
 
                 _premultiplyEffect.SetInputEffect(0, _lightTintEffect, true);
-                SharpDX.Direct2D1.Image output = _premultiplyEffect.Output;
+                ID2D1Image output = _premultiplyEffect.Output;
 
                 ctx.PrimitiveBlend = PrimitiveBlend.Add;
                 ctx.DrawImage(output, null, source, interpolation, CompositeMode.SourceOver);
@@ -896,13 +901,13 @@ namespace Client.Rendering.SharpDXD3D11
             }
         }
 
-        private void EnsureTintEffect(SharpDX.Direct2D1.DeviceContext ctx)
+        private void EnsureTintEffect(ID2D1DeviceContext ctx)
         {
             if (_tintEffect == null)
                 _tintEffect = new ColorMatrix(ctx);
         }
 
-        private void EnsureLightEffects(SharpDX.Direct2D1.DeviceContext ctx)
+        private void EnsureLightEffects(ID2D1DeviceContext ctx)
         {
             if (_unpremultiplyEffect == null)
                 _unpremultiplyEffect = new UnPremultiply(ctx);
@@ -936,7 +941,7 @@ namespace Client.Rendering.SharpDXD3D11
             };
         }
 
-        private static RawMatrix3x2 CreateImageTransform(RawRectangleF destRect, RawRectangleF? sourceRect, SharpDX.Size2 bitmapSize)
+        private static RawMatrix3x2 CreateImageTransform(RawRectangleF destRect, RawRectangleF? sourceRect, SizeI bitmapSize)
         {
             float sourceLeft = 0f;
             float sourceTop = 0f;

@@ -1,11 +1,11 @@
 ﻿using Client.Rendering;
-using SharpDX.DirectSound;
+using Vortice.DirectSound;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using NAudioWave = NAudio.Wave;
 using NAudioVorbis = NAudio.Vorbis;
-using SharpDXMultimedia = SharpDX.Multimedia;
+using VorticeMultimedia = Vortice.Multimedia;
 
 namespace Client.Envir
 {
@@ -15,7 +15,7 @@ namespace Client.Envir
 
         public List<SecondarySoundBuffer> BufferList = new List<SecondarySoundBuffer>();
 
-        private SharpDXMultimedia.WaveFormat Format;
+        private VorticeMultimedia.WaveFormat Format;
         private byte[] RawData;
 
 
@@ -233,12 +233,12 @@ namespace Client.Envir
             return playCursor;
         }
 
-        private static SharpDXMultimedia.WaveFormat ConvertWaveFormat(global::NAudio.Wave.WaveFormat sourceFormat)
+        private static VorticeMultimedia.WaveFormat ConvertWaveFormat(global::NAudio.Wave.WaveFormat sourceFormat)
         {
-            if (!Enum.TryParse(sourceFormat.Encoding.ToString(), out SharpDXMultimedia.WaveFormatEncoding encoding))
-                encoding = SharpDXMultimedia.WaveFormatEncoding.Pcm;
+            if (!Enum.TryParse(sourceFormat.Encoding.ToString(), out VorticeMultimedia.WaveFormatEncoding encoding))
+                encoding = VorticeMultimedia.WaveFormatEncoding.Pcm;
 
-            return SharpDXMultimedia.WaveFormat.CreateCustomFormat(
+            return VorticeMultimedia.WaveFormat.CreateCustomFormat(
                 encoding,
                 sourceFormat.SampleRate,
                 sourceFormat.Channels,
