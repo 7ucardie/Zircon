@@ -77,7 +77,7 @@ Full migration guide: `/docs/vortice-migration.md`
 
 ## 0.3 — Promote DX11 to Default Renderer; DX9 as Legacy Fallback
 
-**Status:** [ ] Not started (depends on 0.2)
+**Status:** [x] Complete — `Config.RenderingPipeline` default changed to `"DirectX 11"`
 
 DX9 was released in 1999. DX11 is already implemented and produces
 identical visual output. No render quality changes — same sprites,
@@ -85,16 +85,23 @@ same art, same look. Just a modern API underneath.
 
 ### Context
 The project already has three rendering pipelines:
-- `Client/Rendering/SharpDXD3D9/` — DX9 (current default)
-- `Client/Rendering/SharpDXD3D11/` — DX11 (already implemented)
+- `Client/Rendering/SharpDXD3D9/` — DX9 (legacy fallback)
+- `Client/Rendering/SharpDXD3D11/` — DX11 (**new default**)
 - `Client/Rendering/SilkVulkan/` — Vulkan (newest, Silk.NET)
 
+### How selection works
+1. `Config.RenderingPipeline` (persisted in `Config.ini`) holds the active renderer ID
+2. `Program.Main()` calls `RenderingPipelineManager.InitializeWithFallback()` at startup
+3. If the requested renderer fails to init, `RenderingPipelineManager.DefaultPipelineId` ("DirectX 11") is used
+4. Players can switch at runtime via the in-game graphics settings (DXConfigWindow)
+5. Existing `Config.ini` files that still say "DirectX 9" will continue to use DX9 until the user changes it
+
 ### Tasks
-- [ ] Identify where the active renderer is selected (likely `CEnvir.cs` or config)
-- [ ] Make DX11 the default selection
-- [ ] Keep DX9 available as a legacy fallback option in settings
-- [ ] Verify DX11 output is visually identical to DX9 on same hardware
-- [ ] Update default config / documentation to reflect new default
+- [x] Identify where the active renderer is selected (`Client/Envir/Config.cs` line 34)
+- [x] Make DX11 the default selection (one-line change to `Config.cs`)
+- [x] Keep DX9 available as a legacy fallback option in settings (unchanged — D3D9 pipeline still registered)
+- [ ] Verify DX11 output is visually identical to DX9 on same hardware (manual test)
+- [x] `RenderingPipelineManager.DefaultPipelineId` was already "DirectX 11" — fallback was correct all along
 
 ### Why DX11 not DX12
 DX12 offers more control but much more complexity. For a 2D sprite-based
@@ -196,7 +203,7 @@ has no Windows/UI dependencies — it can run in CI.
 |---|---|---|
 | 0.1 CI/CD | **Complete** | `.github/workflows/build.yml` |
 | 0.2 Vortice migration | **Complete** | All SharpDX removed, Vortice.Windows in place |
-| 0.3 DX11 as default | Not started | — |
+| 0.3 DX11 as default | **Complete** | `Config.cs` default changed to DirectX 11 |
 | 0.4 PlayerObject refactor | Not started | — |
 | 0.5 GameScene refactor | Not started | — |
 | 0.6 Async networking/DB | Not started | — |
