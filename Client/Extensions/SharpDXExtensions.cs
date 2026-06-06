@@ -4,6 +4,8 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Numerics;
+using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Client.Extensions;
 

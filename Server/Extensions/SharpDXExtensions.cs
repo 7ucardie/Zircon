@@ -6,7 +6,9 @@ using System.Linq;
 using System.Numerics;
 using Color = System.Drawing.Color;
 using ColorBGRA = Vortice.Mathematics.ColorBGRA;
+using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
 using RawRect = Vortice.Mathematics.RawRect;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Server.Extensions;
 

@@ -23,6 +23,8 @@ using NumericsVector3 = System.Numerics.Vector3;
 using RawColorBGRA = Vortice.Mathematics.ColorBGRA;
 using RawRectangle = Vortice.Mathematics.RawRect;
 using RawVector3 = System.Numerics.Vector3;
+using Surface = Vortice.Direct3D9.IDirect3DSurface9;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Client.Rendering.SharpDXD3D9
 {
@@ -126,10 +128,6 @@ namespace Client.Rendering.SharpDXD3D9
             catch (Exception ex)
             {
                 SharpDXD3D9Manager.DeviceLost = true;
-                CEnvir.SaveException(ex);
-            }
-            catch (Exception ex)
-            {
                 CEnvir.SaveException(ex);
                 SharpDXD3D9Manager.AttemptRecovery();
             }
@@ -518,7 +516,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         public RenderTargetResource CreateRenderTarget(Size size)
         {
-            Texture texture = new Texture(SharpDXD3D9Manager.Device, size.Width, size.Height, 1, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
+            Texture texture = SharpDXD3D9Manager.Device.CreateTexture((uint)size.Width, (uint)size.Height, 1u, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
             Surface surface = texture.GetSurfaceLevel(0);
 
             return RenderTargetResource.From(RenderTexture.From(texture), RenderSurface.From(surface));
@@ -566,7 +564,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         public RenderTexture CreateTexture(Size size, RenderTextureFormat format, RenderTextureUsage usage, RenderTexturePool pool)
         {
-            Texture texture = new Texture(SharpDXD3D9Manager.Device, size.Width, size.Height, 1, ConvertUsage(usage), ConvertFormat(format), ConvertPool(pool));
+            Texture texture = SharpDXD3D9Manager.Device.CreateTexture((uint)size.Width, (uint)size.Height, 1u, ConvertUsage(usage), ConvertFormat(format), ConvertPool(pool));
             return RenderTexture.From(texture);
         }
 

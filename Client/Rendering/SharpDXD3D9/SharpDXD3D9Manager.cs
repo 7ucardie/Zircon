@@ -12,10 +12,13 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Blend = Vortice.Direct3D9.Blend;
+using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
 using DxColor = Vortice.Mathematics.ColorBGRA;
 using GdiColor = System.Drawing.Color;
 using GdiPoint = System.Drawing.Point;
 using GdiRectangle = System.Drawing.Rectangle;
+using Surface = Vortice.Direct3D9.IDirect3DSurface9;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Client.Rendering.SharpDXD3D9
 {
@@ -68,7 +71,7 @@ namespace Client.Rendering.SharpDXD3D9
 
                     if (PalleteData != null)
                     {
-                        _ColourPallete = new Texture(Device, 200, 149, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
+                        _ColourPallete = Device.CreateTexture(200u, 149u, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
                         LockedRectangle rect = _ColourPallete.LockRectangle(0, LockFlags.Discard);
                         Marshal.Copy(PalleteData, 0, rect.DataPointer, PalleteData.Length);
                         _ColourPallete.UnlockRectangle(0);
@@ -155,7 +158,7 @@ namespace Client.Rendering.SharpDXD3D9
                 _parameters.BackBufferWidth = backBufferSize.Width;
                 _parameters.BackBufferHeight = backBufferSize.Height;
 
-                Device = D3D9.CreateDevice(_direct3D, adapterIndex, DeviceType.Hardware, CEnvir.Target.Handle, CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve, _parameters);
+                Device = _direct3D.CreateDevice((uint)adapterIndex, DeviceType.Hardware, CEnvir.Target.Handle, CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve, _parameters);
 
                 if (Config.FullScreen)
                     ApplyWindowBounds();
@@ -211,7 +214,7 @@ namespace Client.Rendering.SharpDXD3D9
             Device.SetRenderTarget(0, MainSurface);
 
 
-            PoisonTexture = new Texture(Device, 6, 6, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
+            PoisonTexture = Device.CreateTexture(6u, 6u, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
 
             LockedRectangle rect = PoisonTexture.LockRectangle(0, LockFlags.Discard);
 
@@ -225,13 +228,13 @@ namespace Client.Rendering.SharpDXD3D9
                 }
             }
 
-            ScratchTexture = new Texture(Device, _parameters.BackBufferWidth, _parameters.BackBufferHeight, 1, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
+            ScratchTexture = Device.CreateTexture((uint)_parameters.BackBufferWidth, (uint)_parameters.BackBufferHeight, 1u, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
             ScratchSurface = ScratchTexture.GetSurfaceLevel(0);
         }
 
         private static void CreateLight()
         {
-            Texture light = new Texture(Device, LightWidth, LightHeight, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
+            Texture light = Device.CreateTexture((uint)LightWidth, (uint)LightHeight, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
 
             LightData = LightGenerator.CreateLightData(LightWidth, LightHeight);
 

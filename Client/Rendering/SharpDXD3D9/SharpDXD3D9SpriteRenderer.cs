@@ -7,9 +7,16 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Color4 = Vortice.Mathematics.Color4;
 using ColorBGRA = Vortice.Mathematics.ColorBGRA;
+using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
 using Matrix4x4 = System.Numerics.Matrix4x4;
 using NumericsMatrix3x2 = System.Numerics.Matrix3x2;
+using PixelShader = Vortice.Direct3D9.IDirect3DPixelShader9;
+using StateBlock = Vortice.Direct3D9.IDirect3DStateBlock9;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 using Vector2 = System.Numerics.Vector2;
+using VertexBuffer = Vortice.Direct3D9.IDirect3DVertexBuffer9;
+using VertexDeclaration = Vortice.Direct3D9.IDirect3DVertexDeclaration9;
+using VertexShader = Vortice.Direct3D9.IDirect3DVertexShader9;
 
 namespace Client.Rendering.SharpDXD3D9
 {
@@ -67,8 +74,8 @@ namespace Client.Rendering.SharpDXD3D9
             vsErrors?.Dispose();
             if (vsBlob != null)
             {
-                var vsBytes = new ReadOnlySpan<byte>((void*)vsBlob.BufferPointer, (int)(ulong)vsBlob.BufferSize).ToArray();
-                _vertexShader = new VertexShader(_device, vsBytes);
+                var vsSpan = new ReadOnlySpan<byte>((void*)vsBlob.BufferPointer, (int)(ulong)vsBlob.BufferSize);
+                _vertexShader = _device.CreateVertexShader(MemoryMarshal.Cast<byte, uint>(vsSpan));
                 vsBlob.Dispose();
             }
 
@@ -76,8 +83,8 @@ namespace Client.Rendering.SharpDXD3D9
             psErrors?.Dispose();
             if (psBlob != null)
             {
-                var psBytes = new ReadOnlySpan<byte>((void*)psBlob.BufferPointer, (int)(ulong)psBlob.BufferSize).ToArray();
-                _outlinePixelShader = new PixelShader(_device, psBytes);
+                var psSpan = new ReadOnlySpan<byte>((void*)psBlob.BufferPointer, (int)(ulong)psBlob.BufferSize);
+                _outlinePixelShader = _device.CreatePixelShader(MemoryMarshal.Cast<byte, uint>(psSpan));
                 psBlob.Dispose();
             }
         }
@@ -93,8 +100,8 @@ namespace Client.Rendering.SharpDXD3D9
             psErrors?.Dispose();
             if (psBlob != null)
             {
-                var psBytes = new ReadOnlySpan<byte>((void*)psBlob.BufferPointer, (int)(ulong)psBlob.BufferSize).ToArray();
-                _grayscalePixelShader = new PixelShader(_device, psBytes);
+                var psSpan = new ReadOnlySpan<byte>((void*)psBlob.BufferPointer, (int)(ulong)psBlob.BufferSize);
+                _grayscalePixelShader = _device.CreatePixelShader(MemoryMarshal.Cast<byte, uint>(psSpan));
                 psBlob.Dispose();
             }
         }
@@ -110,8 +117,8 @@ namespace Client.Rendering.SharpDXD3D9
             vsErrors?.Dispose();
             if (vsBlob != null)
             {
-                var vsBytes = new ReadOnlySpan<byte>((void*)vsBlob.BufferPointer, (int)(ulong)vsBlob.BufferSize).ToArray();
-                _shadowVertexShader = new VertexShader(_device, vsBytes);
+                var vsSpan = new ReadOnlySpan<byte>((void*)vsBlob.BufferPointer, (int)(ulong)vsBlob.BufferSize);
+                _shadowVertexShader = _device.CreateVertexShader(MemoryMarshal.Cast<byte, uint>(vsSpan));
                 vsBlob.Dispose();
             }
 
@@ -119,8 +126,8 @@ namespace Client.Rendering.SharpDXD3D9
             psErrors?.Dispose();
             if (psBlob != null)
             {
-                var psBytes = new ReadOnlySpan<byte>((void*)psBlob.BufferPointer, (int)(ulong)psBlob.BufferSize).ToArray();
-                _dropShadowPixelShader = new PixelShader(_device, psBytes);
+                var psSpan = new ReadOnlySpan<byte>((void*)psBlob.BufferPointer, (int)(ulong)psBlob.BufferSize);
+                _dropShadowPixelShader = _device.CreatePixelShader(MemoryMarshal.Cast<byte, uint>(psSpan));
                 psBlob.Dispose();
             }
         }
@@ -145,9 +152,9 @@ namespace Client.Rendering.SharpDXD3D9
 
         private void InitializeBuffers()
         {
-            _vertexBuffer = new VertexBuffer(_device, Marshal.SizeOf<VertexType>() * 4, Usage.WriteOnly | Usage.Dynamic, VertexFormat.None, Pool.Default);
+            _vertexBuffer = _device.CreateVertexBuffer((uint)(Marshal.SizeOf<VertexType>() * 4), Usage.WriteOnly | Usage.Dynamic, VertexFormat.None, Pool.Default);
 
-            _vertexDeclaration = new VertexDeclaration(_device, new[]
+            _vertexDeclaration = _device.CreateVertexDeclaration(new[]
             {
                 new VertexElement(0, 0, DeclarationType.Float2, DeclarationMethod.Default, DeclarationUsage.Position, 0),
                 new VertexElement(0, 8, DeclarationType.Float2, DeclarationMethod.Default, DeclarationUsage.TextureCoordinate, 0),
@@ -163,7 +170,7 @@ namespace Client.Rendering.SharpDXD3D9
 
             float effectiveThickness = outlineThickness > 0 ? 1.0f : 0.0f;
 
-            using var stateBlock = new StateBlock(_device, StateBlockType.All);
+            using var stateBlock = _device.CreateStateBlock(StateBlockType.All);
             stateBlock.Capture();
 
             var desc = texture.GetLevelDescription(0);
@@ -242,7 +249,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (!SupportsGrayscaleShader || texture == null || texture.IsDisposed)
                 return;
 
-            using var stateBlock = new StateBlock(_device, StateBlockType.All);
+            using var stateBlock = _device.CreateStateBlock(StateBlockType.All);
             stateBlock.Capture();
 
             var desc = texture.GetLevelDescription(0);
@@ -305,7 +312,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (!SupportsDropShadowShader || texture == null || texture.IsDisposed)
                 return;
 
-            using var stateBlock = new StateBlock(_device, StateBlockType.All);
+            using var stateBlock = _device.CreateStateBlock(StateBlockType.All);
             stateBlock.Capture();
 
             var desc = texture.GetLevelDescription(0);

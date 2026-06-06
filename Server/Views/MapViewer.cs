@@ -22,8 +22,11 @@ using Blend = Vortice.Direct3D9.Blend;
 using Color = System.Drawing.Color;
 using Color4 = Vortice.Mathematics.Color4;
 using DataRectangle = Vortice.Direct3D9.LockedRectangle;
+using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
 using Matrix = System.Numerics.Matrix4x4;
 using Size = System.Drawing.Size;
+using Surface = Vortice.Direct3D9.IDirect3DSurface9;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Server.Views
 {
@@ -449,7 +452,7 @@ namespace Server.Views.DirectX
 
             IDirect3D9 direct3D = D3D9.Direct3DCreate9();
 
-            Device = D3D9.CreateDevice(direct3D, 0, DeviceType.Hardware, Target.Handle, CreateFlags.HardwareVertexProcessing, Parameters);
+            Device = direct3D.CreateDevice(0u, DeviceType.Hardware, Target.Handle, CreateFlags.HardwareVertexProcessing, Parameters);
 
             LoadTextures();
         }
@@ -463,7 +466,7 @@ namespace Server.Views.DirectX
             CurrentSurface = MainSurface;
             Device.SetRenderTarget(0, MainSurface);
 
-            AttributeTexture = new Texture(Device, 48, 32, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
+            AttributeTexture = Device.CreateTexture(48u, 32u, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
 
             DataRectangle rect = AttributeTexture.LockRectangle(0, LockFlags.Discard);
 
@@ -1390,7 +1393,7 @@ namespace Server.Views.DirectX
 
             if (w == 0 || h == 0) return;
 
-            Image = new Texture(Manager.Device, w, h, 1, Usage.None, DrawFormat, Pool.Managed);
+            Image = Manager.Device.CreateTexture((uint)w, (uint)h, 1u, Usage.None, DrawFormat, Pool.Managed);
             DataRectangle rect = Image.LockRectangle(0, LockFlags.Discard);
             ImageData = (byte*)rect.DataPointer;
 
@@ -1419,7 +1422,7 @@ namespace Server.Views.DirectX
 
             if (w == 0 || h == 0) return;
 
-            Shadow = new Texture(Manager.Device, w, h, 1, Usage.None, DrawFormat, Pool.Managed);
+            Shadow = Manager.Device.CreateTexture((uint)w, (uint)h, 1u, Usage.None, DrawFormat, Pool.Managed);
             DataRectangle rect = Shadow.LockRectangle(0, LockFlags.Discard);
             ShadowData = (byte*)rect.DataPointer;
 
@@ -1446,7 +1449,7 @@ namespace Server.Views.DirectX
 
             if (w == 0 || h == 0) return;
 
-            Overlay = new Texture(Manager.Device, w, h, 1, Usage.None, DrawFormat, Pool.Managed);
+            Overlay = Manager.Device.CreateTexture((uint)w, (uint)h, 1u, Usage.None, DrawFormat, Pool.Managed);
             DataRectangle rect = Overlay.LockRectangle(0, LockFlags.Discard);
             OverlayData = (byte*)rect.DataPointer;
 
@@ -1832,7 +1835,7 @@ namespace Server.Views.DirectX
             {
                 DisposeTexture();
                 TextureSize = Size;
-                ControlTexture = new Texture(Manager.Device, TextureSize.Width, TextureSize.Height, 1, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default); ;
+                ControlTexture = Manager.Device.CreateTexture((uint)TextureSize.Width, (uint)TextureSize.Height, 1u, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
                 ControlSurface = ControlTexture.GetSurfaceLevel(0);
                 Manager.Map = this;
             }
