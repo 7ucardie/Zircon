@@ -19,9 +19,11 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using Blend = Vortice.Direct3D9.Blend;
+using Color = System.Drawing.Color;
 using Color4 = Vortice.Mathematics.Color4;
 using DataRectangle = Vortice.Direct3D9.LockedRectangle;
 using Matrix = System.Numerics.Matrix4x4;
+using Size = System.Drawing.Size;
 
 namespace Server.Views
 {

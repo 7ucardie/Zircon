@@ -146,37 +146,47 @@ no logic changes, just organised into focused files.
 
 ## 0.5 — Refactor GameScene.cs (5,000 lines)
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — split into 10 focused partial class files
 
 `Client/Scenes/GameScene.cs` mixes rendering, input handling, HUD logic,
 and scene management. Same approach as 0.4 — partial class split.
 
-### Proposed partial class files
-- `GameScene.Core.cs` — scene lifecycle, main loop
-- `GameScene.Rendering.cs` — draw calls, sprite batching
-- `GameScene.Input.cs` — mouse and keyboard handling
-- `GameScene.HUD.cs` — UI overlays, minimap, status bars
-- `GameScene.Network.cs` — incoming packet processing
+### Resulting partial class files
+| File | Lines | Content |
+|---|---|---|
+| `GameScene.cs` | 1,507 | Properties region, fields, constructor, SetDefaultLocations, SaveChatTabs, IDisposable |
+| `GameScene.Process.cs` | 171 | `Process()` main loop override |
+| `GameScene.Input.cs` | 498 | `OnKeyPress`, `OnKeyDown` |
+| `GameScene.Labels.cs` | 1,450 | `CreateItemLabel`, `EquipmentItemInfo`, `CreatePotionLabel`, `CreateFameLabel`, `CreateMagicLabel`, `SetItemInfo` |
+| `GameScene.Combat.cs` | 646 | `UseMagic`, `CanAttackTarget`, `OnAfterDraw`, `Displacement` |
+| `GameScene.Items.cs` | 321 | `FillItems`, `AddItems`, `AddCompanionItems`, `CanUseItem`, `CanWearItem` |
+| `GameScene.Stats.cs` | 217 | All `*Changed()` stat notification methods |
+| `GameScene.Chat.cs` | 38 | Two `ReceiveChat` overloads |
+| `GameScene.Quests.cs` | 376 | Quest query/display methods |
+| `GameScene.HUD.cs` | 73 | `UpdateMapIcon`, `IsAlly` |
 
 ### Tasks
-- [ ] Identify seams (rendering vs input vs network)
-- [ ] Split into partial files
-- [ ] Build and regression check
+- [x] Identify seams (using existing #region structure and method clusters)
+- [x] Split into partial files (`sealed partial class GameScene`)
+- [ ] Build and regression check (requires Windows CI runner)
 
 ---
 
 ## 0.6 — Add async/await to Networking and Database Layers
 
-**Status:** [ ] Not started
+**Status:** [~] In progress — `BaseConnection` APM→async done; game loop and DB not yet converted
 
 The project targets .NET 10.0 but all I/O is synchronous. Server threads
 block on DB queries and network reads, wasting capacity.
 
 ### Key areas
-- [ ] `LibraryCore/Network/` — replace sync socket reads with `ReadAsync`
+- [x] `LibraryCore/Network/BaseConnection.cs` — replaced APM `BeginReceive`/`EndReceive`
+      and `BeginSend` with `NetworkStream.ReadAsync`/`WriteAsync`; `BeginReceive()` shim
+      kept for subclass compatibility
 - [ ] `ServerLibrary/Envir/SEnvir.cs` — replace `Thread.Sleep` game loop with
       `Task`-based timer
-- [ ] All Dapper `Query<T>` calls → `QueryAsync<T>` throughout
+- [ ] DB layer — MirDB is a custom in-memory ORM (not Dapper); async conversion
+      is out of scope until Phase 1 ORM work
 - [ ] `Client/Envir/CConnection.cs` — async client socket handling
 - [ ] Audit for `.Result` / `.Wait()` deadlock patterns after conversion
 
@@ -207,6 +217,6 @@ has no Windows/UI dependencies — it can run in CI.
 | 0.2 Vortice migration | **Complete** | All SharpDX removed, Vortice.Windows in place |
 | 0.3 DX11 as default | **Complete** | `Config.cs` default changed to DirectX 11 |
 | 0.4 PlayerObject refactor | **Complete** | 11 partial class files |
-| 0.5 GameScene refactor | Not started | — |
-| 0.6 Async networking/DB | Not started | — |
+| 0.5 GameScene refactor | **Complete** | 10 partial class files |
+| 0.6 Async networking/DB | **In progress** | `BaseConnection` converted; SEnvir loop + CConnection pending |
 | 0.7 Test suite | Not started | — |

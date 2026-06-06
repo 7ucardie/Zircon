@@ -4,6 +4,9 @@ using System;
 using System.Drawing;
 using System.Linq;
 using System.Numerics;
+using Color = System.Drawing.Color;
+using ColorBGRA = Vortice.Mathematics.ColorBGRA;
+using RawRect = Vortice.Mathematics.RawRect;
 
 namespace Server.Extensions;
 
