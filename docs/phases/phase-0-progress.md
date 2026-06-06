@@ -174,7 +174,7 @@ and scene management. Same approach as 0.4 — partial class split.
 
 ## 0.6 — Add async/await to Networking and Database Layers
 
-**Status:** [~] In progress — `BaseConnection` APM→async done; game loop and DB not yet converted
+**Status:** [x] Complete — all networking I/O converted to async/await; DB layer deferred
 
 The project targets .NET 10.0 but all I/O is synchronous. Server threads
 block on DB queries and network reads, wasting capacity.
@@ -183,12 +183,15 @@ block on DB queries and network reads, wasting capacity.
 - [x] `LibraryCore/Network/BaseConnection.cs` — replaced APM `BeginReceive`/`EndReceive`
       and `BeginSend` with `NetworkStream.ReadAsync`/`WriteAsync`; `BeginReceive()` shim
       kept for subclass compatibility
-- [ ] `ServerLibrary/Envir/SEnvir.cs` — replace `Thread.Sleep` game loop with
-      `Task`-based timer
+- [x] `ServerLibrary/Envir/SEnvir.cs` — converted APM `BeginAcceptTcpClient` accept loops
+      to `AcceptConnectionsAsync`/`AcceptCountConnectionsAsync`; `EnvirLoop` made `async Task`;
+      `WriteLogsLoop` made `async Task`; `new Thread(CommitChanges)` → `Task.Run`;
+      all `Thread.Sleep` → `await Task.Delay`
+- [x] `Client/Envir/CConnection.cs` — no changes needed; inherits async receive from
+      `BaseConnection.BeginReceive()` shim
+- [x] Audit for `.Result` / `.Wait()` deadlock patterns — none found
 - [ ] DB layer — MirDB is a custom in-memory ORM (not Dapper); async conversion
       is out of scope until Phase 1 ORM work
-- [ ] `Client/Envir/CConnection.cs` — async client socket handling
-- [ ] Audit for `.Result` / `.Wait()` deadlock patterns after conversion
 
 ---
 
@@ -218,5 +221,5 @@ has no Windows/UI dependencies — it can run in CI.
 | 0.3 DX11 as default | **Complete** | `Config.cs` default changed to DirectX 11 |
 | 0.4 PlayerObject refactor | **Complete** | 11 partial class files |
 | 0.5 GameScene refactor | **Complete** | 10 partial class files |
-| 0.6 Async networking/DB | **In progress** | `BaseConnection` converted; SEnvir loop + CConnection pending |
+| 0.6 Async networking/DB | **Complete** | All networking async; DB (MirDB) deferred to Phase 1 |
 | 0.7 Test suite | Not started | — |
