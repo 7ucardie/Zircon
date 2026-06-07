@@ -79,6 +79,9 @@ namespace Server.Envir
         public static List<SConnection> Connections = new List<SConnection>();
         public static ConcurrentQueue<SConnection> NewConnections;
 
+        private static FileSystemWatcher _mapWatcher;
+        private static readonly ConcurrentQueue<string> PendingMapReloads = new();
+
         private static TcpListener _listener, _userCountListener;
 
         private static void StartNetwork(bool log = true)
@@ -798,6 +801,68 @@ namespace Server.Envir
             {
                 CreateStartZones();
             }
+
+            StartMapWatcher();
+        }
+
+        private static void StartMapWatcher()
+        {
+            if (!Directory.Exists(Config.MapPath)) return;
+
+            _mapWatcher = new FileSystemWatcher(Config.MapPath, "*.map.json")
+            {
+                NotifyFilter = NotifyFilters.LastWrite,
+                IncludeSubdirectories = false,
+                EnableRaisingEvents = true
+            };
+
+            _mapWatcher.Changed += (_, e) => PendingMapReloads.Enqueue(e.FullPath);
+            _mapWatcher.Created += (_, e) => PendingMapReloads.Enqueue(e.FullPath);
+        }
+
+        private static void ReloadMap(string jsonPath)
+        {
+            string fileName = Path.GetFileNameWithoutExtension(Path.GetFileNameWithoutExtension(jsonPath));
+
+            MapInfo info = MapInfoList.Binding.FirstOrDefault(x =>
+                string.Equals(x.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+
+            if (info == null)
+            {
+                Log($"[HotReload] No MapInfo found for {fileName}");
+                return;
+            }
+
+            if (!Maps.TryGetValue(info, out Map map))
+            {
+                Log($"[HotReload] Map {fileName} not loaded — skipping.");
+                return;
+            }
+
+            map.ReloadCells();
+
+            foreach (MapRegion region in info.Regions)
+                region.CreatePoints(map.Width);
+
+            map.CreateCellRegions();
+            CreateMovements(null, 0, info);
+
+            Log($"[HotReload] Reloaded map {fileName} ({map.ValidCells.Count} walkable cells).");
+        }
+
+        private static void ProcessPendingMapReloads()
+        {
+            while (PendingMapReloads.TryDequeue(out string path))
+            {
+                try
+                {
+                    ReloadMap(path);
+                }
+                catch (Exception ex)
+                {
+                    Log($"[HotReload] Error reloading {path}: {ex.Message}");
+                }
+            }
         }
 
         private static void CreateMovements(InstanceInfo instance = null, byte instanceSequence = 0, MapInfo targetMap = null)
@@ -1283,6 +1348,9 @@ namespace Server.Envir
 
         private static void StopEnvir()
         {
+            _mapWatcher?.Dispose();
+            _mapWatcher = null;
+
             Now = DateTime.MinValue;
 
             Session = null;
@@ -1437,6 +1505,9 @@ namespace Server.Envir
 
                         Connections.Add(connection);
                     }
+
+                    if (!PendingMapReloads.IsEmpty)
+                        ProcessPendingMapReloads();
 
                     long bytesSent = 0;
                     long bytesReceived = 0;

@@ -101,6 +101,25 @@ namespace Server.Models
                 OrderedObjects[i] = new HashSet<MapObject>();
         }
 
+        public void ReloadCells()
+        {
+            ValidCells.Clear();
+
+            if (Cells != null)
+            {
+                for (int x = 0; x < Width; x++)
+                    for (int y = 0; y < Height; y++)
+                    {
+                        if (Cells[x, y] == null) continue;
+                        if (Cells[x, y].Movements != null)
+                            Cells[x, y].Movements.Clear();
+                        Cells[x, y] = null;
+                    }
+            }
+
+            Load();
+        }
+
         private void LoadFromJson(string path)
         {
             using FileStream fs = File.OpenRead(path);
