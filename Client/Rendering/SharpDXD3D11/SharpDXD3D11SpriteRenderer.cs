@@ -26,6 +26,7 @@ using PixelShader = Vortice.Direct3D11.ID3D11PixelShader;
 using InputLayout = Vortice.Direct3D11.ID3D11InputLayout;
 using BlendOption = Vortice.Direct3D11.Blend;
 using BlendState = Vortice.Direct3D11.ID3D11BlendState;
+using ColorWriteMaskFlags = Vortice.Direct3D11.ColorWriteMask;
 using SamplerState = Vortice.Direct3D11.ID3D11SamplerState;
 using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
 using ShaderResourceView = Vortice.Direct3D11.ID3D11ShaderResourceView;
