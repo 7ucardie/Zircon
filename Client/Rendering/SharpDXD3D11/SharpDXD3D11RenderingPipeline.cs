@@ -244,7 +244,7 @@ namespace Client.Rendering.SharpDXD3D11
             if (SharpDXD3D11Manager.D2DContext == null)
                 return;
 
-            using SolidColorBrush brush = new SolidColorBrush(SharpDXD3D11Manager.D2DContext, ToRawColor(colour, SharpDXD3D11Manager.Opacity));
+            using SolidColorBrush brush = SharpDXD3D11Manager.D2DContext.CreateSolidColorBrush(ToRawColor(colour, SharpDXD3D11Manager.Opacity));
 
             for (int i = 0; i < points.Count - 1; i++)
             {
@@ -595,7 +595,7 @@ namespace Client.Rendering.SharpDXD3D11
                 PrimitiveBlend originalPrimitiveBlend = SharpDXD3D11Manager.D2DContext.PrimitiveBlend;
                 SharpDXD3D11Manager.D2DContext.PrimitiveBlend = PrimitiveBlend.SourceOver;
 
-                using SolidColorBrush brush = new SolidColorBrush(SharpDXD3D11Manager.D2DContext, rawColor);
+                using SolidColorBrush brush = SharpDXD3D11Manager.D2DContext.CreateSolidColorBrush(rawColor);
 
                 foreach (Rectangle region in regions)
                 {
@@ -617,7 +617,7 @@ namespace Client.Rendering.SharpDXD3D11
 
         public void FlushSprite()
         {
-            SharpDXD3D11Manager.D2DContext?.Flush();
+            SharpDXD3D11Manager.D2DContext?.Flush(out _, out _);
         }
 
         public void RegisterControlCache(ITextureCacheItem control)
@@ -809,7 +809,7 @@ namespace Client.Rendering.SharpDXD3D11
                 };
 
                 _tintEffect.SetValue((int)ColorMatrixProperties.ColorMatrix, matrix);
-                _tintEffect.SetEnumValue((int)ColorMatrixProperties.AlphaMode, ColorMatrixAlphaMode.Straight);
+                _tintEffect.SetValue((int)ColorMatrixProperties.AlphaMode, (int)ColorMatrixAlphaMode.Straight);
                 _tintEffect.SetInput(0, bitmap, true);
 
                 RawMatrix3x2 originalTransform = ctx.Transform;
@@ -891,7 +891,7 @@ namespace Client.Rendering.SharpDXD3D11
                 };
 
                 _lightTintEffect.SetValue((int)ColorMatrixProperties.ColorMatrix, matrix);
-                _lightTintEffect.SetEnumValue((int)ColorMatrixProperties.AlphaMode, ColorMatrixAlphaMode.Straight);
+                _lightTintEffect.SetValue((int)ColorMatrixProperties.AlphaMode, (int)ColorMatrixAlphaMode.Straight);
 
                 _premultiplyEffect.SetInputEffect(0, _lightTintEffect, true);
                 ID2D1Image output = _premultiplyEffect.Output;

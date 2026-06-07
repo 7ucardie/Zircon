@@ -2,6 +2,7 @@
 using Client.Envir;
 
 using Vortice.Direct2D1;
+using Vortice.Direct3D;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
@@ -142,7 +143,7 @@ namespace Client.Rendering.SharpDXD3D11
             D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.MultiThreaded, out ID2D1Factory1 d2dFactory).CheckError();
             D2DFactory = d2dFactory;
 
-            Factory = new Factory();
+            Factory = DXGI.CreateDXGIFactory1<Factory>();
 
             ApplyWindowStyle();
 
@@ -151,12 +152,12 @@ namespace Client.Rendering.SharpDXD3D11
 
             ApplyWindowBounds(true);
 
-            using Adapter adapter = Factory.GetAdapter1(0);
-            using Output output = adapter.GetOutput(0);
+            using IDXGIAdapter1 adapter = Factory.EnumAdapters1(0);
+            using IDXGIOutput output = adapter.EnumOutputs(0);
             ModeDescription[] modes = output.GetDisplayModeList(Format.B8G8R8A8_UNorm, DisplayModeEnumerationFlags.Scaling);
             foreach (ModeDescription mode in modes)
             {
-                Size size = new Size(mode.Width, mode.Height);
+                Size size = new Size((int)mode.Width, (int)mode.Height);
                 if (size.Width < MinimumResolution.Width || size.Height < MinimumResolution.Height)
                     continue;
 
@@ -169,27 +170,26 @@ namespace Client.Rendering.SharpDXD3D11
 
             SwapChainDescription swapChainDescription = new SwapChainDescription
             {
-                ModeDescription = new ModeDescription(targetSize.Width, targetSize.Height, new Rational(60, 1), Format.B8G8R8A8_UNorm),
+                BufferDescription = new ModeDescription((uint)targetSize.Width, (uint)targetSize.Height, new Rational(60, 1), Format.B8G8R8A8_UNorm),
                 SampleDescription = new SampleDescription(1, 0),
-                Usage = Usage.RenderTargetOutput,
+                BufferUsage = Usage.RenderTargetOutput,
                 BufferCount = 1,
-                OutputHandle = CEnvir.Target.Handle,
-                IsWindowed = true,
+                OutputWindow = CEnvir.Target.Handle,
+                Windowed = true,
                 SwapEffect = SwapEffect.Discard,
                 Flags = SwapChainFlags.AllowModeSwitch
             };
 
             DeviceCreationFlags creationFlags = DeviceCreationFlags.BgraSupport;
-            Device = new Device(adapter, creationFlags, new[] { D3DFeatureLevel.Level_11_0 });
-            SwapChain = new SwapChain(Factory, Device, swapChainDescription);
+            Vortice.Direct3D11.D3D11.D3D11CreateDevice(adapter, Vortice.Direct3D.DriverType.Unknown, creationFlags, new[] { D3DFeatureLevel.Level_11_0 }, out Device device).CheckError();
+            Device = device;
+            SwapChain = Factory.CreateSwapChain(Device, swapChainDescription);
             Factory.MakeWindowAssociation(CEnvir.Target.Handle, WindowAssociationFlags.IgnoreAltEnter);
 
             using (var dxgiDevice = Device.QueryInterface<IDXGIDevice>())
             {
-                D2DFactory.CreateDevice(dxgiDevice, out ID2D1Device d2dDevice).CheckError();
-                D2DDevice = d2dDevice;
-                D2DDevice.CreateDeviceContext(DeviceContextOptions.None, out ID2D1DeviceContext d2dContext).CheckError();
-                D2DContext = d2dContext;
+                D2DDevice = D2DFactory.CreateDevice(dxgiDevice);
+                D2DContext = D2DDevice.CreateDeviceContext(DeviceContextOptions.None);
                 D2DContext.UnitMode = UnitMode.Pixels;
                 D2DContext.PrimitiveBlend = PrimitiveBlend.SourceOver;
             }
@@ -452,7 +452,7 @@ namespace Client.Rendering.SharpDXD3D11
                 color.B / 255f,
                 color.A / 255f);
 
-            using var brush = new SolidColorBrush(d2d, c);
+            using var brush = d2d.CreateSolidColorBrush(c);
 
             // Apply clip
             d2d.PushAxisAlignedClip(
@@ -585,7 +585,7 @@ namespace Client.Rendering.SharpDXD3D11
         public static void FlushSprite()
         {
             if (_d2dDrawActive)
-                D2DContext?.Flush();
+                if (D2DContext != null) D2DContext.Flush(out _, out _);
         }
 
         public static void MemoryClear()
@@ -624,8 +624,8 @@ namespace Client.Rendering.SharpDXD3D11
             {
                 try
                 {
-                    if (SwapChain.IsFullScreen)
-                        SwapChain.IsFullScreen = false;
+                    SwapChain.GetFullscreenState(out bool isFs, out _);
+                    if (isFs) SwapChain.SetFullscreenState(false, null);
                 }
                 catch
                 {
@@ -697,10 +697,10 @@ namespace Client.Rendering.SharpDXD3D11
                 return;
 
             FlushSprite();
-            Context.PixelShader.SetShaderResource(0, null);
+            Context.PSSetShaderResources(0, new ID3D11ShaderResourceView[] { null });
 
             CurrentTarget = target;
-            Context.OutputMerger.SetRenderTargets(target.RenderTargetView);
+            Context.OMSetRenderTargets(target.RenderTargetView);
             D2DContext.Target = target.TargetBitmap;
         }
 
@@ -736,10 +736,10 @@ namespace Client.Rendering.SharpDXD3D11
 
         public static SharpD3D11RenderTarget CreateRenderTarget(Size size)
         {
-            Texture2D texture = new Texture2D(Device, new Texture2DDescription
+            Texture2D texture = Device.CreateTexture2D(new Texture2DDescription
             {
-                Width = size.Width,
-                Height = size.Height,
+                Width = (uint)size.Width,
+                Height = (uint)size.Height,
                 ArraySize = 1,
                 BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
                 Usage = ResourceUsage.Default,
@@ -747,12 +747,14 @@ namespace Client.Rendering.SharpDXD3D11
                 Format = Format.B8G8R8A8_UNorm,
                 SampleDescription = new SampleDescription(1, 0),
                 MipLevels = 1,
-                OptionFlags = ResourceOptionFlags.Shared
+                MiscFlags = ResourceOptionFlags.Shared
             });
 
-            RenderTargetView view = new RenderTargetView(Device, texture);
-            using Surface surface = texture.QueryInterface<Surface>();
-            Bitmap1 bitmap = new Bitmap1(D2DContext, surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target));
+            Device.CreateRenderTargetView(texture, null, out RenderTargetView rtv).CheckError();
+            RenderTargetView view = rtv;
+            using IDXGISurface surface = texture.QueryInterface<IDXGISurface>();
+            D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target), out Bitmap1 bitmapRef).CheckError();
+            Bitmap1 bitmap = bitmapRef;
 
             return new SharpD3D11RenderTarget(texture, view, bitmap);
         }
@@ -775,10 +777,10 @@ namespace Client.Rendering.SharpDXD3D11
 
             ResourceOptionFlags optionFlags = usage == RenderTextureUsage.Dynamic ? ResourceOptionFlags.None : ResourceOptionFlags.Shared;
 
-            Texture2D texture = new Texture2D(Device, new Texture2DDescription
+            Texture2D texture = Device.CreateTexture2D(new Texture2DDescription
             {
-                Width = size.Width,
-                Height = size.Height,
+                Width = (uint)size.Width,
+                Height = (uint)size.Height,
                 ArraySize = 1,
                 BindFlags = bindFlags,
                 Usage = resourceUsage,
@@ -786,14 +788,14 @@ namespace Client.Rendering.SharpDXD3D11
                 Format = dxFormat,
                 SampleDescription = new SampleDescription(1, 0),
                 MipLevels = 1,
-                OptionFlags = optionFlags
+                MiscFlags = optionFlags
             });
 
 
-            Texture2D staging = new Texture2D(Device, new Texture2DDescription
+            Texture2D staging = Device.CreateTexture2D(new Texture2DDescription
             {
-                Width = size.Width,
-                Height = size.Height,
+                Width = (uint)size.Width,
+                Height = (uint)size.Height,
                 ArraySize = 1,
                 BindFlags = BindFlags.None,
                 Usage = ResourceUsage.Staging,
@@ -801,11 +803,12 @@ namespace Client.Rendering.SharpDXD3D11
                 Format = dxFormat,
                 SampleDescription = new SampleDescription(1, 0),
                 MipLevels = 1,
-                OptionFlags = ResourceOptionFlags.None
+                MiscFlags = ResourceOptionFlags.None
             });
 
-            using Surface surface = texture.QueryInterface<Surface>();
-            Bitmap1 bitmap = new Bitmap1(D2DContext, surface, new BitmapProperties1(new D2D1PixelFormat(dxFormat, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
+            using IDXGISurface surface = texture.QueryInterface<IDXGISurface>();
+            D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(dxFormat, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.None), out Bitmap1 bitmapRef2).CheckError();
+            Bitmap1 bitmap = bitmapRef2;
 
             return new SharpD3D11TextureResource(format, texture, staging, bitmap);
         }
@@ -835,10 +838,10 @@ namespace Client.Rendering.SharpDXD3D11
                 Context.CopyResource(texture.Texture, texture.StagingTexture);
 
             // Map staging texture
-            D3D11DataBox box = Context.MapSubresource(texture.StagingTexture, 0, mapMode, D3D11MapFlags.None);
+            D3D11DataBox box = Context.Map(texture.StagingTexture, 0, mapMode, D3D11MapFlags.None);
 
-            int width = texture.Texture.Description.Width;
-            int height = texture.Texture.Description.Height;
+            int width = (int)texture.Texture.Description.Width;
+            int height = (int)texture.Texture.Description.Height;
 
             // A8R8G8B8 WRITE PATH (row-by-row safe)
             if (mode != TextureLockMode.ReadOnly &&
@@ -857,7 +860,7 @@ namespace Client.Rendering.SharpDXD3D11
                     try
                     {
                         // Re-map for writing the final data into staging
-                        D3D11DataBox writeBox = Context.MapSubresource(
+                        D3D11DataBox writeBox = Context.Map(
                             texture.StagingTexture, 0, mapMode, D3D11MapFlags.None);
 
                         try
@@ -875,7 +878,7 @@ namespace Client.Rendering.SharpDXD3D11
                         }
                         finally
                         {
-                            Context.UnmapSubresource(texture.StagingTexture, 0);
+                            Context.Unmap(texture.StagingTexture, 0);
                         }
 
                         // Copy staging → GPU
@@ -892,7 +895,7 @@ namespace Client.Rendering.SharpDXD3D11
             // Direct pointer access into mapped staging texture.
             return TextureLock.From(box.DataPointer, box.RowPitch, () =>
             {
-                Context.UnmapSubresource(texture.StagingTexture, 0);
+                Context.Unmap(texture.StagingTexture, 0);
 
                 if (mode != TextureLockMode.ReadOnly)
                     Context.CopyResource(texture.StagingTexture, texture.Texture);
@@ -902,8 +905,8 @@ namespace Client.Rendering.SharpDXD3D11
         private static TextureLock CreateBlockCompressedWriteLock(SharpD3D11TextureResource texture, MapMode mapMode)
         {
             // Texture dimensions in pixels
-            int width = texture.Texture.Description.Width;
-            int height = texture.Texture.Description.Height;
+            int width = (int)texture.Texture.Description.Width;
+            int height = (int)texture.Texture.Description.Height;
 
             // DXT1:  8 bytes per 4x4 block
             // DXT5: 16 bytes per 4x4 block
@@ -929,7 +932,7 @@ namespace Client.Rendering.SharpDXD3D11
                 try
                 {
                     // Map staging texture (BC1 / BC3)
-                    D3D11DataBox box = Context.MapSubresource(texture.StagingTexture, 0, mapMode, D3D11MapFlags.None);
+                    D3D11DataBox box = Context.Map(texture.StagingTexture, 0, mapMode, D3D11MapFlags.None);
 
                     try
                     {
@@ -946,7 +949,7 @@ namespace Client.Rendering.SharpDXD3D11
                     }
                     finally
                     {
-                        Context.UnmapSubresource(texture.StagingTexture, 0);
+                        Context.Unmap(texture.StagingTexture, 0);
                     }
 
                     // Push staging → GPU texture
@@ -1149,7 +1152,7 @@ namespace Client.Rendering.SharpDXD3D11
             if (_backBufferTarget?.Texture == null)
                 return Size.Empty;
 
-            return new Size(_backBufferTarget.Texture.Description.Width, _backBufferTarget.Texture.Description.Height);
+            return new Size((int)_backBufferTarget.Texture.Description.Width, (int)_backBufferTarget.Texture.Description.Height);
         }
 
         public static void ClearColourPalette()
@@ -1169,11 +1172,13 @@ namespace Client.Rendering.SharpDXD3D11
 
         private static SharpD3D11RenderTarget CreateBackBufferTarget()
         {
-            Texture2D backBuffer = SwapChain.GetBackBuffer<Texture2D>(0);
-            RenderTargetView view = new RenderTargetView(Device, backBuffer);
+            Texture2D backBuffer = SwapChain.GetBuffer<Texture2D>(0);
+            Device.CreateRenderTargetView(backBuffer, null, out RenderTargetView rtv).CheckError();
+            RenderTargetView view = rtv;
 
-            using Surface surface = backBuffer.QueryInterface<Surface>();
-            Bitmap1 bitmap = new Bitmap1(D2DContext, surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target | BitmapOptions.CannotDraw));
+            using IDXGISurface surface = backBuffer.QueryInterface<IDXGISurface>();
+            D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target | BitmapOptions.CannotDraw), out Bitmap1 bitmapRef).CheckError();
+            Bitmap1 bitmap = bitmapRef;
 
             return new SharpD3D11RenderTarget(backBuffer, view, bitmap);
         }
@@ -1181,7 +1186,7 @@ namespace Client.Rendering.SharpDXD3D11
         private static void DisposeTargets()
         {
             if (Context != null)
-                Context.OutputMerger.SetRenderTargets((RenderTargetView)null);
+                Context.OMSetRenderTargets((RenderTargetView)null);
 
             if (D2DContext != null)
                 D2DContext.Target = null;
@@ -1199,8 +1204,8 @@ namespace Client.Rendering.SharpDXD3D11
         {
             DisposeTargets();
 
-            if (SwapChain.IsFullScreen)
-                SwapChain.IsFullScreen = false;
+            SwapChain.GetFullscreenState(out bool isFs2, out _);
+            if (isFs2) SwapChain.SetFullscreenState(false, null);
 
             ApplyWindowStyle();
             ApplyWindowBounds(Config.FullScreen);
@@ -1210,7 +1215,7 @@ namespace Client.Rendering.SharpDXD3D11
 
             Size targetSize = CEnvir.Target?.ClientSize ?? size;
 
-            SwapChain.ResizeBuffers(1, targetSize.Width, targetSize.Height, Format.B8G8R8A8_UNorm, SwapChainFlags.AllowModeSwitch);
+            SwapChain.ResizeBuffers(1, (uint)targetSize.Width, (uint)targetSize.Height, Format.B8G8R8A8_UNorm, SwapChainFlags.AllowModeSwitch);
             CreateTargets();
         }
 

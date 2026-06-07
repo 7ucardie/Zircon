@@ -164,12 +164,12 @@ namespace Client.Rendering.SharpDXD3D9
                 if (Config.FullScreen)
                     ApplyWindowBounds();
 
-                // The rest of your code remains unchanged
-                var modes = _direct3D.EnumAdapterModes(adapterIndex, Format.X8R8G8B8);
-
-                foreach (DisplayMode mode in modes)
+                // Enumerate all display modes for this adapter
+                uint modeCount = _direct3D.GetAdapterModeCount((uint)adapterIndex, Format.X8R8G8B8);
+                for (uint modeIdx = 0; modeIdx < modeCount; modeIdx++)
                 {
-                    Size s = new Size(mode.Width, mode.Height);
+                    DisplayMode mode = _direct3D.EnumAdapterModes((uint)adapterIndex, Format.X8R8G8B8, modeIdx);
+                    Size s = new Size((int)mode.Width, (int)mode.Height);
                     if (s.Width < MinimumResolution.Width || s.Height < MinimumResolution.Height) continue;
 
                     if (!ValidResolutions.Contains(s))
@@ -594,7 +594,7 @@ namespace Client.Rendering.SharpDXD3D9
 
             try
             {
-                if (Sprite != null && Sprite.NativePointer != IntPtr.Zero)
+                if (Sprite != null)
                 {
                     Sprite.End();
                 }
@@ -844,22 +844,22 @@ namespace Client.Rendering.SharpDXD3D9
 
             Screen selectedScreen = RenderingPipelineManager.GetSelectedScreen();
 
-            int adapterCount = _direct3D.GetAdapterCount();
-            for (int i = 0; i < adapterCount; i++)
+            uint adapterCount = _direct3D.AdapterCount;
+            for (uint i = 0; i < adapterCount; i++)
             {
                 AdapterIdentifier identifier = _direct3D.GetAdapterIdentifier(i);
                 if (string.Equals(identifier.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
-                    return i;
+                    return (int)i;
 
                 nint monitorHandle = _direct3D.GetAdapterMonitor(i);
                 Screen adapterScreen = Screen.FromHandle(monitorHandle);
 
                 if (string.Equals(adapterScreen.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
-                    return i;
+                    return (int)i;
             }
 
             int fallbackIndex = RenderingPipelineManager.GetSelectedMonitorIndex();
-            if (fallbackIndex < 0 || fallbackIndex >= adapterCount)
+            if (fallbackIndex < 0 || fallbackIndex >= (int)adapterCount)
                 fallbackIndex = 0;
 
             return fallbackIndex;

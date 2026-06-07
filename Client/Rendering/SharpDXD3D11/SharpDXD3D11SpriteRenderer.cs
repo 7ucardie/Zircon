@@ -200,10 +200,10 @@ namespace Client.Rendering.SharpDXD3D11
             _outlineBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                SizeInBytes = Unsafe.SizeOf<OutlineBufferType>(),
+                ByteWidth = Unsafe.SizeOf<OutlineBufferType>(),
                 BindFlags = BindFlags.ConstantBuffer,
                 CpuAccessFlags = CpuAccessFlags.Write,
-                OptionFlags = ResourceOptionFlags.None,
+                MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
         }
@@ -227,10 +227,10 @@ namespace Client.Rendering.SharpDXD3D11
             _dropShadowBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                SizeInBytes = Unsafe.SizeOf<DropShadowBufferType>(),
+                ByteWidth = Unsafe.SizeOf<DropShadowBufferType>(),
                 BindFlags = BindFlags.ConstantBuffer,
                 CpuAccessFlags = CpuAccessFlags.Write,
-                OptionFlags = ResourceOptionFlags.None,
+                MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
         }
@@ -258,27 +258,27 @@ namespace Client.Rendering.SharpDXD3D11
             _vertexBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                SizeInBytes = Unsafe.SizeOf<VertexType>() * 4,
+                ByteWidth = Unsafe.SizeOf<VertexType>() * 4,
                 BindFlags = BindFlags.VertexBuffer,
                 CpuAccessFlags = CpuAccessFlags.Write,
-                OptionFlags = ResourceOptionFlags.None,
+                MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
 
             _matrixBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                SizeInBytes = Unsafe.SizeOf<Matrix4x4>(),
+                ByteWidth = Unsafe.SizeOf<Matrix4x4>(),
                 BindFlags = BindFlags.ConstantBuffer,
                 CpuAccessFlags = CpuAccessFlags.Write,
-                OptionFlags = ResourceOptionFlags.None,
+                MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
         }
 
         private void InitializeSampler()
         {
-            _samplerState = _device.CreateSamplerState(new SamplerStateDescription
+            _samplerState = _device.CreateSamplerState(new SamplerDescription
             {
                 Filter = Filter.MinMagMipLinear,
                 AddressU = TextureAddressMode.Clamp,
@@ -334,7 +334,7 @@ namespace Client.Rendering.SharpDXD3D11
 
         private void CreateBlendState(BlendMode mode, BlendOption src, BlendOption dest, BlendOption srcAlpha, BlendOption destAlpha)
         {
-            var desc = new BlendStateDescription();
+            var desc = new BlendDescription();
             desc.RenderTarget[0].IsBlendEnabled = true;
 
             desc.RenderTarget[0].SourceBlend = src;
@@ -479,13 +479,13 @@ namespace Client.Rendering.SharpDXD3D11
 
             _context.IASetInputLayout(_inputLayout);
             _context.IASetPrimitiveTopology(PrimitiveTopology.TriangleStrip);
-            _context.IASetVertexBuffer(0, _vertexBuffer, Unsafe.SizeOf<VertexType>(), 0);
+            _context.IASetVertexBuffer(0, _vertexBuffer, (uint)Unsafe.SizeOf<VertexType>(), 0);
 
             bool usingEffect = effect.HasValue && effect.Value.IsValid;
             float geometryExpand = usingEffect ? effect.Value.GeometryExpand : 0f;
             bool expandUvs = usingEffect && effect.Value.ExpandUvs;
 
-            UpdateVertexBuffer(destination, source, texture.Description.Width, texture.Description.Height, color, opacity, geometryExpand, expandUvs);
+            UpdateVertexBuffer(destination, source, (int)texture.Description.Width, (int)texture.Description.Height, color, opacity, geometryExpand, expandUvs);
             UpdateMatrixBuffer(transform);
 
             _context.VSSetShader(_vertexShader);

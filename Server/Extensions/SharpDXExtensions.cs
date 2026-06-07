@@ -72,7 +72,7 @@ public static class SharpDXExtensions
     {
         ArgumentNullException.ThrowIfNull(device);
 
-        RawRect[] rawRectangles = rectangles?.Select(rectangle => new RawRect(rectangle)).ToArray();
+        Vortice.Direct3D9.Rect[] rawRectangles = rectangles?.Select(rectangle => new Vortice.Direct3D9.Rect(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom)).ToArray();
 
         device.Clear(flags, color.ToColorBGRA(), z, stencil, rawRectangles);
     }

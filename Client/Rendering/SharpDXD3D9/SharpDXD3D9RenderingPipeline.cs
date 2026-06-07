@@ -218,7 +218,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (surface.NativeHandle is not Surface dxSurface)
                 throw new ArgumentException("Surface handle must wrap a SharpDX surface instance.", nameof(surface));
 
-            SharpDXD3D9Manager.Device.ColorFill(dxSurface, ToRawRectangle(rectangle), color.ToColorBGRA());
+            SharpDXD3D9Manager.Device.ColorFill(dxSurface, ToRawRectangle(rectangle), (int)color.ToColorBGRA().PackedValue);
         }
 
         public void SetBlend(bool enabled, float rate, BlendMode mode)
@@ -257,7 +257,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (points == null || points.Count < 2)
                 return;
 
-            if (SharpDXD3D9Manager.Line == null || SharpDXD3D9Manager.Line.NativePointer == IntPtr.Zero)
+            if (SharpDXD3D9Manager.Line == null)
                 return;
 
             DxVector2[] converted = new DxVector2[points.Count];
@@ -303,7 +303,7 @@ namespace Client.Rendering.SharpDXD3D9
                 if (TryDrawSpriteEffect(texture, destinationRectangle, sourceRectangle, colour, NumericsMatrix3x2.Identity))
                     return;
 
-                SharpDXD3D9Manager.Sprite.Transform = DxMatrix.Scaling(scaleX, scaleY, 1F);
+                SharpDXD3D9Manager.Sprite.Transform = DxMatrix.CreateScale(scaleX, scaleY, 1F);
 
                 float translateX = destinationRectangle.X / scaleX;
                 float translateY = destinationRectangle.Y / scaleY;
@@ -340,7 +340,7 @@ namespace Client.Rendering.SharpDXD3D9
             finalTransform.M31 += translation.X;
             finalTransform.M32 += translation.Y;
 
-            var levelDesc = dxTexture.GetLevelDescription(0);
+            var levelDesc = dxTexture.GetLevelDesc(0);
             float width = sourceRectangle?.Width ?? levelDesc.Width;
             float height = sourceRectangle?.Height ?? levelDesc.Height;
 
@@ -537,7 +537,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         public Size GetBackBufferSize()
         {
-            return new Size(SharpDXD3D9Manager.Parameters.BackBufferWidth, SharpDXD3D9Manager.Parameters.BackBufferHeight);
+            return new Size((int)SharpDXD3D9Manager.Parameters.BackBufferWidth, (int)SharpDXD3D9Manager.Parameters.BackBufferHeight);
         }
 
         public void Clear(RenderClearFlags flags, GdiColor colour, float z, int stencil, params GdiRectangle[] regions)
@@ -546,9 +546,9 @@ namespace Client.Rendering.SharpDXD3D9
 
             if (regions != null && regions.Length > 0)
             {
-                RawRectangle[] dxRegions = new RawRectangle[regions.Length];
+                Vortice.Direct3D9.Rect[] dxRegions = new Vortice.Direct3D9.Rect[regions.Length];
                 for (int i = 0; i < regions.Length; i++)
-                    dxRegions[i] = ToRawRectangle(regions[i]);
+                    dxRegions[i] = new Vortice.Direct3D9.Rect(regions[i].Left, regions[i].Top, regions[i].Right, regions[i].Bottom);
 
                 SharpDXD3D9Manager.Device.Clear(dxFlags, ToDxColor(colour), z, stencil, dxRegions);
             }
@@ -581,7 +581,7 @@ namespace Client.Rendering.SharpDXD3D9
                 throw new InvalidOperationException("SharpDX texture handle expected.");
 
             LockFlags flags = ConvertLockFlags(mode);
-            DataRectangle rect = dxTexture.LockRect(0, flags);
+            LockedRectangle rect = dxTexture.LockRect(0, flags);
 
             return TextureLock.From(rect.DataPointer, rect.Pitch, () =>
             {
@@ -659,8 +659,8 @@ namespace Client.Rendering.SharpDXD3D9
             if (poisonTexture == null || poisonTexture.NativePointer == IntPtr.Zero)
                 throw new InvalidOperationException("Poison texture has not been initialized.");
 
-            SurfaceDescription description = poisonTexture.GetLevelDescription(0);
-            return new Size(description.Width, description.Height);
+            SurfaceDescription description = poisonTexture.GetLevelDesc(0);
+            return new Size((int)description.Width, (int)description.Height);
         }
 
         public RenderTexture GetColourPaletteTexture()
@@ -697,7 +697,7 @@ namespace Client.Rendering.SharpDXD3D9
                 _ => TextureFilter.Point
             };
 
-            SharpDXD3D9Manager.Device.SetSamplerState(0, SamplerState.MinFilter, filter);
+            SharpDXD3D9Manager.Device.SetSamplerState(0, SamplerState.MinFilter, (int)filter);
             _currentFilter = mode;
         }
 

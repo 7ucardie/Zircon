@@ -135,7 +135,7 @@ namespace Client.Envir
                     BufferList.RemoveAt(i);
                     continue;
                 }
-                BufferList[i].CurrentPosition = 0;
+                BufferList[i].SetCurrentPosition(0);
                 BufferList[i].Stop();
             }
         }
@@ -157,10 +157,8 @@ namespace Client.Envir
                 Flags = flags
             };
 
-            BufferList.Add(buff = new SecondarySoundBuffer(DXSoundManager.Device, description)
-            {
-                Volume = Volume
-            });
+            BufferList.Add(buff = DXSoundManager.Device.CreateSoundBuffer<SecondarySoundBuffer>(description));
+            buff.SetVolume(Volume);
 
             buff.Write(RawData, 0, LockFlags.EntireBuffer);
 
@@ -192,7 +190,7 @@ namespace Client.Envir
                     continue;
                 }
 
-                BufferList[i].Volume = Volume;
+                BufferList[i].SetVolume(Volume);
             }
         }
 
@@ -202,7 +200,7 @@ namespace Client.Envir
             {
                 SecondarySoundBuffer buffer = CreateBuffer();
 
-                buffer.CurrentPosition = GetCurrentPlayPosition(BufferList[0]);
+                buffer.SetCurrentPosition((uint)GetCurrentPlayPosition(BufferList[0]));
 
                 if (IsBufferPlaying(BufferList[0]))
                 {
@@ -222,8 +220,8 @@ namespace Client.Envir
 
         private static int GetCurrentPlayPosition(SecondarySoundBuffer buffer)
         {
-            buffer.GetCurrentPosition(out int playCursor, out _);
-            return playCursor;
+            buffer.GetCurrentPosition(out uint playCursor, out _);
+            return (int)playCursor;
         }
 
         private static VorticeMultimedia.WaveFormat ConvertWaveFormat(global::NAudio.Wave.WaveFormat sourceFormat)
