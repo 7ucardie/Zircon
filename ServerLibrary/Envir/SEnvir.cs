@@ -4269,9 +4269,11 @@ namespace Server.Envir
             return null;
         }
 
-        public static byte? LoadInstance(InstanceInfo instance, byte instanceSequence)
+        public static byte? LoadInstance(InstanceInfo instance, byte instanceSequence, DifficultyType difficulty = DifficultyType.Normal)
         {
             var mapInstance = Instances[instance];
+
+            instance.SequenceDifficulty[instanceSequence] = difficulty;
 
             mapInstance[instanceSequence] = new Dictionary<MapInfo, Map>();
 
@@ -4326,6 +4328,8 @@ namespace Server.Envir
 
             foreach (EventLogEntry entry in EventLogEntryList.Binding.Where(x => x.InstanceInfo == instance && x.InstanceSequence == instanceSequence).ToList())
                 entry.Delete();
+
+            instance.SequenceDifficulty.Remove(instanceSequence);
 
             Instances[instance][instanceSequence] = null;
 

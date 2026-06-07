@@ -1,4 +1,5 @@
-﻿using MirDB;
+﻿using Library;
+using MirDB;
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
@@ -295,6 +296,32 @@ namespace Library.SystemModels
 
         private bool _ShowTimer;
 
+        public int HardMultiplier
+        {
+            get { return _HardMultiplier; }
+            set
+            {
+                if (_HardMultiplier == value) return;
+                var oldValue = _HardMultiplier;
+                _HardMultiplier = value;
+                OnChanged(oldValue, value, "HardMultiplier");
+            }
+        }
+        private int _HardMultiplier = 25;
+
+        public int NightmareMultiplier
+        {
+            get { return _NightmareMultiplier; }
+            set
+            {
+                if (_NightmareMultiplier == value) return;
+                var oldValue = _NightmareMultiplier;
+                _NightmareMultiplier = value;
+                OnChanged(oldValue, value, "NightmareMultiplier");
+            }
+        }
+        private int _NightmareMultiplier = 50;
+
         [Association("Map", true)]
         public DBBindingList<InstanceMapInfo> Maps { get; set; }
 
@@ -313,6 +340,10 @@ namespace Library.SystemModels
         [IgnoreProperty]
         public Dictionary<string, DateTime> GuildCooldown { get; set; }
 
+        [JsonIgnore]
+        [IgnoreProperty]
+        public Dictionary<byte, DifficultyType> SequenceDifficulty { get; set; }
+
         public Stats Stats = new();
 
         protected internal override void OnLoaded()
@@ -322,6 +353,7 @@ namespace Library.SystemModels
             UserRecord = new Dictionary<string, byte>();
             UserCooldown = new Dictionary<string, DateTime>();
             GuildCooldown = new Dictionary<string, DateTime>();
+            SequenceDifficulty = new Dictionary<byte, DifficultyType>();
 
             StatsChanged();
         }

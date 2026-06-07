@@ -362,6 +362,13 @@ namespace Library
         Castle = 3
     }
 
+    public enum DifficultyType : byte
+    {
+        Normal = 0,
+        Hard = 1,
+        Nightmare = 2
+    }
+
     public enum RegionType : byte
     {
         None = 0,

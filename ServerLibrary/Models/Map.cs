@@ -42,6 +42,8 @@ namespace Server.Models
 
         public HashSet<MapRegion> LockedRegions { get; } = [];
 
+        public DifficultyType Difficulty => Instance != null && Instance.SequenceDifficulty.TryGetValue(InstanceSequence, out DifficultyType d) ? d : DifficultyType.Normal;
+
         public DateTime HalloweenEventTime, ChristmasEventTime;
 
         public Map(MapInfo info, InstanceInfo instance = null, byte instanceSequence = 0, int respawnIndex = 0)

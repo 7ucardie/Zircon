@@ -85,7 +85,7 @@ namespace Server.Models
             Enqueue(joinResult);
         }
 
-        public (byte? index, InstanceResult result) GetInstance(InstanceInfo instance, bool checkOnly = false, bool dungeonFinder = false, bool walkOn = false)
+        public (byte? index, InstanceResult result) GetInstance(InstanceInfo instance, bool checkOnly = false, bool dungeonFinder = false, bool walkOn = false, DifficultyType difficulty = DifficultyType.Normal)
         {
             if (instance.ConnectRegion == null && !walkOn)
                 return (null, InstanceResult.ConnectRegionNotSet);
@@ -312,7 +312,7 @@ namespace Server.Models
 
             if (!checkOnly)
             {
-                SEnvir.LoadInstance(instance, instanceSequence.Value);
+                SEnvir.LoadInstance(instance, instanceSequence.Value, difficulty);
 
                 if (instance.UserRecord.ContainsKey(Name))
                 {

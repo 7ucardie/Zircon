@@ -140,16 +140,18 @@ namespace Server.Models
 
             int offset = 1000000;
 
-            var monsterHealth = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterHealth)?.Amount ?? 0;
-            var maxMonsterHealth = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterHealth)?.Amount ?? 0;
-            var monsterDamage = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterDamage)?.Amount ?? 0;
-            var maxMonsterDamage = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterDamage)?.Amount ?? 0;
-            var monsterExperience = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterExperience)?.Amount ?? 0;
-            var maxMonsterExperience = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterExperience)?.Amount ?? 0;
-            var monsterDrop = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterDrop)?.Amount ?? 0;
-            var maxMonsterDrop = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterDrop)?.Amount ?? 0;
-            var monsterGold = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterGold)?.Amount ?? 0;
-            var maxMonsterGold = CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterGold)?.Amount ?? 0;
+            Stats instanceStats = CurrentMap.Instance?.Stats;
+
+            var monsterHealth = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterHealth)?.Amount ?? 0) + (instanceStats?[Stat.MonsterHealth] ?? 0);
+            var maxMonsterHealth = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterHealth)?.Amount ?? 0) + (instanceStats?[Stat.MaxMonsterHealth] ?? 0);
+            var monsterDamage = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterDamage)?.Amount ?? 0) + (instanceStats?[Stat.MonsterDamage] ?? 0);
+            var maxMonsterDamage = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterDamage)?.Amount ?? 0) + (instanceStats?[Stat.MaxMonsterDamage] ?? 0);
+            var monsterExperience = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterExperience)?.Amount ?? 0) + (instanceStats?[Stat.MonsterExperience] ?? 0);
+            var maxMonsterExperience = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterExperience)?.Amount ?? 0) + (instanceStats?[Stat.MaxMonsterExperience] ?? 0);
+            var monsterDrop = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterDrop)?.Amount ?? 0) + (instanceStats?[Stat.MonsterDrop] ?? 0);
+            var maxMonsterDrop = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterDrop)?.Amount ?? 0) + (instanceStats?[Stat.MaxMonsterDrop] ?? 0);
+            var monsterGold = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MonsterGold)?.Amount ?? 0) + (instanceStats?[Stat.MonsterGold] ?? 0);
+            var maxMonsterGold = (CurrentMap.Info.BuffStats.FirstOrDefault(x => x.Stat == Stat.MaxMonsterGold)?.Amount ?? 0) + (instanceStats?[Stat.MaxMonsterGold] ?? 0);
 
             MapHealthRate = SEnvir.Random.Next(monsterHealth + offset, Math.Max(monsterHealth, maxMonsterHealth) + offset);
             MapDamageRate = SEnvir.Random.Next(monsterDamage + offset, Math.Max(monsterDamage, maxMonsterDamage) + offset);
@@ -167,6 +169,23 @@ namespace Server.Models
             MapExperienceRate -= offset;
             MapDropRate -= offset;
             MapGoldRate -= offset;
+
+            if (CurrentMap.Instance != null)
+            {
+                int multiplier = CurrentMap.Difficulty switch
+                {
+                    DifficultyType.Hard => CurrentMap.Instance.HardMultiplier,
+                    DifficultyType.Nightmare => CurrentMap.Instance.NightmareMultiplier,
+                    _ => 0
+                };
+
+                if (multiplier != 0)
+                {
+                    MapHealthRate += MapHealthRate * multiplier / 100;
+                    MapDamageRate += MapDamageRate * multiplier / 100;
+                    MapExperienceRate += MapExperienceRate * multiplier / 100;
+                }
+            }
 
             RefreshStats();
             CurrentHP = Stats[Stat.Health];
