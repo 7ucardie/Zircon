@@ -157,7 +157,7 @@ namespace Client.Envir
                 Flags = flags
             };
 
-            IDirectSoundBuffer rawBuffer = DXSoundManager.Device.CreateSoundBuffer(description);
+            IDirectSoundBuffer rawBuffer = DXSoundManager.Device.CreateSoundBuffer(description, null);
             buff = rawBuffer.QueryInterface<SecondarySoundBuffer>();
             rawBuffer.Dispose();
             BufferList.Add(buff);
