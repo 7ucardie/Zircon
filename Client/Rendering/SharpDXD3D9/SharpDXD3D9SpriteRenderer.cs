@@ -6,7 +6,7 @@ using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Color4 = Vortice.Mathematics.Color4;
-using ColorBGRA = Vortice.Mathematics.ColorBGRA;
+using ColorBGRA = Vortice.Mathematics.ColorBgra;
 using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
 using Matrix4x4 = System.Numerics.Matrix4x4;
 using NumericsMatrix3x2 = System.Numerics.Matrix3x2;

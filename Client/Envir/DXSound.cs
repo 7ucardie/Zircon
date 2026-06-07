@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.IO;
 using NAudioWave = NAudio.Wave;
 using NAudioVorbis = NAudio.Vorbis;
+using SecondarySoundBuffer = Vortice.DirectSound.IDirectSoundBuffer8;
 using VorticeMultimedia = Vortice.Multimedia;
 
 namespace Client.Envir

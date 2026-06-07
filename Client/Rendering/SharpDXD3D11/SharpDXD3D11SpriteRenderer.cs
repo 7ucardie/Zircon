@@ -24,6 +24,7 @@ using Vector4 = System.Numerics.Vector4;
 using VertexShader = Vortice.Direct3D11.ID3D11VertexShader;
 using PixelShader = Vortice.Direct3D11.ID3D11PixelShader;
 using InputLayout = Vortice.Direct3D11.ID3D11InputLayout;
+using BlendOption = Vortice.Direct3D11.Blend;
 using BlendState = Vortice.Direct3D11.ID3D11BlendState;
 using SamplerState = Vortice.Direct3D11.ID3D11SamplerState;
 using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;

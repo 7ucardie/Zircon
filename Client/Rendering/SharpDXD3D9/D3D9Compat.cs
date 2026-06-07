@@ -32,7 +32,7 @@ public sealed class Sprite : IDisposable
     public void Begin(SpriteFlags flags) { }
     public void End() { }
     public void Flush() { }
-    public void Draw(IDirect3DTexture9 texture, ColorBGRA color, RawRect? sourceRect, Vector3? center, Vector3? translation) { }
+    public void Draw(IDirect3DTexture9 texture, Color color, RectI? sourceRect, Vector3? center, Vector3? translation) { }
 
     public void Dispose() { _disposed = true; }
 }
@@ -46,7 +46,7 @@ public sealed class Line : IDisposable
 
     public Line(IDirect3DDevice9 device) { }
 
-    public void Draw(Vector2[] vertices, ColorBGRA color) { }
+    public void Draw(Vector2[] vertices, Color color) { }
 
     public void Dispose() { _disposed = true; }
 }

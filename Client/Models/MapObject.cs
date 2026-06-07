@@ -8,6 +8,7 @@ using Library;
 using Library.SystemModels;
 using Vortice.Direct3D9;
 using System;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;

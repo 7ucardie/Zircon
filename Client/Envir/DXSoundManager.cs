@@ -3,6 +3,7 @@ using Library;
 using Vortice.DirectSound;
 using System;
 using System.Collections.Generic;
+using DirectSound = Vortice.DirectSound.IDirectSound8;
 
 
 namespace Client.Envir

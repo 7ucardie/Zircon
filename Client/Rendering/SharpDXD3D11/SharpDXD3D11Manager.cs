@@ -1,7 +1,7 @@
 ﻿using Client.Controls;
 using Client.Envir;
 
-using Vortice.Direct2D;
+using Vortice.Direct2D1;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
 using Vortice.Mathematics;
@@ -30,8 +30,11 @@ using Factory = Vortice.DXGI.IDXGIFactory1;
 using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
 using RenderTargetView = Vortice.Direct3D11.ID3D11RenderTargetView;
 using SwapChain = Vortice.DXGI.IDXGISwapChain;
-using Bitmap1 = Vortice.Direct2D.ID2D1Bitmap1;
-using SolidColorBrush = Vortice.Direct2D.ID2D1SolidColorBrush;
+using Bitmap1 = Vortice.Direct2D1.ID2D1Bitmap1;
+using Color = System.Drawing.Color;
+using RawRectF = Vortice.Mathematics.Rect;
+using Size = System.Drawing.Size;
+using SolidColorBrush = Vortice.Direct2D1.ID2D1SolidColorBrush;
 
 namespace Client.Rendering.SharpDXD3D11
 {
@@ -136,7 +139,7 @@ namespace Client.Rendering.SharpDXD3D11
             if (Device != null)
                 return;
 
-            D2D1.D2D1CreateFactory(Vortice.Direct2D.FactoryType.MultiThreaded, out ID2D1Factory1 d2dFactory).CheckError();
+            D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.MultiThreaded, out ID2D1Factory1 d2dFactory).CheckError();
             D2DFactory = d2dFactory;
 
             Factory = new Factory();
@@ -453,12 +456,12 @@ namespace Client.Rendering.SharpDXD3D11
 
             // Apply clip
             d2d.PushAxisAlignedClip(
-                new RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom),
+                RawRectF.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom),
                 AntialiasMode.Aliased);
 
             // Fill the clipped region
             d2d.FillRectangle(
-                new RawRectF(rect.Left, rect.Top, rect.Right, rect.Bottom),
+                RawRectF.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom),
                 brush);
 
             // Remove clip

@@ -5,9 +5,9 @@ using System.Drawing;
 using System.Linq;
 using System.Numerics;
 using Color = System.Drawing.Color;
-using ColorBGRA = Vortice.Mathematics.ColorBGRA;
+using ColorBGRA = Vortice.Mathematics.Color;
 using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
-using RawRect = Vortice.Mathematics.RawRect;
+using RawRect = Vortice.Mathematics.RectI;
 using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Server.Extensions;
@@ -72,7 +72,7 @@ public static class SharpDXExtensions
     {
         ArgumentNullException.ThrowIfNull(device);
 
-        RawRect[] rawRectangles = rectangles?.Select(rectangle => new RawRect(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom)).ToArray();
+        RawRect[] rawRectangles = rectangles?.Select(rectangle => new RawRect(rectangle)).ToArray();
 
         device.Clear(flags, color.ToColorBGRA(), z, stencil, rawRectangles);
     }
@@ -95,7 +95,7 @@ public static class SharpDXExtensions
         line.Draw(vertexList, color);
     }
 
-    private static RawRect ToVorticeRect(Rectangle rectangle) => new(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom);
+    private static RawRect ToVorticeRect(Rectangle rectangle) => new(rectangle);
 }
 
 public static class SharpDXColorExtensions

@@ -13,10 +13,11 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Blend = Vortice.Direct3D9.Blend;
 using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
-using DxColor = Vortice.Mathematics.ColorBGRA;
+using DxColor = Vortice.Mathematics.Color;
 using GdiColor = System.Drawing.Color;
 using GdiPoint = System.Drawing.Point;
 using GdiRectangle = System.Drawing.Rectangle;
+using Size = System.Drawing.Size;
 using Surface = Vortice.Direct3D9.IDirect3DSurface9;
 using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 

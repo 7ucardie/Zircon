@@ -11,7 +11,7 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 using DrawingFont = System.Drawing.Font;
-using DxColor = Vortice.Mathematics.ColorBGRA;
+using DxColor = Vortice.Mathematics.Color;
 using DxMatrix = System.Numerics.Matrix4x4;
 using DxVector2 = System.Numerics.Vector2;
 using GdiColor = System.Drawing.Color;
@@ -20,9 +20,10 @@ using GdiRectangle = System.Drawing.Rectangle;
 using GdiRectangleF = System.Drawing.RectangleF;
 using NumericsMatrix3x2 = System.Numerics.Matrix3x2;
 using NumericsVector3 = System.Numerics.Vector3;
-using RawColorBGRA = Vortice.Mathematics.ColorBGRA;
-using RawRectangle = Vortice.Mathematics.RawRect;
+using RawColorBGRA = Vortice.Mathematics.Color;
+using RawRectangle = Vortice.Mathematics.RectI;
 using RawVector3 = System.Numerics.Vector3;
+using Size = System.Drawing.Size;
 using Surface = Vortice.Direct3D9.IDirect3DSurface9;
 using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
@@ -707,29 +708,17 @@ namespace Client.Rendering.SharpDXD3D9
 
         private static DxColor ToDxColor(GdiColor colour)
         {
-            return new DxColor
-            {
-                R = colour.R,
-                G = colour.G,
-                B = colour.B,
-                A = colour.A
-            };
+            return new DxColor(colour.R, colour.G, colour.B, colour.A);
         }
 
         private static RawColorBGRA ToRawColor(GdiColor colour)
         {
-            return new RawColorBGRA
-            {
-                R = colour.R,
-                G = colour.G,
-                B = colour.B,
-                A = colour.A
-            };
+            return new RawColorBGRA(colour.R, colour.G, colour.B, colour.A);
         }
 
         private static RawRectangle ToRawRectangle(GdiRectangle rectangle)
         {
-            return new RawRectangle(rectangle.X, rectangle.Y, rectangle.Right, rectangle.Bottom);
+            return new RawRectangle(rectangle);
         }
 
         private static ClearFlags ConvertClearFlags(RenderClearFlags flags)
