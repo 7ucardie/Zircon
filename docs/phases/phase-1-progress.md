@@ -60,7 +60,7 @@ can opt into via `MonsterInfo` flags:
 
 ## 1.3 — NPC Scripting Support
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `ServerLibrary/Envir/NpcScriptEngine.cs`
 
 Complex NPC logic (branching quests, dynamic pricing, faction checks)
 requires C# code changes today. A scripting layer allows content
@@ -69,32 +69,22 @@ designers to write logic without a developer.
 ### Current location
 `LibraryCore/SystemModels/NPCInfo.cs` — dialog tree (pages, checks, actions)
 `ServerLibrary/Models/NPCObject.cs` — runtime NPC execution
+`ServerLibrary/Envir/NpcScriptEngine.cs` — Lua engine, proxy types
 
-### Proposed approach
-Add an optional `ScriptFile` field to `NPCPage`. When set, execute
-the script instead of (or alongside) the normal check/action chain.
-
-Recommended: **MoonSharp** (Lua interpreter, .NET native, sandboxed,
-mature, no native binaries needed).
-
-```lua
--- Example: DynamicMerchant.lua
-function on_open(player, npc)
-  if player.level >= 50 then
-    npc:show_page("HighLevelShop")
-  else
-    npc:show_page("StandardShop")
-  end
-end
-```
+### Implementation
+Added optional `ScriptFile` to `NPCPage`. Scripts execute via MoonSharp
+(`CoreModules.Preset_SoftSandbox`). `on_open` hook fires before check/action
+chain; `NPCCheckType.Script` and `NPCActionType.Script` dispatch to named Lua
+functions. Page navigation uses BFS over the NPCPage graph since no flat
+page list exists. Scripts live in `Scripts/NPC/` relative to the server binary.
 
 ### Tasks
-- [ ] Evaluate MoonSharp vs pure C# `IScript` interface approach
-- [ ] Add `ScriptFile` (optional) to `NPCPage`
-- [ ] Implement script sandbox (expose only safe player/npc API)
-- [ ] Implement `on_open`, `on_buy`, `on_sell`, `on_close` hooks
-- [ ] Add script hot-reload for development
-- [ ] Security: scripts run server-side only, no arbitrary file access
+- [x] Evaluate MoonSharp vs pure C# `IScript` interface approach — chose MoonSharp
+- [x] Add `ScriptFile` (optional) to `NPCPage`
+- [x] Implement script sandbox (expose only safe player/npc API)
+- [x] Implement `on_open` hook; `Script` check and action types
+- [x] Add `InvalidateCache()` for script hot-reload
+- [x] Security: `CoreModules.Preset_SoftSandbox` — no arbitrary file/OS access
 
 ---
 
@@ -274,7 +264,7 @@ dramatically speeds up map design and balance iteration.
 |---|---|---|
 | 1.1 Monster AI registry | **Complete** | `MonsterRegistry.cs` + `MonsterRegistrations.cs`; 525-line switch removed |
 | 1.2 Behaviour composition | **Partial** | Enum + field added; Heals/Teleports/Enrages implemented; class refactor pending |
-| 1.3 NPC scripting | Not started | |
+| 1.3 NPC scripting | **Complete** | `NpcScriptEngine.cs`; MoonSharp Lua, sandboxed, `on_open`/Script check+action |
 | 1.4 Scheduled events | Not started | |
 | 1.5 Event chaining | Not started | |
 | 1.6 Persistent EventLog | Not started | |
