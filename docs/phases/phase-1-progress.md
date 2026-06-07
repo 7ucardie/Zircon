@@ -135,28 +135,25 @@ via `SEnvir.SaveError` and return false. Registered automatically via reflection
 
 ## 1.5 — Event Chaining
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `ServerLibrary/Envir/Events/Actions/FireEvent.cs`
 
-Events cannot currently trigger other events. This means multi-stage
-world events (kill boss → start phase 2 → reward all players) need
-bespoke code.
+Events can now trigger other events via the `FireEvent` action type.
 
-### Proposed approach
-Add a `FireEvent` action type. When executed, it looks up the named
-event and fires it as if it had been triggered normally.
-
-```
-// Example: boss death triggers reward event
-MonsterDie trigger: BossMonster
-  Action: FireEvent("WorldBossRewardEvent")
-  Action: BroadcastMessage("The boss has fallen!")
-```
+### Implementation
+`FireEvent = 40` added to `EventActionType` enum.
+`WorldEventInfoList` added to `SEnvir` so events are findable by name.
+`EventInfoHandler.FireWorldEvent(WorldEventInfo)` executes all actions
+of a target event unconditionally (depth-first, no TriggerValue gating).
+`FireEvent` action: reads `StringParameter1` as target event Description,
+guards circular chains via `[ThreadStatic] int _depth` (max 10), logs
+unknown events and depth violations via `SEnvir.SaveError`.
 
 ### Tasks
-- [ ] Add `FireEvent` action class in `ServerLibrary/Envir/Events/Actions/`
-- [ ] Add event lookup by name in `EventInfoHandler`
-- [ ] Guard against circular event chains (max depth = 10)
-- [ ] Add `FireEvent` to event action enum in `LibraryCore`
+- [x] Add `FireEvent` to event action enum in `LibraryCore`
+- [x] Add `WorldEventInfoList` to `SEnvir` for name-based lookup
+- [x] Add `FireWorldEvent()` method to `EventInfoHandler`
+- [x] Add `FireEvent` action class in `ServerLibrary/Envir/Events/Actions/`
+- [x] Guard against circular event chains (max depth = 10)
 - [ ] Write integration test: event A fires event B on trigger
 
 ---
@@ -275,7 +272,7 @@ dramatically speeds up map design and balance iteration.
 | 1.2 Behaviour composition | **Partial** | Enum + field added; Heals/Teleports/Enrages implemented; class refactor pending |
 | 1.3 NPC scripting | **Complete** | `NpcScriptEngine.cs`; MoonSharp Lua, sandboxed, `on_open`/Script check+action |
 | 1.4 Scheduled events | **Complete** | `ScheduledTime.cs`; Cronos 0.8.4; `CronExpression` on `WorldEventTrigger` |
-| 1.5 Event chaining | Not started | |
+| 1.5 Event chaining | **Complete** | `FireEvent.cs`; `WorldEventInfoList` in SEnvir; depth guard via `[ThreadStatic]` |
 | 1.6 Persistent EventLog | Not started | |
 | 1.7 Dungeon phases | Not started | |
 | 1.8 Dungeon difficulty | Not started | Depends on 1.7 |

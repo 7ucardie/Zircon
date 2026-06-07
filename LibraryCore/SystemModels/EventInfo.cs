@@ -1031,7 +1031,9 @@ namespace Library.SystemModels
         TimerReset = 22,
 
         ItemDrop = 30,
-        ItemGive = 31
+        ItemGive = 31,
+
+        FireEvent = 40
     }
 
     #endregion

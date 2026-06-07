@@ -273,6 +273,7 @@ namespace Server.Envir
         public static DBCollection<UserMilestoneLog> UserMilestoneLogList;
         public static DBCollection<UserMilestone> UserMilestoneList;
 
+        public static DBCollection<WorldEventInfo> WorldEventInfoList;
         public static DBCollection<WorldEventTrigger> WorldEventInfoTriggerList;
         public static DBCollection<PlayerEventTrigger> PlayerEventInfoTriggerList;
 
@@ -478,6 +479,7 @@ namespace Server.Envir
             UserMilestoneLogList = Session.GetCollection<UserMilestoneLog>();
             UserMilestoneList = Session.GetCollection<UserMilestone>();
 
+            WorldEventInfoList = Session.GetCollection<WorldEventInfo>();
             WorldEventInfoTriggerList = Session.GetCollection<WorldEventTrigger>();
             PlayerEventInfoTriggerList = Session.GetCollection<PlayerEventTrigger>();
 
@@ -1289,6 +1291,7 @@ namespace Server.Envir
             UserMilestoneLogList = null;
             UserMilestoneList = null;
 
+            WorldEventInfoList = null;
             WorldEventInfoTriggerList = null;
             PlayerEventInfoTriggerList = null;
 
