@@ -11,3 +11,6 @@ licenses.licx
 /artifacts/client-build
 /Client/artifacts/codex-build/Client
 /LibraryCore/artifacts/codex-build/Client
+
+# Rust build artifacts
+rust/target/

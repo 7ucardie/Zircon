@@ -1,0 +1,20 @@
+[package]
+name = "zircon-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zircon game server (Tokio async)"
+
+[[bin]]
+name = "zircon-server"
+path = "src/main.rs"
+
+[dependencies]
+zircon-protocol = { path = "../protocol" }
+zircon-db       = { path = "../db" }
+tokio           = { workspace = true }
+bytes           = { workspace = true }
+anyhow          = { workspace = true }
+thiserror       = { workspace = true }
+tracing         = { workspace = true }
+tracing-subscriber = { workspace = true }

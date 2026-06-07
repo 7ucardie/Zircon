@@ -1,0 +1,10 @@
+[package]
+name = "zircon-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zircon wire-protocol codec (client ↔ server packets)"
+
+[dependencies]
+bytes     = { workspace = true }
+thiserror = { workspace = true }

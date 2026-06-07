@@ -95,3 +95,32 @@ jobs:
           --no-build
           --configuration ${{ matrix.configuration }}
           --logger "trx;LogFileName=test-results.trx"
+
+  build-rust:
+    name: Build Rust
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        working-directory: rust
+        run: cargo build --all
+
+      - name: Test
+        working-directory: rust
+        run: cargo test --all
