@@ -300,6 +300,19 @@ namespace Server.Envir.Events
             }
         }
 
+        public void FireWorldEvent(WorldEventInfo info)
+        {
+            var eventLog = GetWorldEventLog(info);
+            if (eventLog == null) return;
+
+            foreach (WorldEventAction action in info.Actions)
+            {
+                if (!_actions.TryGetValue(action.Type, out IEventAction eventAction)) continue;
+                if (eventAction is IWorldEventAction worldAction)
+                    worldAction.Act(eventLog, action);
+            }
+        }
+
         #endregion
 
         #region Event Logs

@@ -17,9 +17,11 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <OutputPath>..\..\Debug\Client\</OutputPath>
     <GenerateSerializationAssemblies>Off</GenerateSerializationAssemblies>
+    <NoWarn>1701;1702;CA1416</NoWarn>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <OutputPath>..\..\Debug\Client\</OutputPath>
+    <NoWarn>1701;1702;CA1416</NoWarn>
   </PropertyGroup>
   <PropertyGroup>
     <ApplicationIcon>Zircon.ico</ApplicationIcon>

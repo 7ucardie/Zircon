@@ -1,10 +1,14 @@
-using SharpDX.Direct3D9;
-using SharpDX.Mathematics.Interop;
+using Vortice.Direct3D9;
+using Vortice.Mathematics;
 using System;
 using System.Drawing;
 using System.Linq;
 using System.Numerics;
-using Color4 = SharpDX.Color4;
+using Color = System.Drawing.Color;
+using ColorBGRA = Vortice.Mathematics.Color;
+using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
+using RawRect = Vortice.Mathematics.RectI;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Client.Extensions;
 
@@ -50,58 +54,50 @@ public static class SharpDXExtensions
         line.DrawInternal(vertexList, color.ToColorBGRA());
     }
 
-    public static void Clear(this Device device, ClearFlags flags, Color color, float z, int stencil)
+    public static void Clear(this Device9 device, ClearFlags flags, Color color, float z, int stencil)
     {
         ArgumentNullException.ThrowIfNull(device);
 
         device.Clear(flags, color.ToColorBGRA(), z, stencil);
     }
 
-    public static void Clear(this Device device, ClearFlags flags, int color, float z, int stencil)
+    public static void Clear(this Device9 device, ClearFlags flags, int color, float z, int stencil)
     {
         ArgumentNullException.ThrowIfNull(device);
 
         device.Clear(flags, Color.FromArgb(color).ToColorBGRA(), z, stencil);
     }
 
-    public static void Clear(this Device device, ClearFlags flags, Color color, float z, int stencil, Rectangle[] rectangles)
+    public static void Clear(this Device9 device, ClearFlags flags, Color color, float z, int stencil, Rectangle[] rectangles)
     {
         ArgumentNullException.ThrowIfNull(device);
 
-        RawRectangle[] rawRectangles = rectangles?.Select(rectangle => new RawRectangle(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom)).ToArray();
+        Vortice.Direct3D9.Rect[] rawRectangles = rectangles?.Select(rectangle => new Vortice.Direct3D9.Rect(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom)).ToArray();
 
         device.Clear(flags, color.ToColorBGRA(), z, stencil, rawRectangles);
     }
 
-    private static void DrawInternal(this Sprite sprite, Texture texture, Rectangle? sourceRectangle, Vector3? center, Vector3? position, RawColorBGRA color)
+    private static void DrawInternal(this Sprite sprite, Texture texture, Rectangle? sourceRectangle, Vector3? center, Vector3? position, ColorBGRA color)
     {
         ArgumentNullException.ThrowIfNull(sprite);
         ArgumentNullException.ThrowIfNull(texture);
 
-        RawRectangle? rawRectangle = sourceRectangle.HasValue ? ToSharpDXRectangle(sourceRectangle.Value) : null;
-        RawVector3? rawCenter = center.HasValue ? ToSharpDXVector3(center.Value) : null;
-        RawVector3? rawPosition = position.HasValue ? ToSharpDXVector3(position.Value) : null;
+        RawRect? rawRectangle = sourceRectangle.HasValue ? ToVorticeRect(sourceRectangle.Value) : null;
+        Vector3? rawCenter = center;
+        Vector3? rawPosition = position;
 
         sprite.Draw(texture, color, rawRectangle, rawCenter, rawPosition);
     }
 
-    private static void DrawInternal(this Line line, Vector2[] vertexList, RawColorBGRA color)
+    private static void DrawInternal(this Line line, Vector2[] vertexList, ColorBGRA color)
     {
         ArgumentNullException.ThrowIfNull(line);
         ArgumentNullException.ThrowIfNull(vertexList);
 
-        RawVector2[] raw = new RawVector2[vertexList.Length];
-        for (int i = 0; i < vertexList.Length; i++)
-        {
-            raw[i] = new RawVector2(vertexList[i].X, vertexList[i].Y);
-        }
-
-        line.Draw(raw, color);
+        line.Draw(vertexList, color);
     }
 
-    private static RawRectangle ToSharpDXRectangle(Rectangle rectangle) => new(rectangle.Left, rectangle.Top, rectangle.Right, rectangle.Bottom);
-
-    private static RawVector3 ToSharpDXVector3(Vector3 vector) => new(vector.X, vector.Y, vector.Z);
+    private static RawRect ToVorticeRect(Rectangle rectangle) => new(rectangle);
 }
 
 public static class SharpDXColorExtensions
@@ -118,24 +114,24 @@ public static class SharpDXColorExtensions
     public static Color ToColor(this Color4 color)
     {
         return Color.FromArgb(
-            ToByte(color.Alpha),
-            ToByte(color.Red),
-            ToByte(color.Green),
-            ToByte(color.Blue));
+            ToByte(color.A),
+            ToByte(color.R),
+            ToByte(color.G),
+            ToByte(color.B));
     }
 
-    public static RawColorBGRA ToColorBGRA(this Color color)
+    public static ColorBGRA ToColorBGRA(this Color color)
     {
-        return new RawColorBGRA(color.B, color.G, color.R, color.A);
+        return new ColorBGRA(color.R, color.G, color.B, color.A);
     }
 
-    public static RawColorBGRA ToColorBGRA(this Color4 color)
+    public static ColorBGRA ToColorBGRA(this Color4 color)
     {
-        return new RawColorBGRA(
-            ToByte(color.Blue),
-            ToByte(color.Green),
-            ToByte(color.Red),
-            ToByte(color.Alpha));
+        return new ColorBGRA(
+            ToByte(color.R),
+            ToByte(color.G),
+            ToByte(color.B),
+            ToByte(color.A));
     }
 
     private static byte ToByte(float value)

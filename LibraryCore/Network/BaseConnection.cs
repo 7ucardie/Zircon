@@ -1,8 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Net.Sockets;
 using System.Reflection;
+using System.Threading.Tasks;
 using G = Library.Network.GeneralPackets;
 
 namespace Library.Network
@@ -24,6 +26,7 @@ namespace Library.Network
         public bool AdditionalLogging;
 
         protected TcpClient Client;
+        private NetworkStream _stream;
 
         public DateTime TimeConnected { get; set; }
         public TimeSpan Duration => Time.Now - TimeConnected;
@@ -53,6 +56,7 @@ namespace Library.Network
         {
             Client = client;
             Client.NoDelay = true;
+            _stream = client.GetStream();
 
             Connected = true;
             TimeConnected = Time.Now;
@@ -60,66 +64,53 @@ namespace Library.Network
             TotalPacketsProcessed = 0;
         }
 
-        protected void BeginReceive()
+        // Kept for subclass compatibility (CConnection calls this in its constructor).
+        protected void BeginReceive() => _ = ReceiveLoopAsync();
+
+        private async Task ReceiveLoopAsync()
         {
+            byte[] buffer = new byte[8 * 1024];
             try
             {
-                if (Client == null || !Client.Connected) return;
+                while (Connected)
+                {
+                    int dataRead = await _stream.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false);
 
-                byte[] rawBytes = new byte[8 * 1024];
+                    if (!Connected) return;
 
-                Client.Client.BeginReceive(rawBytes, 0, rawBytes.Length, SocketFlags.None, ReceiveData, rawBytes);
+                    if (dataRead == 0)
+                    {
+                        Disconnecting = true;
+                        return;
+                    }
+
+                    TotalBytesReceived += dataRead;
+                    UpdateTimeOut();
+
+                    byte[] temp = _rawData;
+                    _rawData = new byte[dataRead + temp.Length];
+                    Buffer.BlockCopy(temp, 0, _rawData, 0, temp.Length);
+                    Buffer.BlockCopy(buffer, 0, _rawData, temp.Length, dataRead);
+
+                    Packet p;
+                    while ((p = Packet.ReceivePacket(_rawData, out _rawData)) != null)
+                    {
+                        ReceiveList.Enqueue(p);
+                        TotalPacketsProcessed++;
+                    }
+                }
             }
             catch (Exception ex)
             {
                 if (AdditionalLogging)
-                    OnException(this, ex);
+                    OnException?.Invoke(this, ex);
                 Disconnecting = true;
             }
         }
-        private void ReceiveData(IAsyncResult result)
-        {
-            try
-            {
-                if (!Connected) return;
 
-                int dataRead = Client.Client.EndReceive(result);
+        private void BeginSend(List<byte> data) => _ = SendAsync(data);
 
-                if (dataRead == 0)
-                {
-                    Disconnecting = true;
-                    return;
-                }
-
-                TotalBytesReceived += dataRead;
-
-                UpdateTimeOut();
-
-                byte[] rawBytes = result.AsyncState as byte[];
-
-                byte[] temp = _rawData;
-                _rawData = new byte[dataRead + temp.Length];
-                Buffer.BlockCopy(temp, 0, _rawData, 0, temp.Length);
-                Buffer.BlockCopy(rawBytes, 0, _rawData, temp.Length, dataRead);
-
-                Packet p;
-
-                while ((p = Packet.ReceivePacket(_rawData, out _rawData)) != null)
-                {
-                    ReceiveList.Enqueue(p);
-                    TotalPacketsProcessed++;
-                }
-
-                BeginReceive();
-            }
-            catch (Exception ex)
-            {
-                if (AdditionalLogging)
-                    OnException(this, ex);
-                Disconnecting = true;
-            }
-        }
-        private void BeginSend(List<byte> data)
+        private async Task SendAsync(List<byte> data)
         {
             if (!Connected || data.Count == 0) return;
 
@@ -127,32 +118,21 @@ namespace Library.Network
             {
                 Sending = true;
                 TotalBytesSent += data.Count;
-                Client.Client.BeginSend(data.ToArray(), 0, data.Count, SocketFlags.None, SendData, null);
                 UpdateTimeOut();
+                await _stream.WriteAsync(data.ToArray(), 0, data.Count).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 if (AdditionalLogging)
-                    OnException(this, ex);
+                    OnException?.Invoke(this, ex);
                 Disconnecting = true;
+            }
+            finally
+            {
                 Sending = false;
             }
         }
-        private void SendData(IAsyncResult result)
-        {
-            try
-            {
-                Sending = false;
-                Client.Client.EndSend(result);
-                UpdateTimeOut();
-            }
-            catch (Exception ex)
-            {
-                if (AdditionalLogging)
-                    OnException(this, ex);
-                Disconnecting = true;
-            }
-        }
+
         public virtual void Enqueue(Packet p)
         {
             if (!Connected || p == null) return;
@@ -171,6 +151,7 @@ namespace Library.Network
             SendList = null;
             ReceiveList = null;
             _rawData = null;
+            _stream = null;
 
             Client.Client.Dispose();
             Client = null;
@@ -187,41 +168,25 @@ namespace Library.Network
             }
 
             List<byte> data = new List<byte>();
-
             data.AddRange(p.GetPacketBytes());
 
-            BeginSendDisconnect(data);
+            _ = SendDisconnectAsync(data);
         }
-        private void BeginSendDisconnect(List<byte> data)
-        {
-            if (!Connected || data.Count == 0) return;
 
-            if (Disconnecting) return;
+        private async Task SendDisconnectAsync(List<byte> data)
+        {
+            if (!Connected || data.Count == 0 || Disconnecting) return;
 
             try
             {
                 Disconnecting = true;
-
                 TotalBytesSent += data.Count;
-                Client.Client.BeginSend(data.ToArray(), 0, data.Count, SocketFlags.None, SendDataDisconnect, null);
+                await _stream.WriteAsync(data.ToArray(), 0, data.Count).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
                 if (AdditionalLogging)
-                    OnException(this, ex);
-            }
-        }
-        private void SendDataDisconnect(IAsyncResult result)
-        {
-
-            try
-            {
-                Client.Client.EndSend(result);
-            }
-            catch (Exception ex)
-            {
-                if (AdditionalLogging)
-                    OnException(this, ex);
+                    OnException?.Invoke(this, ex);
             }
         }
 
@@ -281,7 +246,6 @@ namespace Library.Network
                 try
                 {
                     byte[] bytes = p.GetPacketBytes();
-
                     data.AddRange(bytes);
                 }
                 catch (Exception ex)
@@ -290,7 +254,6 @@ namespace Library.Network
                     Disconnecting = true;
                     return;
                 }
-
 
                 if (!Monitor) continue;
 

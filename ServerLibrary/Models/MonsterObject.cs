@@ -20,7 +20,7 @@ namespace Server.Models
 
         public sealed override MirDirection Direction { get; set; }
 
-        public DateTime SearchTime, RoamTime, EXPOwnerTime, DeadTime, RageTime, TameTime;
+        public DateTime SearchTime, RoamTime, EXPOwnerTime, DeadTime, RageTime, TameTime, BehaviourHealTime;
 
         public TimeSpan SearchDelay = TimeSpan.FromSeconds(3),
                         RoamDelay = TimeSpan.FromSeconds(2),
@@ -110,6 +110,9 @@ namespace Server.Models
 
         public bool IgnoreShield;
 
+        private bool _behaviourEnraged;
+        private bool _behaviourTeleported;
+
         public bool EasterEventMob, HalloweenEventMob, ChristmasEventMob;
 
         public int MapHealthRate, MapDamageRate, MapExperienceRate, MapDropRate, MapGoldRate;
@@ -120,529 +123,8 @@ namespace Server.Models
         public override bool CanAttack => base.CanAttack && (Poison & PoisonType.Silenced) != PoisonType.Silenced && AttackDelay > 0 && (PetOwner == null || PetOwner.PetMode == PetMode.Both || PetOwner.PetMode == PetMode.Attack || PetOwner.PetMode == PetMode.PvP);
 
         public static MonsterObject GetMonster(MonsterInfo monsterInfo)
-        {
-            switch (monsterInfo.AI)
-            {
-                case -1:
-                    return new Guard { MonsterInfo = monsterInfo };
-                case 1:
-                    return new MonsterObject { MonsterInfo = monsterInfo, Passive = true, NeedHarvest = true, HarvestCount = 2 };
-                case 2:
-                    return new MonsterObject { MonsterInfo = monsterInfo, Passive = true, NeedHarvest = true, HarvestCount = 3 };
-                case 3:
-                    return new MonsterObject { MonsterInfo = monsterInfo, NeedHarvest = true, HarvestCount = 3 };
-                case 4:
-                    return new TreeMonster { MonsterInfo = monsterInfo };
-                case 5:
-                    return new CarnivorousPlant { MonsterInfo = monsterInfo, NeedHarvest = true, HarvestCount = 2 };
-                case 6:
-                    return new SpittingSpider { MonsterInfo = monsterInfo, NeedHarvest = true, HarvestCount = 2, PoisonType = PoisonType.Green };
-                case 7:
-                    return new SkeletonAxeThrower { MonsterInfo = monsterInfo };
-                case 8:
-                    return new MonsterObject { MonsterInfo = monsterInfo, NeedHarvest = true, HarvestCount = 2, PoisonType = PoisonType.Paralysis, PoisonTicks = 1, PoisonFrequency = 5, PoisonRate = 12 };
-                case 9:
-                    return new GhostSorcerer { MonsterInfo = monsterInfo };
-                case 10:
-                    return new GhostMage { MonsterInfo = monsterInfo };
-                case 11:
-                    return new VoraciousGhost { MonsterInfo = monsterInfo };
-                case 12:
-                    return new HealerAnt { MonsterInfo = monsterInfo };
-                case 13:
-                    return new LordNiJae { MonsterInfo = monsterInfo };
-                case 14:
-                    return new SpittingSpider { MonsterInfo = monsterInfo, PoisonType = PoisonType.Green };
-                case 15:
-                    return new MonsterObject { MonsterInfo = monsterInfo };
-                case 16:
-                    return new UmaKing { MonsterInfo = monsterInfo };
-                case 17:
-                    return new ArachnidGrazer
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList = { [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.Larva)] = 1 }
-                    };
-                case 18:
-                    return new Larva { MonsterInfo = monsterInfo, PoisonType = PoisonType.Green };
-                case 19:
-                    return new RedMoonTheFallen { MonsterInfo = monsterInfo };
-                case 20:
-                    return new SkeletonAxeThrower { MonsterInfo = monsterInfo, FearRate = 2, FearDuration = 4 };
-                case 21:
-                    return new ZumaGuardian { MonsterInfo = monsterInfo };
-                case 22:
-                    return new ZumaKing
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.ZumaArcherMonster)] = 50,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.ZumaFanaticMonster)] = 25,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.ZumaGuardianMonster)] = 25,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.ZumaKeeperMonster)] = 1
-                        }
-                    };
-                case 23:
-                    return new Monkey { MonsterInfo = monsterInfo, PoisonType = PoisonType.Green };
-                case 24:
-                    return new Monkey { MonsterInfo = monsterInfo, PoisonType = PoisonType.Red };
-                case 25:
-                    return new EvilElephant { MonsterInfo = monsterInfo };
-                case 26:
-                    return new NumaMage { MonsterInfo = monsterInfo };
-                case 27:
-                    return new GhostMage { MonsterInfo = monsterInfo };
-                case 28:
-                    return new WindfurySorcerer { MonsterInfo = monsterInfo };
-                case 29:
-                    return new SkeletonAxeThrower { MonsterInfo = monsterInfo };
-                case 30:
-                    return new NetherworldGate { MonsterInfo = monsterInfo };
-                case 31:
-                    return new SonicLizard { MonsterInfo = monsterInfo };
-                case 33:
-                    return new GiantLizard { MonsterInfo = monsterInfo, AttackRange = 9, IgnoreShield = true };
-                case 34:
-                    return new SkeletonAxeThrower { MonsterInfo = monsterInfo, AttackRange = 9 };
-                case 35:
-                    return new MonsterObject { MonsterInfo = monsterInfo };
-                case 36:
-                    return new NumaMage { MonsterInfo = monsterInfo };
-                case 37:
-                    return new MonsterObject { MonsterInfo = monsterInfo };
-                case 38:
-                    return new BanyaLeftGuard { MonsterInfo = monsterInfo };
-                case 39:
-                    return new MonsterObject { MonsterInfo = monsterInfo };
-                case 40:
-                    return new MonsterObject { MonsterInfo = monsterInfo };
-                case 41:
-                    return new EmperorSaWoo { MonsterInfo = monsterInfo };
-                case 42:
-                    return new SpittingSpider { MonsterInfo = monsterInfo };
-                case 43:
-                    return new ArchLichTaedu
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.BoneArcher)] = 90,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.BoneSoldier)] = 15,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.BoneBladesman)] = 15,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.BoneCaptain)] = 15,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.SkeletonEnforcer)] = 1
-                        }
-                    };
-                case 44:
-                    return new WedgeMothLarva
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList = { [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.LesserWedgeMoth)] = 1 }
-                    };
-                case 45:
-                    return new RazorTusk { MonsterInfo = monsterInfo };
-                case 46:
-                    return new SpittingSpider { MonsterInfo = monsterInfo, PoisonType = PoisonType.Red, PoisonTicks = 1, PoisonFrequency = 10, PoisonRate = 25 };
-                case 47:
-                    return new SpittingSpider { MonsterInfo = monsterInfo, PoisonType = PoisonType.Green, PoisonTicks = 7, PoisonRate = 15 };
-                case 48:
-                    return new SonicLizard { MonsterInfo = monsterInfo, IgnoreShield = true };
-                case 49:
-                    return new GiantLizard { MonsterInfo = monsterInfo, AttackRange = 8, PoisonType = PoisonType.Paralysis, PoisonTicks = 1, PoisonFrequency = 5 };
-                case 50:
-                    return new GiantLizard { MonsterInfo = monsterInfo, AttackRange = 8 };
-                case 52:
-                    return new WhiteBone() { MonsterInfo = monsterInfo };
-                case 53:
-                    return new Shinsu { MonsterInfo = monsterInfo };
-                case 54:
-                    return new GiantLizard { MonsterInfo = monsterInfo, RangeCooldown = TimeSpan.FromSeconds(5) };
-                case 56:
-                    return new CorrosivePoisonSpitter { MonsterInfo = monsterInfo, PoisonType = PoisonType.Green, PoisonTicks = 7, PoisonRate = 15, IgnoreShield = true };
-                case 57:
-                    return new CorrosivePoisonSpitter { MonsterInfo = monsterInfo };
-                case 58:
-                    return new Stomper { MonsterInfo = monsterInfo };
-                case 59:
-                    return new CrimsonNecromancer() { MonsterInfo = monsterInfo };
-                case 60:
-                    return new ChaosKnight() { MonsterInfo = monsterInfo };
-                case 61:
-                    return new PachontheChaosbringer { MonsterInfo = monsterInfo };
-                case 62:
-                    return new NumaHighMage { MonsterInfo = monsterInfo };
-                case 63:
-                    return new NumaStoneThrower { MonsterInfo = monsterInfo };
-                case 64:
-                    return new Monkey { MonsterInfo = monsterInfo };
-                case 65:
-                    return new IcyGoddess { MonsterInfo = monsterInfo, FindRange = 3 };
-                case 66:
-                    return new IcySpiritWarrior { MonsterInfo = monsterInfo, PoisonType = PoisonType.Paralysis, PoisonTicks = 1, PoisonFrequency = 5, PoisonRate = 25 };
-                case 67:
-                    return new IcySpiritGeneral
-                    {
-                        MonsterInfo = monsterInfo,
-                        IgnoreShield = true,
-                    };
-                case 68:
-                    return new Warewolf
-                    {
-                        MonsterInfo = monsterInfo,
-                        IgnoreShield = true,
-                    };
-                case 69:
-                    return new JinamStoneGate { MonsterInfo = monsterInfo };
-                case 70:
-                    return new FrostLordHwa { MonsterInfo = monsterInfo };
-                case 71:
-                    return new BanyoWarrior { MonsterInfo = monsterInfo };
-                case 72:
-                    return new BanyoCaptain { MonsterInfo = monsterInfo };
-                case 74:
-                    return new BanyoLordGuzak
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.BanyoCaptain)] = 2,
-                        }
-                    };
-                case 75:
-                    return new DepartedMonster
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList = { [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.MatureEarwig)] = 1 }
-                    };
-                case 76:
-                    return new DepartedMonster
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList = { [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.GoldenArmouredBeetle)] = 1 }
-                    };
-                case 77:
-                    return new EnragedLordNiJae
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList = { [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.Millipede)] = 1 },
-                        MaxMinions = 200,
-                    };
-                case 78:
-                    return new JinchonDevil { MonsterInfo = monsterInfo };
-                case 79:
-                    return new GiantLizard { MonsterInfo = monsterInfo, AttackRange = 10, RangeCooldown = TimeSpan.FromSeconds(5) };
-                case 80:
-                    return new SunFeralWarrior
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.FerociousFlameDemon)] = 5,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.FlameDemon)] = 1,
-                        }
-                    };
-                case 81:
-                    return new MoonFeralWarrior
-                    {
-                        MonsterInfo = monsterInfo
-                    };
-                case 82:
-                    return new OxFeralGeneral
-                    {
-                        MonsterInfo = monsterInfo,
-                        IgnoreShield = true,
-                    };
-                case 83:
-                    return new FlameDemon
-                    {
-                        MonsterInfo = monsterInfo,
-                        Min = -2,
-                        Max = 2,
-                    };
-                case 84:
-                    return new WingedHorror
-                    {
-                        MonsterInfo = monsterInfo,
-                        RangeChance = 1,
-                    };
-                case 85:
-                    return new EmperorSaWoo { MonsterInfo = monsterInfo, PoisonType = PoisonType.Paralysis, PoisonTicks = 1, PoisonFrequency = 5, PoisonRate = 8 };
-                case 86:
-                    return new FlameDemon
-                    {
-                        MonsterInfo = monsterInfo,
-                        Passive = true,
-                        Min = 0,
-                        Max = 8,
-                    };
-                case 87:
-                    return new OmaWarlord
-                    {
-                        MonsterInfo = monsterInfo,
-                        PoisonType = PoisonType.Abyss,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 7,
-                        PoisonRate = 15
-                    };
-                case 88:
-                    return new GoruSpearman
-                    {
-                        MonsterInfo = monsterInfo,
-                    };
-                case 89:
-                    return new GoruArcher
-                    {
-                        MonsterInfo = monsterInfo,
+            => MonsterRegistry.Create(monsterInfo);
 
-                        PoisonType = PoisonType.Silenced,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 5,
-                        PoisonRate = 10
-                    };
-                case 90:
-                    return new OmaWarlord
-                    {
-                        MonsterInfo = monsterInfo,
-                        PoisonType = PoisonType.Paralysis,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 5,
-                        PoisonRate = 25
-                    };
-                case 91:
-                    return new EnragedArchLichTaedu
-                    {
-                        MonsterInfo = monsterInfo,
-
-                        MinSpawn = 5,
-                        RandomSpawn = 5,
-
-                        PoisonType = PoisonType.Red,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 25,
-                        PoisonRate = 5,
-
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.GoruArcher)] = 10,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.GoruGeneral)] = 5,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.GoruSpearman)] = 5,
-                        }
-                    };
-                case 92:
-                    return new GiantLizard { MonsterInfo = monsterInfo, AttackRange = 9 };
-                case 93:
-                    return new EscortCommander { MonsterInfo = monsterInfo };
-                case 94:
-                    return new FieryDancer { MonsterInfo = monsterInfo };
-                case 95:
-                    return new FieryDancer
-                    {
-                        MonsterInfo = monsterInfo,
-                        PoisonType = PoisonType.Paralysis,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 5,
-                        PoisonRate = 15,
-                    };
-                case 96:
-                    return new QueenOfDawn { MonsterInfo = monsterInfo };
-                case 97:
-                    return new SonicLizard { MonsterInfo = monsterInfo, IgnoreShield = true, Range = 5 };
-                case 98:
-                    return new YumgonWitch
-                    {
-                        MonsterInfo = monsterInfo,
-                        AoEElement = Element.Lightning
-                    };
-                case 99:
-                    return new JinhwanSpirit
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [monsterInfo] = 1,
-                        }
-                    };
-                case 100:
-                    return new YumgonWitch
-                    {
-                        MonsterInfo = monsterInfo,
-                    };
-                case 101:
-                    return new DragonQueen
-                    {
-                        MonsterInfo = monsterInfo,
-                        DragonLordInfo = SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.DragonLord),
-
-                        SpawnList =
-                         {
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.OYoungBeast)] = 2,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.YumgonWitch)] = 2,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.MaWarden)] = 2,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.MaWarlord)] = 2,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.JinhwanSpirit)] = 2,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.JinhwanGuardian)] = 2,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.OyoungGeneral)] = 2,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.YumgonGeneral)] = 2,
-                         }
-                    };
-                case 102:
-                    return new DragonLord
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                         {
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.OYoungBeast)] = 10000,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.YumgonWitch)] = 10000,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.MaWarden)] = 10000,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.MaWarlord)] = 10000,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.JinhwanSpirit)] = 10000,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.JinhwanGuardian)] = 10000,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.OyoungGeneral)] = 10000,
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.YumgonGeneral)] = 10000,
-
-                             [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.DragonLord)] = 1,
-                         }
-                    };
-                case 103:
-                    return new InfernalSoldier { MonsterInfo = monsterInfo, AttackRange = 5 };
-                case 104:
-                    return new FerociousIceTiger { MonsterInfo = monsterInfo };
-                case 105:
-                    return new GiantLizard { MonsterInfo = monsterInfo, AttackRange = 5, IgnoreShield = true, CanPvPRange = true };
-                case 106:
-                    return new GiantLizard { MonsterInfo = monsterInfo, AttackRange = 7, CanPvPRange = true };
-                case 107:
-                    return new SamaFireGuardian { MonsterInfo = monsterInfo };
-                case 108:
-                    return new SamaIceGuardian { MonsterInfo = monsterInfo };
-                case 109:
-                    return new SamaLightningGuardian { MonsterInfo = monsterInfo };
-                case 110:
-                    return new SamaWindGuardian { MonsterInfo = monsterInfo };
-                case 111:
-                    return new SamaPhoenix { MonsterInfo = monsterInfo };
-                case 112:
-                    return new SamaBlack { MonsterInfo = monsterInfo };
-                case 113:
-                    return new SamaBlue { MonsterInfo = monsterInfo };
-                case 114:
-                    return new SamaWhite { MonsterInfo = monsterInfo };
-                case 115:
-                    return new SamaProphet
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.SamaSorcerer)] = 1,
-                        }
-                    };
-                case 116:
-                    return new SamaScorcer()
-                    {
-                        MonsterInfo = monsterInfo,
-                    };
-                case 117:
-                    return new BanyoWarrior { MonsterInfo = monsterInfo, DoubleDamage = true };
-                case 118:
-                    return new OmaMage { MonsterInfo = monsterInfo };
-                case 119:
-                    return new MonsterObject
-                    {
-                        MonsterInfo = monsterInfo,
-
-                        PoisonType = PoisonType.Silenced,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 5,
-                        PoisonRate = 10
-                    };
-                case 120:
-                    return new DoomClaw()
-                    {
-                        MonsterInfo = monsterInfo,
-                    };
-                case 121:
-                    return new PinkBat { MonsterInfo = monsterInfo };
-                case 122:
-                    return new QuartzTurtleSub
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.QuartzMiniTurtle)] = 2,
-                        }
-                    };
-                case 123:
-                    return new Larva
-                    {
-                        MonsterInfo = monsterInfo,
-                        Range = 3,
-                    };
-                case 124:
-                    return new QuartzTree
-                    {
-                        MonsterInfo = monsterInfo,
-                        SubBossInfo = SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.QuartzTurtleSub),
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.QuartzBlueBat)] = 20,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.QuartzPinkBat)] = 20,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.QuartzBlueCrystal)] = 20,
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.QuartzRedHood)] = 2,
-                        }
-                    };
-                case 125:
-                    return new CarnivorousPlant { MonsterInfo = monsterInfo, HideRange = 1, FindRange = 1 };
-                case 126:
-                    return new MonasteryBoss
-                    {
-                        MonsterInfo = monsterInfo,
-                        SpawnList =
-                        {
-                            [SEnvir.MonsterInfoList.Binding.First(x => x.Flag == MonsterFlag.Sacrifice)] = 1,
-                        }
-                    };
-                case 127:
-                    return new JinchonDevil { MonsterInfo = monsterInfo, CastDelay = TimeSpan.FromSeconds(8), DeathCloudDurationMin = 2000, DeathCloudDurationRandom = 5000 };
-                case 128:
-                    return new Doll { MonsterInfo = monsterInfo };
-                case 129:
-                    return new Monsters.Tornado { MonsterInfo = monsterInfo, Passive = true };
-                case 130:
-                    return new UndeadSoul { MonsterInfo = monsterInfo };
-                case 131:
-                    return new Terracotta { MonsterInfo = monsterInfo };
-                case 132:
-                    return new Terracotta { MonsterInfo = monsterInfo, CanPhase = true };
-                case 133:
-                    return new TerracottaSub
-                    {
-                        MonsterInfo = monsterInfo,
-                        PoisonType = PoisonType.Paralysis,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 5,
-                        PoisonRate = 15,
-                    };
-                case 134:
-                    return new TerracottaBoss
-                    {
-                        MonsterInfo = monsterInfo,
-                        PoisonType = PoisonType.Paralysis,
-                        PoisonTicks = 1,
-                        PoisonFrequency = 5,
-                        PoisonRate = 15,
-                    };
-
-                case 1001:
-                    return new CastleFlag { MonsterInfo = monsterInfo };
-                case 1002:
-                    return new CastleGate { MonsterInfo = monsterInfo };
-                case 1003:
-                    return new CastleGuard { MonsterInfo = monsterInfo };
-                default:
-                    return new MonsterObject { MonsterInfo = monsterInfo };
-            }
-        }
         public MonsterObject()
         {
             Stats = new Stats();
@@ -693,6 +175,10 @@ namespace Server.Models
             RegenTime = SEnvir.Now.AddMilliseconds(SEnvir.Random.Next((int)RegenDelay.TotalMilliseconds));
             SearchTime = SEnvir.Now.AddMilliseconds(SEnvir.Random.Next((int)SearchDelay.TotalMilliseconds));
             RoamTime = SEnvir.Now.AddMilliseconds(SEnvir.Random.Next((int)RoamDelay.TotalMilliseconds));
+
+            _behaviourEnraged = false;
+            _behaviourTeleported = false;
+            BehaviourHealTime = SEnvir.Now + TimeSpan.FromSeconds(30);
 
             ActionTime = SEnvir.Now.AddSeconds(1);
 
@@ -981,6 +467,7 @@ namespace Server.Models
             }
 
             ProcessRegen();
+            ProcessBehaviours();
             ProcessSearch();
             ProcessRoam();
             ProcessTarget();
@@ -1046,6 +533,51 @@ namespace Server.Models
             int regen = (int)Math.Max(1, Stats[Stat.Health] * 0.02F); //2% every 10 seconds aprox
 
             ChangeHP(regen);
+        }
+
+        public virtual void ProcessBehaviours()
+        {
+            MonsterBehaviour behaviours = MonsterInfo?.Behaviours ?? MonsterBehaviour.None;
+            if (behaviours == MonsterBehaviour.None) return;
+
+            if (behaviours.HasFlag(MonsterBehaviour.Heals))
+                ProcessHealBehaviour();
+
+            if (behaviours.HasFlag(MonsterBehaviour.Teleports))
+                ProcessTeleportBehaviour();
+
+            if (behaviours.HasFlag(MonsterBehaviour.Enrages))
+                ProcessEnrageBehaviour();
+        }
+
+        private void ProcessHealBehaviour()
+        {
+            if (SEnvir.Now < BehaviourHealTime) return;
+            if (CurrentHP >= Stats[Stat.Health]) return;
+
+            BehaviourHealTime = SEnvir.Now + TimeSpan.FromSeconds(30);
+
+            int heal = (int)Math.Max(1, Stats[Stat.Health] * 0.10f);
+            ChangeHP(heal);
+        }
+
+        private void ProcessTeleportBehaviour()
+        {
+            if (_behaviourTeleported) return;
+            if (CurrentHP > Stats[Stat.Health] / 4) return;
+
+            _behaviourTeleported = true;
+            TeleportNearby(5, 15);
+        }
+
+        private void ProcessEnrageBehaviour()
+        {
+            if (_behaviourEnraged) return;
+            if (CurrentHP > Stats[Stat.Health] / 4) return;
+
+            _behaviourEnraged = true;
+            AttackDelay = (int)(AttackDelay * 0.6f);
+            RageTime = SEnvir.Now + TimeSpan.FromMinutes(10);
         }
 
         public virtual void ProcessSearch()

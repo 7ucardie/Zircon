@@ -1,4 +1,5 @@
-﻿using MirDB;
+﻿using Library;
+using MirDB;
 using System.Text.Json.Serialization;
 
 namespace Library.SystemModels
@@ -50,6 +51,21 @@ namespace Library.SystemModels
             }
         }
         private int _AI;
+
+        public MonsterBehaviour Behaviours
+        {
+            get { return _Behaviours; }
+            set
+            {
+                if (_Behaviours == value) return;
+
+                var oldValue = _Behaviours;
+                _Behaviours = value;
+
+                OnChanged(oldValue, value, "Behaviours");
+            }
+        }
+        private MonsterBehaviour _Behaviours;
 
         public int Level
         {

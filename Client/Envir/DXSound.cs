@@ -1,11 +1,12 @@
 ﻿using Client.Rendering;
-using SharpDX.DirectSound;
+using Vortice.DirectSound;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using NAudioWave = NAudio.Wave;
 using NAudioVorbis = NAudio.Vorbis;
-using SharpDXMultimedia = SharpDX.Multimedia;
+using SecondarySoundBuffer = Vortice.DirectSound.IDirectSoundBuffer8;
+using VorticeMultimedia = Vortice.Multimedia;
 
 namespace Client.Envir
 {
@@ -15,7 +16,7 @@ namespace Client.Envir
 
         public List<SecondarySoundBuffer> BufferList = new List<SecondarySoundBuffer>();
 
-        private SharpDXMultimedia.WaveFormat Format;
+        private VorticeMultimedia.WaveFormat Format;
         private byte[] RawData;
 
 
@@ -92,7 +93,7 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (BufferList[i].IsDisposed)
+                if (BufferList[i].NativePointer == IntPtr.Zero)
                 {
                     BufferList.RemoveAt(i);
                     continue;
@@ -129,12 +130,12 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (BufferList[i].IsDisposed)
+                if (BufferList[i].NativePointer == IntPtr.Zero)
                 {
                     BufferList.RemoveAt(i);
                     continue;
                 }
-                BufferList[i].CurrentPosition = 0;
+                BufferList[i].SetCurrentPosition(0);
                 BufferList[i].Stop();
             }
         }
@@ -156,10 +157,11 @@ namespace Client.Envir
                 Flags = flags
             };
 
-            BufferList.Add(buff = new SecondarySoundBuffer(DXSoundManager.Device, description)
-            {
-                Volume = Volume
-            });
+            IDirectSoundBuffer rawBuffer = DXSoundManager.Device.CreateSoundBuffer(description, null);
+            buff = rawBuffer.QueryInterface<SecondarySoundBuffer>();
+            rawBuffer.Dispose();
+            BufferList.Add(buff);
+            buff.SetVolume(Volume);
 
             buff.Write(RawData, 0, LockFlags.EntireBuffer);
 
@@ -171,11 +173,7 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (!BufferList[i].IsDisposed)
-                {
-                    BufferList[i].Dispose();
-                }
-
+                BufferList[i].Dispose();
                 BufferList.RemoveAt(i);
             }
 
@@ -189,13 +187,13 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (BufferList[i].IsDisposed)
+                if (BufferList[i].NativePointer == IntPtr.Zero)
                 {
                     BufferList.RemoveAt(i);
                     continue;
                 }
 
-                BufferList[i].Volume = Volume;
+                BufferList[i].SetVolume(Volume);
             }
         }
 
@@ -205,18 +203,14 @@ namespace Client.Envir
             {
                 SecondarySoundBuffer buffer = CreateBuffer();
 
-                buffer.CurrentPosition = GetCurrentPlayPosition(BufferList[0]);
+                buffer.SetCurrentPosition(GetCurrentPlayPosition(BufferList[0]));
 
                 if (IsBufferPlaying(BufferList[0]))
                 {
                     buffer.Play(0, Loop ? PlayFlags.Looping : PlayFlags.None);
                 }
 
-                if (!BufferList[0].IsDisposed)
-                {
-                    BufferList[0].Dispose();
-                }
-
+                BufferList[0].Dispose();
                 BufferList.RemoveAt(0);
             }
 
@@ -233,12 +227,12 @@ namespace Client.Envir
             return playCursor;
         }
 
-        private static SharpDXMultimedia.WaveFormat ConvertWaveFormat(global::NAudio.Wave.WaveFormat sourceFormat)
+        private static VorticeMultimedia.WaveFormat ConvertWaveFormat(global::NAudio.Wave.WaveFormat sourceFormat)
         {
-            if (!Enum.TryParse(sourceFormat.Encoding.ToString(), out SharpDXMultimedia.WaveFormatEncoding encoding))
-                encoding = SharpDXMultimedia.WaveFormatEncoding.Pcm;
+            if (!Enum.TryParse(sourceFormat.Encoding.ToString(), out VorticeMultimedia.WaveFormatEncoding encoding))
+                encoding = VorticeMultimedia.WaveFormatEncoding.Pcm;
 
-            return SharpDXMultimedia.WaveFormat.CreateCustomFormat(
+            return VorticeMultimedia.WaveFormat.CreateCustomFormat(
                 encoding,
                 sourceFormat.SampleRate,
                 sourceFormat.Channels,

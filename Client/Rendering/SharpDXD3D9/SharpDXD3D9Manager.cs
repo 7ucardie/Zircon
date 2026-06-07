@@ -1,7 +1,7 @@
 ﻿using Client.Controls;
 using Client.Envir;
-using SharpDX;
-using SharpDX.Direct3D9;
+using Vortice.Direct3D9;
+using Vortice.Mathematics;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
@@ -11,11 +11,15 @@ using System.Drawing.Text;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using Blend = SharpDX.Direct3D9.Blend;
-using DxColor = SharpDX.Color;
+using Blend = Vortice.Direct3D9.Blend;
+using Device9 = Vortice.Direct3D9.IDirect3DDevice9;
+using DxColor = Vortice.Mathematics.Color;
 using GdiColor = System.Drawing.Color;
 using GdiPoint = System.Drawing.Point;
 using GdiRectangle = System.Drawing.Rectangle;
+using Size = System.Drawing.Size;
+using Surface = Vortice.Direct3D9.IDirect3DSurface9;
+using Texture = Vortice.Direct3D9.IDirect3DTexture9;
 
 namespace Client.Rendering.SharpDXD3D9
 {
@@ -29,11 +33,11 @@ namespace Client.Rendering.SharpDXD3D9
         public static List<Size> ValidDisplays = new List<Size>();
         private static PresentParameters _parameters;
         public static PresentParameters Parameters => _parameters;
-        private static Direct3D _direct3D;
+        private static IDirect3D9 _direct3D;
         private static int _adapterIndex;
         private static readonly DisplayModeManager _displayMode = new DisplayModeManager();
         private static System.Windows.Forms.Timer _postTogglePlacementTimer;
-        public static Device Device { get; private set; }
+        public static Device9 Device { get; private set; }
         public static Sprite Sprite { get; private set; }
         public static Line Line { get; private set; }
         public static SharpDXD3D9SpriteRenderer SpriteRenderer { get; private set; }
@@ -62,16 +66,16 @@ namespace Client.Rendering.SharpDXD3D9
         {
             get
             {
-                if (_ColourPallete == null || _ColourPallete.IsDisposed)
+                if (_ColourPallete == null || _ColourPallete.NativePointer == IntPtr.Zero)
                 {
                     _ColourPallete = null;
 
                     if (PalleteData != null)
                     {
-                        _ColourPallete = new Texture(Device, 200, 149, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
-                        DataRectangle rect = _ColourPallete.LockRectangle(0, LockFlags.Discard);
+                        _ColourPallete = Device.CreateTexture(200u, 149u, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
+                        LockedRectangle rect = _ColourPallete.LockRect(0, LockFlags.Discard);
                         Marshal.Copy(PalleteData, 0, rect.DataPointer, PalleteData.Length);
-                        _ColourPallete.UnlockRectangle(0);
+                        _ColourPallete.UnlockRect(0);
                     }
                 }
 
@@ -89,7 +93,7 @@ namespace Client.Rendering.SharpDXD3D9
         {
             get
             {
-                if (_LightTexture == null || _LightTexture.IsDisposed)
+                if (_LightTexture == null || _LightTexture.NativePointer == IntPtr.Zero)
                 {
                     CreateLight();
                 }
@@ -103,7 +107,7 @@ namespace Client.Rendering.SharpDXD3D9
         {
             get
             {
-                if (_LightSurface == null || _LightSurface.IsDisposed)
+                if (_LightSurface == null || _LightSurface.NativePointer == IntPtr.Zero)
                 {
                     _LightSurface = LightTexture.GetSurfaceLevel(0);
                 }
@@ -133,7 +137,7 @@ namespace Client.Rendering.SharpDXD3D9
 
             ApplyWindowBounds();
 
-            _direct3D = new Direct3D();
+            _direct3D = D3D9.Direct3DCreate9();
 
             int adapterIndex = GetSelectedAdapterIndex();
             _adapterIndex = adapterIndex;
@@ -152,23 +156,20 @@ namespace Client.Rendering.SharpDXD3D9
                 };
 
                 Size backBufferSize = GetBackBufferSize();
-                _parameters.BackBufferWidth = backBufferSize.Width;
-                _parameters.BackBufferHeight = backBufferSize.Height;
+                _parameters.BackBufferWidth = (uint)backBufferSize.Width;
+                _parameters.BackBufferHeight = (uint)backBufferSize.Height;
 
-                // Use the determined adapter index when creating the Device.
-                //Debug.WriteLine($"Attempting to create device on Adapter Index: {adapterIndex}");
-                Device = new Device(_direct3D, adapterIndex, DeviceType.Hardware, CEnvir.Target.Handle, CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve, _parameters);
+                Device = _direct3D.CreateDevice((uint)adapterIndex, DeviceType.Hardware, CEnvir.Target.Handle, CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve, _parameters);
 
                 if (Config.FullScreen)
                     ApplyWindowBounds();
 
-                // The rest of your code remains unchanged
-                AdapterInformation adapterInfo = _direct3D.Adapters[adapterIndex];
-                var modes = adapterInfo.GetDisplayModes(Format.X8R8G8B8);
-
-                foreach (DisplayMode mode in modes)
+                // Enumerate all display modes for this adapter
+                uint modeCount = _direct3D.GetAdapterModeCount((uint)adapterIndex, Format.X8R8G8B8);
+                for (uint modeIdx = 0; modeIdx < modeCount; modeIdx++)
                 {
-                    Size s = new Size(mode.Width, mode.Height);
+                    DisplayMode mode = _direct3D.EnumAdapterModes((uint)adapterIndex, Format.X8R8G8B8, modeIdx);
+                    Size s = new Size((int)mode.Width, (int)mode.Height);
                     if (s.Width < MinimumResolution.Width || s.Height < MinimumResolution.Height) continue;
 
                     if (!ValidResolutions.Contains(s))
@@ -193,7 +194,7 @@ namespace Client.Rendering.SharpDXD3D9
                     }
                 }
             }
-            catch (SharpDXException ex)
+            catch (Exception ex) when (ex.HResult < 0)
             {
                 CEnvir.SaveException(ex);
                 throw;
@@ -214,9 +215,9 @@ namespace Client.Rendering.SharpDXD3D9
             Device.SetRenderTarget(0, MainSurface);
 
 
-            PoisonTexture = new Texture(Device, 6, 6, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
+            PoisonTexture = Device.CreateTexture(6u, 6u, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
 
-            DataRectangle rect = PoisonTexture.LockRectangle(0, LockFlags.Discard);
+            LockedRectangle rect = PoisonTexture.LockRect(0, LockFlags.Discard);
 
             int* data = (int*)rect.DataPointer;
 
@@ -228,19 +229,19 @@ namespace Client.Rendering.SharpDXD3D9
                 }
             }
 
-            ScratchTexture = new Texture(Device, _parameters.BackBufferWidth, _parameters.BackBufferHeight, 1, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
+            ScratchTexture = Device.CreateTexture((uint)_parameters.BackBufferWidth, (uint)_parameters.BackBufferHeight, 1u, Usage.RenderTarget, Format.A8R8G8B8, Pool.Default);
             ScratchSurface = ScratchTexture.GetSurfaceLevel(0);
         }
 
         private static void CreateLight()
         {
-            Texture light = new Texture(Device, LightWidth, LightHeight, 1, Usage.None, Format.A8R8G8B8, Pool.Managed);
+            Texture light = Device.CreateTexture((uint)LightWidth, (uint)LightHeight, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
 
             LightData = LightGenerator.CreateLightData(LightWidth, LightHeight);
 
-            DataRectangle rect = light.LockRectangle(0, LockFlags.Discard);
+            LockedRectangle rect = light.LockRect(0, LockFlags.Discard);
             Marshal.Copy(LightData, 0, rect.DataPointer, LightData.Length);
-            light.UnlockRectangle(0);
+            light.UnlockRect(0);
 
             _LightTexture = light;
         }
@@ -248,21 +249,13 @@ namespace Client.Rendering.SharpDXD3D9
         {
             if (Sprite != null)
             {
-                if (!Sprite.IsDisposed)
-                {
-                    Sprite.Dispose();
-                }
-
+                Sprite.Dispose();
                 Sprite = null;
             }
 
             if (Line != null)
             {
-                if (!Line.IsDisposed)
-                {
-                    Line.Dispose();
-                }
-
+                Line.Dispose();
                 Line = null;
             }
 
@@ -274,73 +267,43 @@ namespace Client.Rendering.SharpDXD3D9
 
             if (CurrentSurface != null)
             {
-                if (!CurrentSurface.IsDisposed)
-                {
-                    CurrentSurface.Dispose();
-                }
-
+                CurrentSurface.Dispose();
                 CurrentSurface = null;
             }
 
             if (_ColourPallete != null)
             {
-                if (!_ColourPallete.IsDisposed)
-                {
-                    _ColourPallete.Dispose();
-                }
-
+                _ColourPallete.Dispose();
                 _ColourPallete = null;
             }
 
             if (ScratchTexture != null)
             {
-                if (!ScratchTexture.IsDisposed)
-                {
-                    ScratchTexture.Dispose();
-                }
-
+                ScratchTexture.Dispose();
                 ScratchTexture = null;
             }
 
             if (ScratchSurface != null)
             {
-                if (!ScratchSurface.IsDisposed)
-                {
-                    ScratchSurface.Dispose();
-                }
-
+                ScratchSurface.Dispose();
                 ScratchSurface = null;
             }
 
             if (PoisonTexture != null)
             {
-                if (!PoisonTexture.IsDisposed)
-                {
-                    PoisonTexture.Dispose();
-                }
-
+                PoisonTexture.Dispose();
                 PoisonTexture = null;
             }
 
-
             if (_LightTexture != null)
             {
-                if (!_LightTexture.IsDisposed)
-                {
-                    _LightTexture.Dispose();
-                }
-
+                _LightTexture.Dispose();
                 _LightTexture = null;
             }
 
-
             if (_LightSurface != null)
             {
-                if (!_LightSurface.IsDisposed)
-                {
-                    _LightSurface.Dispose();
-                }
-
+                _LightSurface.Dispose();
                 _LightSurface = null;
             }
 
@@ -394,15 +357,11 @@ namespace Client.Rendering.SharpDXD3D9
 
             if (Device != null)
             {
-                if (!Device.IsDisposed)
-                {
-                    Device.Dispose();
-                }
-
+                Device.Dispose();
                 Device = null;
             }
 
-            if (_direct3D != null && !_direct3D.IsDisposed)
+            if (_direct3D != null)
                 _direct3D.Dispose();
 
             _direct3D = null;
@@ -466,8 +425,8 @@ namespace Client.Rendering.SharpDXD3D9
             {
                 Sprite.Begin(SpriteFlags.DoNotSaveState);
                 Device.SetRenderState(RenderState.AlphaBlendEnable, true);
-                Device.SetTextureStageState(0, TextureStage.ColorOperation, TextureOperation.Modulate);
-                Device.SetTextureStageState(0, TextureStage.AlphaOperation, TextureOperation.Modulate);
+                Device.SetTextureStageState(0, TextureStage.ColorOperation, (int)TextureOperation.Modulate);
+                Device.SetTextureStageState(0, TextureStage.AlphaOperation, (int)TextureOperation.Modulate);
 
                 switch (BlendMode)
                 {
@@ -517,14 +476,14 @@ namespace Client.Rendering.SharpDXD3D9
 
             if (colour == 0)
             {
-                Device.SetTextureStageState(0, TextureStage.ColorOperation, TextureOperation.Modulate);
-                Device.SetTextureStageState(0, TextureStage.ColorArg1, TextureArgument.Texture);
+                Device.SetTextureStageState(0, TextureStage.ColorOperation, (int)TextureOperation.Modulate);
+                Device.SetTextureStageState(0, TextureStage.ColorArg1, (int)TextureArgument.Texture);
             }
             else
             {
 
-                Device.SetTextureStageState(0, TextureStage.ColorOperation, TextureOperation.SelectArg1);
-                Device.SetTextureStageState(0, TextureStage.ColorArg1, TextureArgument.Current);
+                Device.SetTextureStageState(0, TextureStage.ColorOperation, (int)TextureOperation.SelectArg1);
+                Device.SetTextureStageState(0, TextureStage.ColorArg1, (int)TextureArgument.Current);
             }
 
             Sprite.Flush();
@@ -553,13 +512,13 @@ namespace Client.Rendering.SharpDXD3D9
 
             parameters.Windowed = ShouldUseWindowedPresentation();
             Size backBufferSize = GetBackBufferSize();
-            parameters.BackBufferWidth = backBufferSize.Width;
-            parameters.BackBufferHeight = backBufferSize.Height;
+            parameters.BackBufferWidth = (uint)backBufferSize.Width;
+            parameters.BackBufferHeight = (uint)backBufferSize.Height;
             parameters.PresentationInterval = Config.VSync ? PresentInterval.Default : PresentInterval.Immediate;
             parameters.PresentFlags = PresentFlags.LockableBackBuffer;
             parameters.FullScreenRefreshRateInHz = 0;
 
-            Device.Reset(parameters);
+            Device.Reset(ref parameters);
             _parameters = parameters;
 
             if (Config.FullScreen)
@@ -607,27 +566,19 @@ namespace Client.Rendering.SharpDXD3D9
 
         public static void AttemptReset()
         {
+            const int D3DERR_DEVICELOST = unchecked((int)0x88760868);
+            const int D3DERR_DEVICENOTRESET = unchecked((int)0x88760869);
             try
             {
-                Result result = Device.TestCooperativeLevel();
-
-                if (result.Code == ResultCode.DeviceLost.Code)
-                {
-                    return;
-                }
-
-                if (result.Code == ResultCode.DeviceNotReset.Code)
-                {
-                    ResetDevice();
-                    return;
-                }
-
-                if (result.Code != ResultCode.Success.Code)
-                {
-                    return;
-                }
-
+                Device.TestCooperativeLevel();
                 DeviceLost = false;
+            }
+            catch (Exception ex) when (ex.HResult == D3DERR_DEVICELOST)
+            {
+            }
+            catch (Exception ex) when (ex.HResult == D3DERR_DEVICENOTRESET)
+            {
+                ResetDevice();
             }
             catch (Exception ex)
             {
@@ -636,14 +587,14 @@ namespace Client.Rendering.SharpDXD3D9
         }
         public static void AttemptRecovery()
         {
-            if (Device == null || Device.IsDisposed)
+            if (Device == null || Device.NativePointer == IntPtr.Zero)
             {
                 return;
             }
 
             try
             {
-                if (Sprite != null && !Sprite.IsDisposed)
+                if (Sprite != null)
                 {
                     Sprite.End();
                 }
@@ -654,7 +605,7 @@ namespace Client.Rendering.SharpDXD3D9
 
             try
             {
-                if (Device != null && !Device.IsDisposed)
+                if (Device != null && Device.NativePointer != IntPtr.Zero)
                 {
                     Device.EndScene();
                 }
@@ -706,7 +657,7 @@ namespace Client.Rendering.SharpDXD3D9
                 return;
             }
 
-            Device.Clear(ClearFlags.Target, DxColor.Black, 0, 0);
+            Device.Clear(ClearFlags.Target, new DxColor(0, 0, 0, 255), 0, 0);
             Device.Present();
 
             CEnvir.Target.ClientSize = size;
@@ -893,20 +844,22 @@ namespace Client.Rendering.SharpDXD3D9
 
             Screen selectedScreen = RenderingPipelineManager.GetSelectedScreen();
 
-            for (int i = 0; i < _direct3D.Adapters.Count; i++)
+            uint adapterCount = _direct3D.AdapterCount;
+            for (uint i = 0; i < adapterCount; i++)
             {
-                AdapterInformation adapter = _direct3D.Adapters[i];
-                if (string.Equals(adapter.Details.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
-                    return i;
+                AdapterIdentifier identifier = _direct3D.GetAdapterIdentifier(i);
+                if (string.Equals(identifier.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
+                    return (int)i;
 
-                Screen adapterScreen = Screen.FromHandle(adapter.Monitor);
+                nint monitorHandle = _direct3D.GetAdapterMonitor(i);
+                Screen adapterScreen = Screen.FromHandle(monitorHandle);
 
                 if (string.Equals(adapterScreen.DeviceName, selectedScreen.DeviceName, StringComparison.OrdinalIgnoreCase))
-                    return i;
+                    return (int)i;
             }
 
             int fallbackIndex = RenderingPipelineManager.GetSelectedMonitorIndex();
-            if (fallbackIndex < 0 || fallbackIndex >= _direct3D.Adapters.Count)
+            if (fallbackIndex < 0 || fallbackIndex >= (int)adapterCount)
                 fallbackIndex = 0;
 
             return fallbackIndex;
