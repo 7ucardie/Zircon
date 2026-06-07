@@ -2093,6 +2093,19 @@ namespace Library
         Sacrifice = 210
     }
 
+    [Flags]
+    public enum MonsterBehaviour
+    {
+        None       = 0,
+        HasPoison  = 1 << 0,
+        Summons    = 1 << 1,
+        Heals      = 1 << 2,
+        Teleports  = 1 << 3,
+        AOEAttack  = 1 << 4,
+        RangeAttack = 1 << 5,
+        Enrages    = 1 << 6,
+    }
+
     public enum FishingState : byte
     {
         None,
