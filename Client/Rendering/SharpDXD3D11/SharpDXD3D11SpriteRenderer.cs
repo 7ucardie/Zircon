@@ -26,7 +26,6 @@ using PixelShader = Vortice.Direct3D11.ID3D11PixelShader;
 using InputLayout = Vortice.Direct3D11.ID3D11InputLayout;
 using BlendOption = Vortice.Direct3D11.Blend;
 using BlendState = Vortice.Direct3D11.ID3D11BlendState;
-using ColorWriteMaskFlags = Vortice.Direct3D11.ColorWriteMask;
 using SamplerState = Vortice.Direct3D11.ID3D11SamplerState;
 using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
 using ShaderResourceView = Vortice.Direct3D11.ID3D11ShaderResourceView;
@@ -346,7 +345,7 @@ namespace Client.Rendering.SharpDXD3D11
             desc.RenderTarget[0].DestinationAlphaBlend = destAlpha;
             desc.RenderTarget[0].AlphaBlendOperation = BlendOperation.Add;
 
-            desc.RenderTarget[0].RenderTargetWriteMask = ColorWriteMaskFlags.All;
+            desc.RenderTarget[0].RenderTargetWriteMask = 15; // D3D11_COLOR_WRITE_ENABLE_ALL = RGBA
 
             _blendStates[mode] = _device.CreateBlendState(desc);
         }
