@@ -40,6 +40,8 @@ namespace Server.Models
         public DateTime LastProcess, LastPlayer;
         public DateTime InstanceExpiry;
 
+        public HashSet<MapRegion> LockedRegions { get; } = [];
+
         public DateTime HalloweenEventTime, ChristmasEventTime;
 
         public Map(MapInfo info, InstanceInfo instance = null, byte instanceSequence = 0, int respawnIndex = 0)
@@ -582,6 +584,9 @@ namespace Server.Models
             }
 
             if (Movements == null || Movements.Count == 0)
+                return this;
+
+            if (Map.LockedRegions.Count > 0 && Regions.Any(r => Map.LockedRegions.Contains(r)))
                 return this;
 
             for (int i = 0; i < 5; i++) //20 Attempts to get movement;

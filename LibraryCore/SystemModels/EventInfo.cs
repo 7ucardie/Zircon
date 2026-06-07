@@ -1033,6 +1033,9 @@ namespace Library.SystemModels
         ItemDrop = 30,
         ItemGive = 31,
 
+        RegionLock = 32,
+        RegionUnlock = 33,
+
         FireEvent = 40
     }
 
