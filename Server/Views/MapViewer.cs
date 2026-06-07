@@ -225,7 +225,7 @@ namespace Server.Views
             }
             catch (Exception ex) when (ex.HResult < 0)
             {
-                if (new Result(ex.HResult) == Result.DeviceLost)
+                if (ex.HResult == unchecked((int)0x88760868))
                 {
                     Manager.DeviceLost = true;
                 }
@@ -445,8 +445,8 @@ namespace Server.Views.DirectX
                 SwapEffect = SwapEffect.Discard,
                 BackBufferFormat = Format.X8R8G8B8,
                 PresentationInterval = PresentInterval.Default,
-                BackBufferWidth = Target.ClientSize.Width,
-                BackBufferHeight = Target.ClientSize.Height,
+                BackBufferWidth = (uint)Target.ClientSize.Width,
+                BackBufferHeight = (uint)Target.ClientSize.Height,
                 PresentFlags = PresentFlags.LockableBackBuffer,
             };
 
@@ -468,7 +468,7 @@ namespace Server.Views.DirectX
 
             AttributeTexture = Device.CreateTexture(48u, 32u, 1u, Usage.None, Format.A8R8G8B8, Pool.Managed);
 
-            DataRectangle rect = AttributeTexture.LockRectangle(0, LockFlags.Discard);
+            DataRectangle rect = AttributeTexture.LockRect(0, LockFlags.Discard);
 
             int* data = (int*)rect.DataPointer;
 
@@ -476,7 +476,7 @@ namespace Server.Views.DirectX
                 for (int x = 0; x < 48; x++)
                     data[y * 48 + x] = -1;
 
-            AttributeTexture.UnlockRectangle(0);
+            AttributeTexture.UnlockRect(0);
 
         }
         private void CleanUp()
@@ -499,17 +499,13 @@ namespace Server.Views.DirectX
 
             if (CurrentSurface != null)
             {
-                if (!CurrentSurface.IsDisposed)
-                    CurrentSurface.Dispose();
-
+                CurrentSurface.Dispose();
                 CurrentSurface = null;
             }
 
             if (AttributeTexture != null)
             {
-                if (!AttributeTexture.IsDisposed)
-                    AttributeTexture.Dispose();
-
+                AttributeTexture.Dispose();
                 AttributeTexture = null;
             }
 
@@ -589,14 +585,14 @@ namespace Server.Views.DirectX
 
             if (colour == 0)
             {
-                Device.SetTextureStageState(0, TextureStage.ColorOperation, TextureOperation.Modulate);
-                Device.SetTextureStageState(0, TextureStage.ColorArg1, TextureArgument.Texture);
+                Device.SetTextureStageState(0, TextureStage.ColorOperation, (int)TextureOperation.Modulate);
+                Device.SetTextureStageState(0, TextureStage.ColorArg1, (int)TextureArgument.Texture);
             }
             else
             {
 
-                Device.SetTextureStageState(0, TextureStage.ColorOperation, TextureOperation.SelectArg1);
-                Device.SetTextureStageState(0, TextureStage.ColorArg1, TextureArgument.Current);
+                Device.SetTextureStageState(0, TextureStage.ColorOperation, (int)TextureOperation.SelectArg1);
+                Device.SetTextureStageState(0, TextureStage.ColorArg1, (int)TextureArgument.Current);
             }
 
             Sprite.Flush();
@@ -615,30 +611,28 @@ namespace Server.Views.DirectX
             if (parameters.BackBufferWidth == 0 || parameters.BackBufferHeight == 0)
                 return;
 
-            parameters.BackBufferWidth = Target.ClientSize.Width;
-            parameters.BackBufferHeight = Target.ClientSize.Height;
+            parameters.BackBufferWidth = (uint)Target.ClientSize.Width;
+            parameters.BackBufferHeight = (uint)Target.ClientSize.Height;
 
-            Device.Reset(parameters);
+            Device.Reset(ref parameters);
             Parameters = parameters;
             LoadTextures();
         }
         public void AttemptReset()
         {
+            const int D3DERR_DEVICELOST = unchecked((int)0x88760868);
+            const int D3DERR_DEVICENOTRESET = unchecked((int)0x88760869);
             try
             {
-                Result result = Device.TestCooperativeLevel();
-
-                if (result == Result.DeviceLost) return;
-
-                if (result == Result.DeviceNotReset)
-                {
-                    ResetDevice();
-                    return;
-                }
-
-                if (result.Failure) return;
-
+                Device.TestCooperativeLevel();
                 DeviceLost = false;
+            }
+            catch (Exception ex) when (ex.HResult == D3DERR_DEVICELOST)
+            {
+            }
+            catch (Exception ex) when (ex.HResult == D3DERR_DEVICENOTRESET)
+            {
+                ResetDevice();
             }
             catch (Exception ex)
             {
@@ -714,32 +708,24 @@ namespace Server.Views.DirectX
 
                 if (CurrentSurface != null)
                 {
-                    if (!CurrentSurface.IsDisposed)
-                        CurrentSurface.Dispose();
-
+                    CurrentSurface.Dispose();
                     CurrentSurface = null;
                 }
 
                 if (MainSurface != null)
                 {
-                    if (!MainSurface.IsDisposed)
-                        MainSurface.Dispose();
-
+                    MainSurface.Dispose();
                     MainSurface = null;
                 }
 
                 if (Device != null)
                 {
-                    if (!Device.IsDisposed)
-                        Device.Dispose();
-
+                    Device.Dispose();
                     Device = null;
                 }
                 if (AttributeTexture != null)
                 {
-                    if (!AttributeTexture.IsDisposed)
-                        AttributeTexture.Dispose();
-
+                    AttributeTexture.Dispose();
                     AttributeTexture = null;
                 }
 
@@ -952,14 +938,14 @@ namespace Server.Views.DirectX
                                 m.M21 = -0.50F;
                                 Manager.Sprite.Transform = m * Matrix.CreateTranslation(x + image.Height / 2, y, 0);
 
-                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.None);
+                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, (int)TextureFilter.None);
                                 if (oldOpacity != 0.5F) Manager.SetOpacity(0.5F);
 
                                 Manager.Sprite.Draw(texture, Vector3.Zero, Vector3.Zero, Color.Black);
 
                                 Manager.SetOpacity(oldOpacity);
                                 Manager.Sprite.Transform = Matrix.Identity;
-                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.Point);
+                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, (int)TextureFilter.Point);
 
                                 image.ExpireTime = SEnvir.Now.AddMinutes(10);
                                 break;
@@ -1048,14 +1034,14 @@ namespace Server.Views.DirectX
                                 m.M21 = -0.50F;
                                 Manager.Sprite.Transform = m * Matrix.CreateTranslation(x + image.Height / 2, y, 0);
 
-                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.None);
+                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, (int)TextureFilter.None);
                                 if (oldOpacity != 0.5F) Manager.SetOpacity(0.5F);
 
                                 Manager.Sprite.Draw(texture, Vector3.Zero, Vector3.Zero, Color.Black);
 
                                 Manager.SetOpacity(oldOpacity);
                                 Manager.Sprite.Transform = Matrix.Identity;
-                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.Point);
+                                Manager.Device.SetSamplerState(0, SamplerState.MinFilter, (int)TextureFilter.Point);
 
                                 image.ExpireTime = SEnvir.Now.AddMinutes(10);
                                 break;
@@ -1358,13 +1344,13 @@ namespace Server.Views.DirectX
 
         public unsafe void DisposeTexture()
         {
-            if (Image != null && !Image.IsDisposed)
+            if (Image != null)
                 Image.Dispose();
 
-            if (Shadow != null && !Shadow.IsDisposed)
+            if (Shadow != null)
                 Shadow.Dispose();
 
-            if (Overlay != null && !Overlay.IsDisposed)
+            if (Overlay != null)
                 Overlay.Dispose();
 
             ImageData = null;
@@ -1394,7 +1380,7 @@ namespace Server.Views.DirectX
             if (w == 0 || h == 0) return;
 
             Image = Manager.Device.CreateTexture((uint)w, (uint)h, 1u, Usage.None, DrawFormat, Pool.Managed);
-            DataRectangle rect = Image.LockRectangle(0, LockFlags.Discard);
+            DataRectangle rect = Image.LockRect(0, LockFlags.Discard);
             ImageData = (byte*)rect.DataPointer;
 
             lock (reader)
@@ -1404,7 +1390,7 @@ namespace Server.Views.DirectX
                 Marshal.Copy(buffer, 0, rect.DataPointer, buffer.Length);
             }
 
-            Image.UnlockRectangle(0);
+            Image.UnlockRect(0);
 
             ImageValid = true;
             ExpireTime = SEnvir.Now.AddMinutes(30);
@@ -1423,7 +1409,7 @@ namespace Server.Views.DirectX
             if (w == 0 || h == 0) return;
 
             Shadow = Manager.Device.CreateTexture((uint)w, (uint)h, 1u, Usage.None, DrawFormat, Pool.Managed);
-            DataRectangle rect = Shadow.LockRectangle(0, LockFlags.Discard);
+            DataRectangle rect = Shadow.LockRect(0, LockFlags.Discard);
             ShadowData = (byte*)rect.DataPointer;
 
             lock (reader)
@@ -1433,7 +1419,7 @@ namespace Server.Views.DirectX
                 Marshal.Copy(buffer, 0, rect.DataPointer, buffer.Length);
             }
 
-            Shadow.UnlockRectangle(0);
+            Shadow.UnlockRect(0);
 
             ShadowValid = true;
         }
@@ -1450,7 +1436,7 @@ namespace Server.Views.DirectX
             if (w == 0 || h == 0) return;
 
             Overlay = Manager.Device.CreateTexture((uint)w, (uint)h, 1u, Usage.None, DrawFormat, Pool.Managed);
-            DataRectangle rect = Overlay.LockRectangle(0, LockFlags.Discard);
+            DataRectangle rect = Overlay.LockRect(0, LockFlags.Discard);
             OverlayData = (byte*)rect.DataPointer;
 
             lock (reader)
@@ -1460,7 +1446,7 @@ namespace Server.Views.DirectX
                 Marshal.Copy(buffer, 0, rect.DataPointer, buffer.Length);
             }
 
-            Overlay.UnlockRectangle(0);
+            Overlay.UnlockRect(0);
 
             OverlayValid = true;
         }
@@ -1862,17 +1848,13 @@ namespace Server.Views.DirectX
         {
             if (ControlTexture != null)
             {
-                if (!ControlTexture.IsDisposed)
-                    ControlTexture.Dispose();
-
+                ControlTexture.Dispose();
                 ControlTexture = null;
             }
 
             if (ControlSurface != null)
             {
-                if (!ControlSurface.IsDisposed)
-                    ControlSurface.Dispose();
-
+                ControlSurface.Dispose();
                 ControlSurface = null;
             }
 
@@ -2221,17 +2203,13 @@ namespace Server.Views.DirectX
 
                 if (ControlTexture != null)
                 {
-                    if (!ControlTexture.IsDisposed)
-                        ControlTexture.Dispose();
-
+                    ControlTexture.Dispose();
                     ControlTexture = null;
                 }
 
                 if (ControlSurface != null)
                 {
-                    if (!ControlSurface.IsDisposed)
-                        ControlSurface.Dispose();
-
+                    ControlSurface.Dispose();
                     ControlSurface = null;
                 }
 

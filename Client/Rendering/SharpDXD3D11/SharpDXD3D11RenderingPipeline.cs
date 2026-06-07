@@ -23,7 +23,7 @@ using ShaderResourceView = Vortice.Direct3D11.ID3D11ShaderResourceView;
 using Size = System.Drawing.Size;
 using SolidColorBrush = Vortice.Direct2D1.ID2D1SolidColorBrush;
 using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
-using UnPremultiply = Vortice.Direct2D1.Effects.UnPremultiply;
+using UnPremultiply = Vortice.Direct2D1.Effects.Unpremultiply;
 
 namespace Client.Rendering.SharpDXD3D11
 {

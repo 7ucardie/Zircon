@@ -103,7 +103,7 @@ namespace Client.Rendering.SharpDXD3D9
             {
                 SharpDXD3D9Manager.AttemptReset();
 
-                if (SharpDXD3D9Manager.Device == null || SharpDXD3D9Manager.Device.IsDisposed)
+                if (SharpDXD3D9Manager.Device == null || SharpDXD3D9Manager.Device.NativePointer == IntPtr.Zero)
                 {
                     return false;
                 }
@@ -257,7 +257,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (points == null || points.Count < 2)
                 return;
 
-            if (SharpDXD3D9Manager.Line == null || SharpDXD3D9Manager.Line.IsDisposed)
+            if (SharpDXD3D9Manager.Line == null || SharpDXD3D9Manager.Line.NativePointer == IntPtr.Zero)
                 return;
 
             DxVector2[] converted = new DxVector2[points.Count];
@@ -278,7 +278,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (texture.NativeHandle is not Texture dxTexture)
                 throw new ArgumentException("Texture handle must wrap a SharpDX texture instance.", nameof(texture));
 
-            if (dxTexture.IsDisposed)
+            if (dxTexture.NativePointer == IntPtr.Zero)
                 return;
 
             if (sourceRectangle.Width <= 0 || sourceRectangle.Height <= 0)
@@ -327,7 +327,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (texture.NativeHandle is not Texture dxTexture)
                 throw new ArgumentException("Texture handle must wrap a SharpDX texture instance.", nameof(texture));
 
-            if (dxTexture.IsDisposed)
+            if (dxTexture.NativePointer == IntPtr.Zero)
                 return;
 
             NumericsMatrix3x2 finalTransform = transform;
@@ -392,7 +392,7 @@ namespace Client.Rendering.SharpDXD3D9
             if (!effect.HasValue || SharpDXD3D9Manager.SpriteRenderer == null)
                 return false;
 
-            if (texture.NativeHandle is not Texture dxTexture || dxTexture.IsDisposed)
+            if (texture.NativeHandle is not Texture dxTexture || dxTexture.NativePointer == IntPtr.Zero)
                 return false;
 
             switch (effect.Value.Kind)
@@ -528,10 +528,10 @@ namespace Client.Rendering.SharpDXD3D9
             if (!renderTarget.IsValid)
                 return;
 
-            if (renderTarget.Surface.NativeHandle is Surface surface && !surface.IsDisposed)
+            if (renderTarget.Surface.NativeHandle is Surface surface)
                 surface.Dispose();
 
-            if (renderTarget.Texture.NativeHandle is Texture texture && !texture.IsDisposed)
+            if (renderTarget.Texture.NativeHandle is Texture texture)
                 texture.Dispose();
         }
 
@@ -571,7 +571,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         public void ReleaseTexture(RenderTexture texture)
         {
-            if (texture.NativeHandle is Texture dxTexture && !dxTexture.IsDisposed)
+            if (texture.NativeHandle is Texture dxTexture)
                 dxTexture.Dispose();
         }
 
@@ -581,11 +581,11 @@ namespace Client.Rendering.SharpDXD3D9
                 throw new InvalidOperationException("SharpDX texture handle expected.");
 
             LockFlags flags = ConvertLockFlags(mode);
-            DataRectangle rect = dxTexture.LockRectangle(0, flags);
+            DataRectangle rect = dxTexture.LockRect(0, flags);
 
             return TextureLock.From(rect.DataPointer, rect.Pitch, () =>
             {
-                dxTexture.UnlockRectangle(0);
+                dxTexture.UnlockRect(0);
             });
         }
 
@@ -647,7 +647,7 @@ namespace Client.Rendering.SharpDXD3D9
         public RenderTexture GetPoisonTexture()
         {
             Texture poisonTexture = SharpDXD3D9Manager.PoisonTexture;
-            if (poisonTexture == null || poisonTexture.IsDisposed)
+            if (poisonTexture == null || poisonTexture.NativePointer == IntPtr.Zero)
                 throw new InvalidOperationException("Poison texture has not been initialized.");
 
             return RenderTexture.From(poisonTexture);
@@ -656,7 +656,7 @@ namespace Client.Rendering.SharpDXD3D9
         public Size GetPoisonTextureSize()
         {
             Texture poisonTexture = SharpDXD3D9Manager.PoisonTexture;
-            if (poisonTexture == null || poisonTexture.IsDisposed)
+            if (poisonTexture == null || poisonTexture.NativePointer == IntPtr.Zero)
                 throw new InvalidOperationException("Poison texture has not been initialized.");
 
             SurfaceDescription description = poisonTexture.GetLevelDescription(0);

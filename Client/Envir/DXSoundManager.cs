@@ -1138,11 +1138,7 @@ namespace Client.Envir
 
             if (Device != null)
             {
-                if (!Device.IsDisposed)
-                {
-                    Device.Dispose();
-                }
-
+                Device.Dispose();
                 Device = null;
             }
         }

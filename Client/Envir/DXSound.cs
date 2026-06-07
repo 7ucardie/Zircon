@@ -93,7 +93,7 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (BufferList[i].IsDisposed)
+                if (BufferList[i].NativePointer == IntPtr.Zero)
                 {
                     BufferList.RemoveAt(i);
                     continue;
@@ -130,7 +130,7 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (BufferList[i].IsDisposed)
+                if (BufferList[i].NativePointer == IntPtr.Zero)
                 {
                     BufferList.RemoveAt(i);
                     continue;
@@ -172,11 +172,7 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (!BufferList[i].IsDisposed)
-                {
-                    BufferList[i].Dispose();
-                }
-
+                BufferList[i].Dispose();
                 BufferList.RemoveAt(i);
             }
 
@@ -190,7 +186,7 @@ namespace Client.Envir
 
             for (int i = BufferList.Count - 1; i >= 0; i--)
             {
-                if (BufferList[i].IsDisposed)
+                if (BufferList[i].NativePointer == IntPtr.Zero)
                 {
                     BufferList.RemoveAt(i);
                     continue;
@@ -213,11 +209,7 @@ namespace Client.Envir
                     buffer.Play(0, Loop ? PlayFlags.Looping : PlayFlags.None);
                 }
 
-                if (!BufferList[0].IsDisposed)
-                {
-                    BufferList[0].Dispose();
-                }
-
+                BufferList[0].Dispose();
                 BufferList.RemoveAt(0);
             }
 

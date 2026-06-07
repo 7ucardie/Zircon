@@ -165,7 +165,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         public void DrawOutlined(Texture texture, System.Drawing.RectangleF destination, System.Drawing.Rectangle? source, System.Drawing.Color color, NumericsMatrix3x2 transform, Color4 outlineColor, float outlineThickness)
         {
-            if (!SupportsOutlineShader || texture == null || texture.IsDisposed)
+            if (!SupportsOutlineShader || texture == null || texture.NativePointer == IntPtr.Zero)
                 return;
 
             float effectiveThickness = outlineThickness > 0 ? 1.0f : 0.0f;
@@ -228,11 +228,11 @@ namespace Client.Rendering.SharpDXD3D9
             _device.SetRenderState(RenderState.CullMode, Cull.None);
 
             _device.SetTexture(0, texture);
-            _device.SetSamplerState(0, SamplerState.AddressU, TextureAddress.Clamp);
-            _device.SetSamplerState(0, SamplerState.AddressV, TextureAddress.Clamp);
-            _device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.Point);
-            _device.SetSamplerState(0, SamplerState.MagFilter, TextureFilter.Point);
-            _device.SetSamplerState(0, SamplerState.MipFilter, TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.AddressU, (int)TextureAddress.Clamp);
+            _device.SetSamplerState(0, SamplerState.AddressV, (int)TextureAddress.Clamp);
+            _device.SetSamplerState(0, SamplerState.MinFilter, (int)TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.MagFilter, (int)TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.MipFilter, (int)TextureFilter.Point);
 
             _device.VertexDeclaration = _vertexDeclaration;
             _device.SetStreamSource(0, _vertexBuffer, 0, Marshal.SizeOf<VertexType>());
@@ -246,7 +246,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         public void DrawGrayscale(Texture texture, System.Drawing.RectangleF destination, System.Drawing.Rectangle? source, System.Drawing.Color color, NumericsMatrix3x2 transform)
         {
-            if (!SupportsGrayscaleShader || texture == null || texture.IsDisposed)
+            if (!SupportsGrayscaleShader || texture == null || texture.NativePointer == IntPtr.Zero)
                 return;
 
             using var stateBlock = _device.CreateStateBlock(StateBlockType.All);
@@ -291,11 +291,11 @@ namespace Client.Rendering.SharpDXD3D9
             _device.SetRenderState(RenderState.CullMode, Cull.None);
 
             _device.SetTexture(0, texture);
-            _device.SetSamplerState(0, SamplerState.AddressU, TextureAddress.Clamp);
-            _device.SetSamplerState(0, SamplerState.AddressV, TextureAddress.Clamp);
-            _device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.Point);
-            _device.SetSamplerState(0, SamplerState.MagFilter, TextureFilter.Point);
-            _device.SetSamplerState(0, SamplerState.MipFilter, TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.AddressU, (int)TextureAddress.Clamp);
+            _device.SetSamplerState(0, SamplerState.AddressV, (int)TextureAddress.Clamp);
+            _device.SetSamplerState(0, SamplerState.MinFilter, (int)TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.MagFilter, (int)TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.MipFilter, (int)TextureFilter.Point);
 
             _device.VertexDeclaration = _vertexDeclaration;
             _device.SetStreamSource(0, _vertexBuffer, 0, Marshal.SizeOf<VertexType>());
@@ -309,7 +309,7 @@ namespace Client.Rendering.SharpDXD3D9
 
         public void DrawDropShadow(Texture texture, System.Drawing.RectangleF destination, System.Drawing.RectangleF shadowBounds, System.Drawing.Rectangle? source, System.Drawing.Color color, NumericsMatrix3x2 transform, Color4 shadowColor, float shadowWidth, float shadowMaxOpacity)
         {
-            if (!SupportsDropShadowShader || texture == null || texture.IsDisposed)
+            if (!SupportsDropShadowShader || texture == null || texture.NativePointer == IntPtr.Zero)
                 return;
 
             using var stateBlock = _device.CreateStateBlock(StateBlockType.All);
@@ -377,11 +377,11 @@ namespace Client.Rendering.SharpDXD3D9
             _device.SetRenderState(RenderState.CullMode, Cull.None);
 
             _device.SetTexture(0, texture);
-            _device.SetSamplerState(0, SamplerState.AddressU, TextureAddress.Clamp);
-            _device.SetSamplerState(0, SamplerState.AddressV, TextureAddress.Clamp);
-            _device.SetSamplerState(0, SamplerState.MinFilter, TextureFilter.Point);
-            _device.SetSamplerState(0, SamplerState.MagFilter, TextureFilter.Point);
-            _device.SetSamplerState(0, SamplerState.MipFilter, TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.AddressU, (int)TextureAddress.Clamp);
+            _device.SetSamplerState(0, SamplerState.AddressV, (int)TextureAddress.Clamp);
+            _device.SetSamplerState(0, SamplerState.MinFilter, (int)TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.MagFilter, (int)TextureFilter.Point);
+            _device.SetSamplerState(0, SamplerState.MipFilter, (int)TextureFilter.Point);
 
             _device.VertexDeclaration = _vertexDeclaration;
             _device.SetStreamSource(0, _vertexBuffer, 0, Marshal.SizeOf<VertexType>());
