@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using S = Library.Network.ServerPackets;
 
 namespace Server.Models
@@ -61,15 +62,22 @@ namespace Server.Models
 
         public void Load()
         {
-            var path = Path.Combine(Config.MapPath, Info.FileName + ".map");
+            string jsonPath = Path.Combine(Config.MapPath, Info.FileName + ".map.json");
+            string binaryPath = Path.Combine(Config.MapPath, Info.FileName + ".map");
 
-            if (!File.Exists(path))
+            if (File.Exists(jsonPath))
             {
-                SEnvir.Log($"Map: {path} not found.");
+                LoadFromJson(jsonPath);
                 return;
             }
 
-            byte[] fileBytes = File.ReadAllBytes(path);
+            if (!File.Exists(binaryPath))
+            {
+                SEnvir.Log($"Map: {binaryPath} not found.");
+                return;
+            }
+
+            byte[] fileBytes = File.ReadAllBytes(binaryPath);
 
             Width = fileBytes[23] << 8 | fileBytes[22];
             Height = fileBytes[25] << 8 | fileBytes[24];
@@ -91,6 +99,77 @@ namespace Server.Models
             OrderedObjects = new HashSet<MapObject>[Width];
             for (int i = 0; i < OrderedObjects.Length; i++)
                 OrderedObjects[i] = new HashSet<MapObject>();
+        }
+
+        private void LoadFromJson(string path)
+        {
+            using FileStream fs = File.OpenRead(path);
+            using JsonDocument doc = JsonDocument.Parse(fs);
+
+            JsonElement root = doc.RootElement;
+
+            Width = root.GetProperty("width").GetInt32();
+            Height = root.GetProperty("height").GetInt32();
+
+            Cells = new Cell[Width, Height];
+            OrderedObjects = new HashSet<MapObject>[Width];
+            for (int i = 0; i < OrderedObjects.Length; i++)
+                OrderedObjects[i] = new HashSet<MapObject>();
+
+            JsonElement layout = root.GetProperty("layout");
+
+            for (int y = 0; y < Height; y++)
+            {
+                if (y >= layout.GetArrayLength()) break;
+
+                string row = layout[y].GetString() ?? string.Empty;
+
+                for (int x = 0; x < Width; x++)
+                {
+                    if (x >= row.Length) break;
+
+                    if (row[x] == '.')
+                        ValidCells.Add(Cells[x, y] = new Cell(new Point(x, y)) { Map = this });
+                }
+            }
+        }
+
+        public static void ExportMapJson(string binaryPath, string jsonPath)
+        {
+            byte[] fileBytes = File.ReadAllBytes(binaryPath);
+
+            int width = fileBytes[23] << 8 | fileBytes[22];
+            int height = fileBytes[25] << 8 | fileBytes[24];
+            int offSet = 28 + width * height / 4 * 3;
+
+            var rows = new char[height][];
+            for (int y = 0; y < height; y++)
+            {
+                rows[y] = new char[width];
+                for (int x = 0; x < width; x++)
+                    rows[y][x] = '#';
+            }
+
+            for (int x = 0; x < width; x++)
+                for (int y = 0; y < height; y++)
+                {
+                    byte flag = fileBytes[offSet + (x * height + y) * 14];
+                    if ((flag & 0x02) == 2 && (flag & 0x01) == 1)
+                        rows[y][x] = '.';
+                }
+
+            var options = new JsonWriterOptions { Indented = true };
+            using FileStream fs = File.Create(jsonPath);
+            using var writer = new Utf8JsonWriter(fs, options);
+
+            writer.WriteStartObject();
+            writer.WriteNumber("width", width);
+            writer.WriteNumber("height", height);
+            writer.WriteStartArray("layout");
+            for (int y = 0; y < height; y++)
+                writer.WriteStringValue(new string(rows[y]));
+            writer.WriteEndArray();
+            writer.WriteEndObject();
         }
         public void Setup()
         {
