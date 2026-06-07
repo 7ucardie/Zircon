@@ -27,6 +27,17 @@ namespace Server.Models
             {
                 if (page == null) return;
 
+                if (!string.IsNullOrEmpty(page.ScriptFile))
+                {
+                    string navigateTo = NpcScriptEngine.Instance.ExecuteOnOpen(page.ScriptFile, ob, this, page);
+                    if (navigateTo != null)
+                    {
+                        if (navigateTo.Length == 0) return;
+                        page = FindPage(navigateTo);
+                        continue;
+                    }
+                }
+
                 if (!CheckPage(ob, page, out NPCPage failPage))
                 {
                     page = failPage;
@@ -327,8 +338,38 @@ namespace Server.Models
                             item.IntValue1 = action.IntParameter2;
                         }
                         break;
+                    case NPCActionType.Script:
+                        if (!string.IsNullOrEmpty(page.ScriptFile) && !string.IsNullOrEmpty(action.StringParameter1))
+                            NpcScriptEngine.Instance.ExecuteAction(page.ScriptFile, action.StringParameter1, ob, this, page);
+                        break;
                 }
             }
+        }
+
+        private NPCPage FindPage(string description)
+        {
+            if (string.IsNullOrEmpty(description) || NPCInfo.EntryPage == null) return null;
+
+            var visited = new HashSet<int>();
+            var queue = new Queue<NPCPage>();
+            queue.Enqueue(NPCInfo.EntryPage);
+
+            while (queue.Count > 0)
+            {
+                NPCPage current = queue.Dequeue();
+                if (!visited.Add(current.Index)) continue;
+
+                if (string.Equals(current.Description, description, StringComparison.OrdinalIgnoreCase))
+                    return current;
+
+                if (current.SuccessPage != null) queue.Enqueue(current.SuccessPage);
+                foreach (NPCCheck check in current.Checks)
+                    if (check.FailPage != null) queue.Enqueue(check.FailPage);
+                foreach (NPCButton button in current.Buttons)
+                    if (button.Page != null) queue.Enqueue(button.Page);
+            }
+
+            return null;
         }
 
         private static List<ClientNPCValues> GetValues(PlayerObject ob, NPCPage page)
@@ -668,6 +709,13 @@ namespace Server.Models
                             var userCurrency = ob.GetCurrency(currency);
 
                             if (nextFame == null || nextFame.Cost > userCurrency.Amount) return false;
+                        }
+                        break;
+                    case NPCCheckType.Script:
+                        if (!string.IsNullOrEmpty(page.ScriptFile) && !string.IsNullOrEmpty(check.StringParameter1))
+                        {
+                            if (!NpcScriptEngine.Instance.ExecuteCheck(page.ScriptFile, check.StringParameter1, ob, this, page))
+                                return false;
                         }
                         break;
                 }

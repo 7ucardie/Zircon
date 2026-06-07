@@ -213,6 +213,26 @@ namespace Library.SystemModels
         }
         private string _Arguments;
 
+        /// <summary>
+        /// Optional path to a Lua script file (relative to the server Scripts/NPC/ directory).
+        /// When set, the engine calls on_open(player, npc) before checks and actions run.
+        /// Individual NPCCheck/NPCAction entries with type Script reference function names in this file.
+        /// </summary>
+        public string ScriptFile
+        {
+            get { return _ScriptFile; }
+            set
+            {
+                if (_ScriptFile == value) return;
+
+                var oldValue = _ScriptFile;
+                _ScriptFile = value;
+
+                OnChanged(oldValue, value, "ScriptFile");
+            }
+        }
+        private string _ScriptFile;
+
         public CurrencyInfo Currency
         {
             get { return _Currency; }
@@ -901,6 +921,12 @@ namespace Library.SystemModels
         CheckDataValue = 20,
 
         CheckFame = 21,
+
+        /// <summary>
+        /// Calls a Lua function defined in the page's ScriptFile.
+        /// StringParameter1 = function name. Returns false if function returns false/nil.
+        /// </summary>
+        Script = 22,
     }
 
     public enum Operator
@@ -944,7 +970,13 @@ namespace Library.SystemModels
         ChangeDataValue = 20,
         SetDataValue = 21,
 
-        PromoteFame = 22
+        PromoteFame = 22,
+
+        /// <summary>
+        /// Calls a Lua function defined in the page's ScriptFile.
+        /// StringParameter1 = function name.
+        /// </summary>
+        Script = 23,
     }
 
     public enum NPCValueType
