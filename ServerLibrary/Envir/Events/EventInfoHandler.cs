@@ -1,9 +1,11 @@
 ﻿using Library.SystemModels;
+using Server.DBModels;
 using Server.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 
 namespace Server.Envir.Events
 {
@@ -165,6 +167,8 @@ namespace Server.Envir.Events
                         {
                             eventLog.Reset();
                         }
+
+                        PersistEventLog(eventLog);
                     }
                 }
             }
@@ -229,6 +233,8 @@ namespace Server.Envir.Events
                         {
                             eventLog.Reset();
                         }
+
+                        PersistEventLog(eventLog);
                     }
                 }
             }
@@ -295,6 +301,8 @@ namespace Server.Envir.Events
                         {
                             eventLog.Reset();
                         }
+
+                        PersistEventLog(eventLog);
                     }
                 }
             }
@@ -382,6 +390,52 @@ namespace Server.Envir.Events
             }
 
             return match;
+        }
+
+        private static void PersistEventLog(EventLog log)
+        {
+            EventLogEntry entry = null;
+
+            if (log.WorldEvent != null)
+                entry = SEnvir.EventLogEntryList.Binding.FirstOrDefault(x => x.WorldEvent == log.WorldEvent && x.Key == log.Key);
+            else if (log.PlayerEvent != null)
+                entry = SEnvir.EventLogEntryList.Binding.FirstOrDefault(x => x.PlayerEvent == log.PlayerEvent && x.Key == log.Key);
+            else if (log.MonsterEvent != null)
+                entry = SEnvir.EventLogEntryList.Binding.FirstOrDefault(x => x.MonsterEvent == log.MonsterEvent && x.Key == log.Key);
+
+            if (entry == null)
+            {
+                entry = SEnvir.EventLogEntryList.CreateNewObject();
+                entry.Key = log.Key;
+                entry.WorldEvent = log.WorldEvent;
+                entry.PlayerEvent = log.PlayerEvent;
+                entry.MonsterEvent = log.MonsterEvent;
+                entry.PlayerIndex = log.PlayerIndex;
+                entry.InstanceInfo = log.InstanceInfo;
+                entry.InstanceSequence = log.InstanceSequence;
+            }
+
+            entry.CurrentValue = log.CurrentValue;
+            entry.TriggerCountData = EncodeTriggerCounts(log);
+        }
+
+        private static string EncodeTriggerCounts(EventLog log)
+        {
+            var sb = new StringBuilder();
+
+            foreach (KeyValuePair<WorldEventTrigger, int> kv in log.WorldTriggerCount)
+                sb.Append($"W{kv.Key.Index}:{kv.Value}|");
+
+            foreach (KeyValuePair<PlayerEventTrigger, int> kv in log.PlayerTriggerCount)
+                sb.Append($"P{kv.Key.Index}:{kv.Value}|");
+
+            foreach (KeyValuePair<MonsterEventTrigger, int> kv in log.MonsterTriggerCount)
+                sb.Append($"M{kv.Key.Index}:{kv.Value}|");
+
+            if (sb.Length > 0)
+                sb.Length--;
+
+            return sb.ToString();
         }
 
         private static string GetEventKey(EventTrackingType type, PlayerObject player)

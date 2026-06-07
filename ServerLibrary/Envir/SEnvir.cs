@@ -276,6 +276,8 @@ namespace Server.Envir
         public static DBCollection<WorldEventInfo> WorldEventInfoList;
         public static DBCollection<WorldEventTrigger> WorldEventInfoTriggerList;
         public static DBCollection<PlayerEventTrigger> PlayerEventInfoTriggerList;
+        public static DBCollection<MonsterEventTrigger> MonsterEventInfoTriggerList;
+        public static DBCollection<EventLogEntry> EventLogEntryList;
 
         public static ItemInfo GoldInfo, RefinementStoneInfo, FragmentInfo, Fragment2Info, Fragment3Info, FortuneCheckerInfo, ItemPartInfo;
 
@@ -482,6 +484,10 @@ namespace Server.Envir
             WorldEventInfoList = Session.GetCollection<WorldEventInfo>();
             WorldEventInfoTriggerList = Session.GetCollection<WorldEventTrigger>();
             PlayerEventInfoTriggerList = Session.GetCollection<PlayerEventTrigger>();
+            MonsterEventInfoTriggerList = Session.GetCollection<MonsterEventTrigger>();
+            EventLogEntryList = Session.GetCollection<EventLogEntry>();
+
+            LoadEventLogs();
 
             GoldInfo = CurrencyInfoList.Binding.First(x => x.Type == CurrencyType.Gold).DropItem;
 
@@ -535,6 +541,60 @@ namespace Server.Envir
             }
 
             CreateMagic();
+        }
+
+        private static void LoadEventLogs()
+        {
+            foreach (EventLogEntry entry in EventLogEntryList.Binding)
+            {
+                var log = new EventLog
+                {
+                    Key = entry.Key,
+                    WorldEvent = entry.WorldEvent,
+                    PlayerEvent = entry.PlayerEvent,
+                    MonsterEvent = entry.MonsterEvent,
+                    PlayerIndex = entry.PlayerIndex,
+                    InstanceInfo = entry.InstanceInfo,
+                    InstanceSequence = entry.InstanceSequence,
+                    CurrentValue = entry.CurrentValue,
+                };
+
+                DecodeTriggerCounts(entry.TriggerCountData, log);
+
+                EventLogs.Add(log);
+            }
+        }
+
+        private static void DecodeTriggerCounts(string data, EventLog log)
+        {
+            if (string.IsNullOrEmpty(data)) return;
+
+            foreach (string segment in data.Split('|'))
+            {
+                if (string.IsNullOrEmpty(segment)) continue;
+
+                int colonIdx = segment.IndexOf(':');
+                if (colonIdx < 2) continue;
+
+                if (!int.TryParse(segment.Substring(1, colonIdx - 1), out int triggerIdx)) continue;
+                if (!int.TryParse(segment.Substring(colonIdx + 1), out int count)) continue;
+
+                switch (segment[0])
+                {
+                    case 'W':
+                        WorldEventTrigger worldTrigger = WorldEventInfoTriggerList.Binding.FirstOrDefault(x => x.Index == triggerIdx);
+                        if (worldTrigger != null) log.WorldTriggerCount[worldTrigger] = count;
+                        break;
+                    case 'P':
+                        PlayerEventTrigger playerTrigger = PlayerEventInfoTriggerList.Binding.FirstOrDefault(x => x.Index == triggerIdx);
+                        if (playerTrigger != null) log.PlayerTriggerCount[playerTrigger] = count;
+                        break;
+                    case 'M':
+                        MonsterEventTrigger monsterTrigger = MonsterEventInfoTriggerList.Binding.FirstOrDefault(x => x.Index == triggerIdx);
+                        if (monsterTrigger != null) log.MonsterTriggerCount[monsterTrigger] = count;
+                        break;
+                }
+            }
         }
 
         public static void RankingSort(CharacterInfo character, bool updateLead = true, bool initialSetup = false)
@@ -1294,6 +1354,8 @@ namespace Server.Envir
             WorldEventInfoList = null;
             WorldEventInfoTriggerList = null;
             PlayerEventInfoTriggerList = null;
+            MonsterEventInfoTriggerList = null;
+            EventLogEntryList = null;
 
             GoldInfo = null;
             RefinementStoneInfo = null;
@@ -4261,6 +4323,9 @@ namespace Server.Envir
             RemoveSpawns(instance, instanceSequence);
 
             EventLogs.RemoveAll(x => x.InstanceInfo == instance && x.InstanceSequence == instanceSequence);
+
+            foreach (EventLogEntry entry in EventLogEntryList.Binding.Where(x => x.InstanceInfo == instance && x.InstanceSequence == instanceSequence).ToList())
+                entry.Delete();
 
             Instances[instance][instanceSequence] = null;
 
