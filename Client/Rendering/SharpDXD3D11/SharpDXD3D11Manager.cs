@@ -1,10 +1,10 @@
 ﻿using Client.Controls;
 using Client.Envir;
 
-using SharpDX.Direct2D1;
-using SharpDX.Direct3D11;
-using SharpDX.DXGI;
-using SharpDX.Mathematics.Interop;
+using Vortice.Direct2D1;
+using Vortice.Direct3D11;
+using Vortice.DXGI;
+using Vortice.Mathematics;
 
 using System;
 using System.Collections.Generic;
@@ -16,17 +16,25 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-using D2D1AlphaMode = SharpDX.Direct2D1.AlphaMode;
-using D2D1PixelFormat = SharpDX.Direct2D1.PixelFormat;
-using D3D11DataBox = SharpDX.DataBox;
-using D3D11MapFlags = SharpDX.Direct3D11.MapFlags;
-using D3DDeviceContext = SharpDX.Direct3D11.DeviceContext;
-using D3DFeatureLevel = SharpDX.Direct3D.FeatureLevel;
-using Device = SharpDX.Direct3D11.Device;
+using D2D1AlphaMode = Vortice.DCommon.AlphaMode;
+using D2D1PixelFormat = Vortice.DCommon.PixelFormat;
+using D3D11DataBox = Vortice.Direct3D11.MappedSubresource;
+using D3D11MapFlags = Vortice.Direct3D11.MapFlags;
+using D3DDeviceContext = Vortice.Direct3D11.ID3D11DeviceContext;
+using D3DFeatureLevel = Vortice.Direct3D.FeatureLevel;
+using Device = Vortice.Direct3D11.ID3D11Device;
 using DrawingBitmap = System.Drawing.Bitmap;
 using DrawingInterpolationMode = System.Drawing.Drawing2D.InterpolationMode;
 using DrawingPixelFormat = System.Drawing.Imaging.PixelFormat;
-using Factory = SharpDX.DXGI.Factory1;
+using Factory = Vortice.DXGI.IDXGIFactory1;
+using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
+using RenderTargetView = Vortice.Direct3D11.ID3D11RenderTargetView;
+using SwapChain = Vortice.DXGI.IDXGISwapChain;
+using Bitmap1 = Vortice.Direct2D1.ID2D1Bitmap1;
+using Color = System.Drawing.Color;
+using RawRectF = Vortice.Mathematics.Rect;
+using Size = System.Drawing.Size;
+using SolidColorBrush = Vortice.Direct2D1.ID2D1SolidColorBrush;
 
 namespace Client.Rendering.SharpDXD3D11
 {
@@ -90,9 +98,9 @@ namespace Client.Rendering.SharpDXD3D11
         public static SwapChain SwapChain { get; private set; }
         public static D3DDeviceContext Context => Device?.ImmediateContext;
 
-        public static SharpDX.Direct2D1.Factory1 D2DFactory { get; private set; }
-        public static SharpDX.Direct2D1.Device D2DDevice { get; private set; }
-        public static SharpDX.Direct2D1.DeviceContext D2DContext { get; private set; }
+        public static ID2D1Factory1 D2DFactory { get; private set; }
+        public static ID2D1Device D2DDevice { get; private set; }
+        public static ID2D1DeviceContext D2DContext { get; private set; }
         public static BitmapInterpolationMode InterpolationMode { get; private set; } = BitmapInterpolationMode.NearestNeighbor;
 
         public static SharpD3D11RenderTarget CurrentTarget { get; private set; }
@@ -131,7 +139,8 @@ namespace Client.Rendering.SharpDXD3D11
             if (Device != null)
                 return;
 
-            D2DFactory = new SharpDX.Direct2D1.Factory1();
+            D2D1.D2D1CreateFactory(Vortice.Direct2D1.FactoryType.MultiThreaded, out ID2D1Factory1 d2dFactory).CheckError();
+            D2DFactory = d2dFactory;
 
             Factory = new Factory();
 
@@ -175,14 +184,14 @@ namespace Client.Rendering.SharpDXD3D11
             SwapChain = new SwapChain(Factory, Device, swapChainDescription);
             Factory.MakeWindowAssociation(CEnvir.Target.Handle, WindowAssociationFlags.IgnoreAltEnter);
 
-            using (var dxgiDevice = Device.QueryInterface<SharpDX.DXGI.Device>())
+            using (var dxgiDevice = Device.QueryInterface<IDXGIDevice>())
             {
-                D2DDevice = new SharpDX.Direct2D1.Device(D2DFactory, dxgiDevice);
-                D2DContext = new SharpDX.Direct2D1.DeviceContext(D2DDevice, DeviceContextOptions.None)
-                {
-                    UnitMode = UnitMode.Pixels,
-                    PrimitiveBlend = PrimitiveBlend.SourceOver
-                };
+                D2DFactory.CreateDevice(dxgiDevice, out ID2D1Device d2dDevice).CheckError();
+                D2DDevice = d2dDevice;
+                D2DDevice.CreateDeviceContext(DeviceContextOptions.None, out ID2D1DeviceContext d2dContext).CheckError();
+                D2DContext = d2dContext;
+                D2DContext.UnitMode = UnitMode.Pixels;
+                D2DContext.PrimitiveBlend = PrimitiveBlend.SourceOver;
             }
 
             SpriteRenderer = new SharpDXD3D11SpriteRenderer(Device);
@@ -437,7 +446,7 @@ namespace Client.Rendering.SharpDXD3D11
             d2d.Target = target.TargetBitmap;
 
             // Convert color
-            var c = new RawColor4(
+            var c = new Color4(
                 color.R / 255f,
                 color.G / 255f,
                 color.B / 255f,
@@ -447,12 +456,12 @@ namespace Client.Rendering.SharpDXD3D11
 
             // Apply clip
             d2d.PushAxisAlignedClip(
-                new RawRectangleF(rect.Left, rect.Top, rect.Right, rect.Bottom),
+                RawRectF.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom),
                 AntialiasMode.Aliased);
 
             // Fill the clipped region
             d2d.FillRectangle(
-                new RawRectangleF(rect.Left, rect.Top, rect.Right, rect.Bottom),
+                RawRectF.FromLTRB(rect.Left, rect.Top, rect.Right, rect.Bottom),
                 brush);
 
             // Remove clip
@@ -700,11 +709,11 @@ namespace Client.Rendering.SharpDXD3D11
             if (Context == null || D2DContext == null || CurrentTarget == null)
                 return;
 
-            RawColor4 clear = new RawColor4(clearColor.R / 255f, clearColor.G / 255f, clearColor.B / 255f, clearColor.A / 255f);
+            Color4 clear = new Color4(clearColor.R / 255f, clearColor.G / 255f, clearColor.B / 255f, clearColor.A / 255f);
             Context.ClearRenderTargetView(CurrentTarget.RenderTargetView, clear);
             D2DContext.BeginDraw();
             _d2dDrawActive = true;
-            D2DContext.Transform = new RawMatrix3x2 { M11 = 1, M22 = 1 };
+            D2DContext.Transform = new System.Numerics.Matrix3x2 { M11 = 1, M22 = 1 };
             D2DContext.Clear(clear);
         }
 

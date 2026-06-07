@@ -1,15 +1,29 @@
 using Client.Controls;
 using Client.Envir;
-using SharpDX.Direct2D1;
-using SharpDX.Direct2D1.Effects;
-using SharpDX.Direct3D11;
-using SharpDX.Mathematics.Interop;
+using Vortice.Direct2D1;
+using Vortice.Direct2D1.Effects;
+using Vortice.Direct3D11;
+using Vortice.Mathematics;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Numerics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using Bitmap1 = Vortice.Direct2D1.ID2D1Bitmap1;
+using Color = System.Drawing.Color;
+using ColorMatrix = Vortice.Direct2D1.Effects.ColorMatrix;
+using Premultiply = Vortice.Direct2D1.Effects.Premultiply;
+using RawColor4 = Vortice.Mathematics.Color4;
+using RawMatrix3x2 = System.Numerics.Matrix3x2;
+using RawMatrix5x4 = Vortice.Mathematics.Matrix5x4;
+using RawRectangleF = Vortice.Mathematics.Rect;
+using RawVector2 = System.Numerics.Vector2;
+using ShaderResourceView = Vortice.Direct3D11.ID3D11ShaderResourceView;
+using Size = System.Drawing.Size;
+using SolidColorBrush = Vortice.Direct2D1.ID2D1SolidColorBrush;
+using Texture2D = Vortice.Direct3D11.ID3D11Texture2D;
+using UnPremultiply = Vortice.Direct2D1.Effects.Unpremultiply;
 
 namespace Client.Rendering.SharpDXD3D11
 {
@@ -96,7 +110,7 @@ namespace Client.Rendering.SharpDXD3D11
                 SharpDXD3D11Manager.EndDraw();
                 return true;
             }
-            catch (SharpDX.SharpDXException ex)
+            catch (Exception ex) when (ex.HResult < 0)
             {
                 CEnvir.SaveException(ex);
             }
@@ -287,8 +301,8 @@ namespace Client.Rendering.SharpDXD3D11
             if (SharpDXD3D11Manager.D2DContext == null)
                 return;
 
-            var destination = new RawRectangleF(destinationRectangle.Left, destinationRectangle.Top, destinationRectangle.Right, destinationRectangle.Bottom);
-            var source = new RawRectangleF(sourceRectangle.Left, sourceRectangle.Top, sourceRectangle.Right, sourceRectangle.Bottom);
+            var destination = RawRectangleF.FromLTRB(destinationRectangle.Left, destinationRectangle.Top, destinationRectangle.Right, destinationRectangle.Bottom);
+            var source = RawRectangleF.FromLTRB(sourceRectangle.Left, sourceRectangle.Top, sourceRectangle.Right, sourceRectangle.Bottom);
 
             DrawBitmap(bitmap, destination, source, colour);
         }
@@ -390,7 +404,7 @@ namespace Client.Rendering.SharpDXD3D11
             SharpDXD3D11Manager.D2DContext.Transform = rawTransform;
 
             RawRectangleF? source = sourceRectangle.HasValue
-                ? new RawRectangleF(sourceRectangle.Value.Left, sourceRectangle.Value.Top, sourceRectangle.Value.Right, sourceRectangle.Value.Bottom)
+                ? RawRectangleF.FromLTRB(sourceRectangle.Value.Left, sourceRectangle.Value.Top, sourceRectangle.Value.Right, sourceRectangle.Value.Bottom)
                 : (RawRectangleF?)null;
 
             DrawBitmap(bitmap, null, source, colour);
@@ -585,7 +599,7 @@ namespace Client.Rendering.SharpDXD3D11
 
                 foreach (Rectangle region in regions)
                 {
-                    var rect = new RawRectangleF(region.Left, region.Top, region.Right, region.Bottom);
+                    var rect = RawRectangleF.FromLTRB(region.Left, region.Top, region.Right, region.Bottom);
                     SharpDXD3D11Manager.D2DContext.FillRectangle(rect, brush);
                 }
 
@@ -719,7 +733,7 @@ namespace Client.Rendering.SharpDXD3D11
 
         public TextureFilterMode GetTextureFilter()
         {
-            return SharpDXD3D11Manager.InterpolationMode == SharpDX.Direct2D1.BitmapInterpolationMode.Linear ? TextureFilterMode.Linear : TextureFilterMode.Point;
+            return SharpDXD3D11Manager.InterpolationMode == BitmapInterpolationMode.Linear ? TextureFilterMode.Linear : TextureFilterMode.Point;
         }
 
         public void SetTextureFilter(TextureFilterMode mode)
@@ -807,7 +821,7 @@ namespace Client.Rendering.SharpDXD3D11
                     ctx.Transform = Multiply(originalTransform, local);
                 }
 
-                SharpDX.Direct2D1.Image effectOutput = _tintEffect.Output;
+                ID2D1Image effectOutput = _tintEffect.Output;
 
                 ctx.DrawImage(effectOutput, null, source, interpolation, compositeMode);
 
@@ -880,7 +894,7 @@ namespace Client.Rendering.SharpDXD3D11
                 _lightTintEffect.SetEnumValue((int)ColorMatrixProperties.AlphaMode, ColorMatrixAlphaMode.Straight);
 
                 _premultiplyEffect.SetInputEffect(0, _lightTintEffect, true);
-                SharpDX.Direct2D1.Image output = _premultiplyEffect.Output;
+                ID2D1Image output = _premultiplyEffect.Output;
 
                 ctx.PrimitiveBlend = PrimitiveBlend.Add;
                 ctx.DrawImage(output, null, source, interpolation, CompositeMode.SourceOver);
@@ -896,13 +910,13 @@ namespace Client.Rendering.SharpDXD3D11
             }
         }
 
-        private void EnsureTintEffect(SharpDX.Direct2D1.DeviceContext ctx)
+        private void EnsureTintEffect(ID2D1DeviceContext ctx)
         {
             if (_tintEffect == null)
                 _tintEffect = new ColorMatrix(ctx);
         }
 
-        private void EnsureLightEffects(SharpDX.Direct2D1.DeviceContext ctx)
+        private void EnsureLightEffects(ID2D1DeviceContext ctx)
         {
             if (_unpremultiplyEffect == null)
                 _unpremultiplyEffect = new UnPremultiply(ctx);
@@ -936,7 +950,7 @@ namespace Client.Rendering.SharpDXD3D11
             };
         }
 
-        private static RawMatrix3x2 CreateImageTransform(RawRectangleF destRect, RawRectangleF? sourceRect, SharpDX.Size2 bitmapSize)
+        private static RawMatrix3x2 CreateImageTransform(RawRectangleF destRect, RawRectangleF? sourceRect, SizeI bitmapSize)
         {
             float sourceLeft = 0f;
             float sourceTop = 0f;

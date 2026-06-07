@@ -1,8 +1,9 @@
 ﻿using Client.Rendering;
 using Library;
-using SharpDX.DirectSound;
+using Vortice.DirectSound;
 using System;
 using System.Collections.Generic;
+using DirectSound = Vortice.DirectSound.IDirectSound8;
 
 
 namespace Client.Envir
@@ -1137,11 +1138,7 @@ namespace Client.Envir
 
             if (Device != null)
             {
-                if (!Device.IsDisposed)
-                {
-                    Device.Dispose();
-                }
-
+                Device.Dispose();
                 Device = null;
             }
         }

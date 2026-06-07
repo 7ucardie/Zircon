@@ -89,11 +89,11 @@ namespace Server.Envir
 
                 _listener = new TcpListener(IPAddress.Parse(Config.IPAddress), Config.Port);
                 _listener.Start();
-                _listener.BeginAcceptTcpClient(Connection, null);
+                _ = AcceptConnectionsAsync();
 
                 _userCountListener = new TcpListener(IPAddress.Parse(Config.IPAddress), Config.UserCountPort);
                 _userCountListener.Start();
-                _userCountListener.BeginAcceptTcpClient(CountConnection, null);
+                _ = AcceptCountConnectionsAsync();
 
                 NetworkStarted = true;
                 if (log) Log($"Network Started. Listen: {Config.IPAddress}:{Config.Port}");
@@ -104,7 +104,7 @@ namespace Server.Envir
                 Log(ex.ToString());
             }
         }
-        private static void StopNetwork(bool log = true)
+        private static async Task StopNetworkAsync(bool log = true)
         {
             TcpListener expiredListener = _listener;
             TcpListener expiredUserListener = _userCountListener;
@@ -125,7 +125,7 @@ namespace Server.Envir
                 for (int i = Connections.Count - 1; i >= 0; i--)
                     Connections[i].SendDisconnect(p);
 
-                Thread.Sleep(200);
+                await Task.Delay(200);
 
                 for (int i = Connections.Count - 1; i >= 0; i--)
                     Connections[i].Disconnect();
@@ -141,74 +141,46 @@ namespace Server.Envir
             if (log) Log("Network Stopped.");
         }
 
-        private static void Connection(IAsyncResult result)
+        private static async Task AcceptConnectionsAsync()
         {
-            try
+            while (_listener != null && _listener.Server.IsBound)
             {
-                if (_listener == null || !_listener.Server.IsBound) return;
-
-                TcpClient client = _listener.EndAcceptTcpClient(result);
-
-                string ipAddress = client.Client.RemoteEndPoint.ToString().Split(':')[0];
-
-                if (!IPBlocks.TryGetValue(ipAddress, out DateTime banDate) || banDate < Now)
+                try
                 {
-                    SConnection Connection = new SConnection(client);
+                    TcpClient client = await _listener.AcceptTcpClientAsync();
+                    string ipAddress = client.Client.RemoteEndPoint.ToString().Split(':')[0];
 
-                    if (Connection.Connected)
-                        NewConnections?.Enqueue(Connection);
+                    if (!IPBlocks.TryGetValue(ipAddress, out DateTime banDate) || banDate < Now)
+                    {
+                        SConnection connection = new SConnection(client);
+                        if (connection.Connected)
+                        {
+                            while (NewConnections?.Count >= 15)
+                                await Task.Delay(1);
+                            NewConnections?.Enqueue(connection);
+                        }
+                    }
                 }
-            }
-            catch (SocketException)
-            {
-
-            }
-            catch (Exception ex)
-            {
-                Log(ex.ToString());
-            }
-            finally
-            {
-                while (NewConnections?.Count >= 15)
-                    Thread.Sleep(1);
-
-                if (_listener != null && _listener.Server.IsBound)
-                    _listener.BeginAcceptTcpClient(Connection, null);
+                catch (SocketException) { }
+                catch (ObjectDisposedException) { break; }
+                catch (Exception ex) { Log(ex.ToString()); }
             }
         }
 
-        private static void CountConnection(IAsyncResult result)
+        private static async Task AcceptCountConnectionsAsync()
         {
-            try
+            while (_userCountListener != null && _userCountListener.Server.IsBound)
             {
-                if (_userCountListener == null || !_userCountListener.Server.IsBound) return;
-
-                TcpClient client = _userCountListener.EndAcceptTcpClient(result);
-
-                byte[] data = Encoding.ASCII.GetBytes(string.Format("c;/Zircon/{0}/;", Connections.Count));
-
-                client.Client.BeginSend(data, 0, data.Length, SocketFlags.None, CountConnectionEnd, client);
+                try
+                {
+                    TcpClient client = await _userCountListener.AcceptTcpClientAsync();
+                    byte[] data = Encoding.ASCII.GetBytes(string.Format("c;/Zircon/{0}/;", Connections.Count));
+                    await client.GetStream().WriteAsync(data, 0, data.Length);
+                    client.Client.Dispose();
+                }
+                catch (ObjectDisposedException) { break; }
+                catch { }
             }
-            catch { }
-            finally
-            {
-                if (_userCountListener != null && _userCountListener.Server.IsBound)
-                    _userCountListener.BeginAcceptTcpClient(CountConnection, null);
-            }
-        }
-        private static void CountConnectionEnd(IAsyncResult result)
-        {
-            try
-            {
-                TcpClient client = result.AsyncState as TcpClient;
-
-                if (client == null) return;
-
-                client.Client.EndSend(result);
-
-                client.Client.Dispose();
-            }
-            catch { }
         }
 
         #endregion
@@ -388,7 +360,7 @@ namespace Server.Envir
         {
             if (Started || EnvirThread != null) return;
 
-            EnvirThread = new Thread(() => EnvirLoop()) { IsBackground = true };
+            EnvirThread = new Thread(() => EnvirLoopAsync().GetAwaiter().GetResult()) { IsBackground = true };
             EnvirThread.Start();
         }
 
@@ -1359,7 +1331,7 @@ namespace Server.Envir
             EnvirThread = null;
         }
 
-        public static void EnvirLoop()
+        public static async Task EnvirLoopAsync()
         {
             Now = Time.Now;
             DateTime DBTime = Now + Config.DBSaveDelay;
@@ -1376,8 +1348,7 @@ namespace Server.Envir
             long previousTotalSent = 0, previousTotalReceived = 0;
             int lastindex = 0;
             long conDelay = 0;
-            Thread logThread = new Thread(WriteLogsLoop) { IsBackground = true };
-            logThread.Start();
+            _ = WriteLogsLoopAsync();
 
             LastWarTime = Now;
 
@@ -1614,19 +1585,19 @@ namespace Server.Envir
                     for (int i = Connections.Count - 1; i >= 0; i--)
                         Connections[i].SendDisconnect(p);
 
-                    Thread.Sleep(3000);
+                    await Task.Delay(3000);
                     break;
                 }
             }
 
             WebServer.StopWebServer();
-            StopNetwork();
+            await StopNetworkAsync();
 
-            while (Saving) Thread.Sleep(1);
+            while (Saving) await Task.Delay(1);
             if (Session != null)
                 Session.BackUpDelay = 0;
             Save();
-            while (Saving) Thread.Sleep(1);
+            while (Saving) await Task.Delay(1);
 
             StopEnvir();
         }
@@ -1789,8 +1760,8 @@ namespace Server.Envir
 
             WebServer.Save();
 
-            Thread saveThread = new Thread(CommitChanges) { IsBackground = true };
-            saveThread.Start(Session);
+            Session session = Session;
+            _ = Task.Run(() => CommitChanges(session));
         }
         private static void CommitChanges(object data)
         {
@@ -1801,21 +1772,21 @@ namespace Server.Envir
 
             Saving = false;
         }
-        private static void WriteLogsLoop()
+        private static async Task WriteLogsLoopAsync()
         {
-            DateTime NextLogTime = Now.AddSeconds(10);
+            DateTime nextLogTime = Now.AddSeconds(10);
 
             while (Started)
             {
-                if (Now < NextLogTime)
+                if (Now < nextLogTime)
                 {
-                    Thread.Sleep(1);
+                    await Task.Delay(1);
                     continue;
                 }
 
                 WriteLogs();
 
-                NextLogTime = Now.AddSeconds(10);
+                nextLogTime = Now.AddSeconds(10);
             }
         }
         private static void WriteLogs()
