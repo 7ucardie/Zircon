@@ -90,7 +90,7 @@ page list exists. Scripts live in `Scripts/NPC/` relative to the server binary.
 
 ## 1.4 — Cron-Style Scheduled Event Triggers
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `ServerLibrary/Envir/Events/Triggers/ScheduledTime.cs`
 
 Today events can only trigger on time-of-day changes (dawn/day/dusk/night)
 or per-minute timer ticks. There's no way to say "run the Castle Siege
@@ -114,11 +114,20 @@ Add a `ScheduledTime` trigger type with a cron-expression field:
 Use the `Cronos` NuGet package (MIT, .NET-native, no native deps) for
 expression parsing and next-fire-time calculation.
 
+### Implementation
+Added `CronExpression` string property to `WorldEventTrigger` (persisted via MirDB).
+Added `ScheduledTime = 4` to `WorldEventTriggerType` enum.
+`ScheduledTime` trigger uses `Cronos.CronExpression.GetNextOccurrence()` to check
+whether the expression fired within the last minute. Invalid expressions are logged
+via `SEnvir.SaveError` and return false. Registered automatically via reflection
+(same mechanism as all other triggers). Called every minute via the existing
+`EventTimerTime` tick in `SEnvir.cs`.
+
 ### Tasks
-- [ ] Add `Cronos` package to `ServerLibrary`
-- [ ] Add `ScheduledTime` trigger class with `CronExpression` string field
-- [ ] Register trigger in `EventInfoHandler`
-- [ ] Integrate with server game loop — check due events each minute tick
+- [x] Add `Cronos` 0.8.4 package to `ServerLibrary`
+- [x] Add `ScheduledTime` trigger class with `CronExpression` string field on `WorldEventTrigger`
+- [x] Register trigger in `EventInfoHandler` (automatic via `[EventTriggerType]` attribute)
+- [x] Integrate with server game loop — `EventHandler.Process("SCHEDULEDTIME")` each minute tick
 - [ ] Add at least one example scheduled event in sample data
 - [ ] Document cron syntax in content authoring guide
 
@@ -265,7 +274,7 @@ dramatically speeds up map design and balance iteration.
 | 1.1 Monster AI registry | **Complete** | `MonsterRegistry.cs` + `MonsterRegistrations.cs`; 525-line switch removed |
 | 1.2 Behaviour composition | **Partial** | Enum + field added; Heals/Teleports/Enrages implemented; class refactor pending |
 | 1.3 NPC scripting | **Complete** | `NpcScriptEngine.cs`; MoonSharp Lua, sandboxed, `on_open`/Script check+action |
-| 1.4 Scheduled events | Not started | |
+| 1.4 Scheduled events | **Complete** | `ScheduledTime.cs`; Cronos 0.8.4; `CronExpression` on `WorldEventTrigger` |
 | 1.5 Event chaining | Not started | |
 | 1.6 Persistent EventLog | Not started | |
 | 1.7 Dungeon phases | Not started | |
