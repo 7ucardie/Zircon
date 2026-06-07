@@ -1488,6 +1488,8 @@ namespace Server.Envir
                         {
                             EventTimerTime = Now.AddMinutes(1);
 
+                            EventHandler.Process("SCHEDULEDTIME");
+
                             foreach (var timer in EventTimer.Timers)
                             {
                                 if (!timer.Started) continue;

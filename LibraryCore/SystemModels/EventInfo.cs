@@ -122,6 +122,21 @@ namespace Library.SystemModels
             }
         }
         private int _MaxTriggers;
+
+        public string CronExpression
+        {
+            get { return _CronExpression; }
+            set
+            {
+                if (_CronExpression == value) return;
+
+                var oldValue = _CronExpression;
+                _CronExpression = value;
+
+                OnChanged(oldValue, value, "CronExpression");
+            }
+        }
+        private string _CronExpression;
     }
 
     public sealed class WorldEventAction : BaseEventAction
@@ -979,6 +994,7 @@ namespace Library.SystemModels
         Day = 1,
         Dusk = 2,
         Night = 3,
+        ScheduledTime = 4,
     }
 
     public enum PlayerEventTriggerType

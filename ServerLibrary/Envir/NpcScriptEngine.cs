@@ -6,6 +6,7 @@ using Server.Models;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 
 namespace Server.Envir
 {
@@ -227,7 +228,7 @@ namespace Server.Envir
             if (count <= 0 || string.IsNullOrWhiteSpace(itemName)) return;
 
             ItemInfo info = SEnvir.ItemInfoList.Binding
-                .Find(x => string.Equals(x.ItemName, itemName, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(x => string.Equals(x.ItemName, itemName, StringComparison.OrdinalIgnoreCase));
             if (info == null) return;
 
             ItemCheck check = new ItemCheck(info, count, UserItemFlags.None, TimeSpan.Zero);
@@ -242,7 +243,7 @@ namespace Server.Envir
             if (count <= 0 || string.IsNullOrWhiteSpace(itemName)) return;
 
             ItemInfo info = SEnvir.ItemInfoList.Binding
-                .Find(x => string.Equals(x.ItemName, itemName, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(x => string.Equals(x.ItemName, itemName, StringComparison.OrdinalIgnoreCase));
             if (info == null) return;
 
             _player.TakeItem(info, count);
