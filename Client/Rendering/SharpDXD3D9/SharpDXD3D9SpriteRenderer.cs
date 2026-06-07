@@ -410,21 +410,20 @@ namespace Client.Rendering.SharpDXD3D9
 
             Matrix4x4 final = Matrix4x4.Transpose(world * projection);
 
-            ReadOnlySpan<float> matFloats = MemoryMarshal.Cast<Matrix4x4, float>(MemoryMarshal.CreateSpan(ref final, 1));
-            _device.SetVertexShaderConstant(0, matFloats, 4);
+            _device.SetVertexShaderConstant(0, final);
         }
 
         private void UpdateOutlineConstants(int texWidth, int texHeight, Color4 outlineColor, float outlineThickness, float u1, float v1, float u2, float v2)
         {
-            _device.SetPixelShaderConstant(4, new[] { outlineColor.R, outlineColor.G, outlineColor.B, outlineColor.A }, 1);
-            _device.SetPixelShaderConstant(5, new float[] { texWidth, texHeight, outlineThickness, 0f }, 1);
-            _device.SetPixelShaderConstant(6, new[] { u1, v1, u2, v2 }, 1);
+            _device.SetPixelShaderConstant(4, new[] { outlineColor.R, outlineColor.G, outlineColor.B, outlineColor.A });
+            _device.SetPixelShaderConstant(5, new float[] { (float)texWidth, (float)texHeight, outlineThickness, 0f });
+            _device.SetPixelShaderConstant(6, new[] { u1, v1, u2, v2 });
         }
 
         private void UpdateShadowConstants(float imageLeft, float imageTop, float imageRight, float imageBottom, float shadowWidth, float shadowMaxOpacity)
         {
-            _device.SetPixelShaderConstant(4, new[] { imageLeft, imageTop, imageRight, imageBottom }, 1);
-            _device.SetPixelShaderConstant(5, new[] { shadowWidth, shadowMaxOpacity, 0f, 0f }, 1);
+            _device.SetPixelShaderConstant(4, new[] { imageLeft, imageTop, imageRight, imageBottom });
+            _device.SetPixelShaderConstant(5, new[] { shadowWidth, shadowMaxOpacity, 0f, 0f });
         }
 
         public void Dispose()

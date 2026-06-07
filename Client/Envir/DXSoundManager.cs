@@ -1040,7 +1040,7 @@ namespace Client.Envir
         {
             try
             {
-                Device = Vortice.DirectSound.DirectSound.DirectSoundCreate8(null);
+                Device = DSound.DirectSoundCreate8();
                 Device.SetCooperativeLevel(CEnvir.Target.Handle, CooperativeLevel.Normal);
                 AdjustVolume();
             }

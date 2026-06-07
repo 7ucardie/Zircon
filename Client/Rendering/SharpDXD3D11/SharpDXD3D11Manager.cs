@@ -1,6 +1,7 @@
 ﻿using Client.Controls;
 using Client.Envir;
 
+using SharpGen.Runtime;
 using Vortice.Direct2D1;
 using Vortice.Direct3D;
 using Vortice.Direct3D11;
@@ -152,17 +153,22 @@ namespace Client.Rendering.SharpDXD3D11
 
             ApplyWindowBounds(true);
 
-            using IDXGIAdapter1 adapter = Factory.EnumAdapters1(0);
-            using IDXGIOutput output = adapter.EnumOutputs(0);
-            ModeDescription[] modes = output.GetDisplayModeList(Format.B8G8R8A8_UNorm, DisplayModeEnumerationFlags.Scaling);
-            foreach (ModeDescription mode in modes)
+            Factory.EnumAdapters1(0, out IDXGIAdapter1 adapter);
             {
-                Size size = new Size((int)mode.Width, (int)mode.Height);
-                if (size.Width < MinimumResolution.Width || size.Height < MinimumResolution.Height)
-                    continue;
+                adapter.EnumOutputs(0, out IDXGIOutput output);
+                using (output)
+                {
+                    ModeDescription[] modes = output.GetDisplayModeList(Format.B8G8R8A8_UNorm, DisplayModeEnumerationFlags.Scaling);
+                    foreach (ModeDescription mode in modes)
+                    {
+                        Size size = new Size((int)mode.Width, (int)mode.Height);
+                        if (size.Width < MinimumResolution.Width || size.Height < MinimumResolution.Height)
+                            continue;
 
-                if (!ValidResolutions.Contains(size))
-                    ValidResolutions.Add(size);
+                        if (!ValidResolutions.Contains(size))
+                            ValidResolutions.Add(size);
+                    }
+                }
             }
             ValidResolutions.Sort((s1, s2) => (s1.Width * s1.Height).CompareTo(s2.Width * s2.Height));
 
@@ -182,6 +188,7 @@ namespace Client.Rendering.SharpDXD3D11
 
             DeviceCreationFlags creationFlags = DeviceCreationFlags.BgraSupport;
             Vortice.Direct3D11.D3D11.D3D11CreateDevice(adapter, Vortice.Direct3D.DriverType.Unknown, creationFlags, new[] { D3DFeatureLevel.Level_11_0 }, out Device device).CheckError();
+            adapter.Dispose();
             Device = device;
             SwapChain = Factory.CreateSwapChain(Device, swapChainDescription);
             Factory.MakeWindowAssociation(CEnvir.Target.Handle, WindowAssociationFlags.IgnoreAltEnter);
@@ -624,7 +631,7 @@ namespace Client.Rendering.SharpDXD3D11
             {
                 try
                 {
-                    SwapChain.GetFullscreenState(out bool isFs, out _);
+                    SwapChain.GetFullscreenState(out RawBool isFs, out _);
                     if (isFs) SwapChain.SetFullscreenState(false, null);
                 }
                 catch
@@ -731,7 +738,7 @@ namespace Client.Rendering.SharpDXD3D11
                 _d2dDrawActive = false;
             }
 
-            SwapChain.Present(Config.VSync ? 1 : 0, PresentFlags.None);
+            SwapChain.Present((uint)(Config.VSync ? 1 : 0), PresentFlags.None);
         }
 
         public static SharpD3D11RenderTarget CreateRenderTarget(Size size)
@@ -743,18 +750,16 @@ namespace Client.Rendering.SharpDXD3D11
                 ArraySize = 1,
                 BindFlags = BindFlags.RenderTarget | BindFlags.ShaderResource,
                 Usage = ResourceUsage.Default,
-                CpuAccessFlags = CpuAccessFlags.None,
+                CPUAccessFlags = CpuAccessFlags.None,
                 Format = Format.B8G8R8A8_UNorm,
                 SampleDescription = new SampleDescription(1, 0),
                 MipLevels = 1,
                 MiscFlags = ResourceOptionFlags.Shared
             });
 
-            Device.CreateRenderTargetView(texture, null, out RenderTargetView rtv).CheckError();
-            RenderTargetView view = rtv;
+            RenderTargetView view = Device.CreateRenderTargetView(texture, (RenderTargetViewDescription?)null);
             using IDXGISurface surface = texture.QueryInterface<IDXGISurface>();
-            D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target), out Bitmap1 bitmapRef).CheckError();
-            Bitmap1 bitmap = bitmapRef;
+            Bitmap1 bitmap = D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target));
 
             return new SharpD3D11RenderTarget(texture, view, bitmap);
         }
@@ -784,7 +789,7 @@ namespace Client.Rendering.SharpDXD3D11
                 ArraySize = 1,
                 BindFlags = bindFlags,
                 Usage = resourceUsage,
-                CpuAccessFlags = cpuAccessFlags,
+                CPUAccessFlags = cpuAccessFlags,
                 Format = dxFormat,
                 SampleDescription = new SampleDescription(1, 0),
                 MipLevels = 1,
@@ -799,7 +804,7 @@ namespace Client.Rendering.SharpDXD3D11
                 ArraySize = 1,
                 BindFlags = BindFlags.None,
                 Usage = ResourceUsage.Staging,
-                CpuAccessFlags = CpuAccessFlags.Read | CpuAccessFlags.Write,
+                CPUAccessFlags = CpuAccessFlags.Read | CpuAccessFlags.Write,
                 Format = dxFormat,
                 SampleDescription = new SampleDescription(1, 0),
                 MipLevels = 1,
@@ -807,8 +812,7 @@ namespace Client.Rendering.SharpDXD3D11
             });
 
             using IDXGISurface surface = texture.QueryInterface<IDXGISurface>();
-            D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(dxFormat, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.None), out Bitmap1 bitmapRef2).CheckError();
-            Bitmap1 bitmap = bitmapRef2;
+            Bitmap1 bitmap = D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(dxFormat, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.None));
 
             return new SharpD3D11TextureResource(format, texture, staging, bitmap);
         }
@@ -866,7 +870,7 @@ namespace Client.Rendering.SharpDXD3D11
                         try
                         {
                             IntPtr dest = writeBox.DataPointer;
-                            int destPitch = writeBox.RowPitch;
+                            int destPitch = (int)writeBox.RowPitch;
 
                             // Copy each row respecting RowPitch
                             for (int y = 0; y < height; y++)
@@ -893,7 +897,7 @@ namespace Client.Rendering.SharpDXD3D11
 
             // All other formats OR read-only path:
             // Direct pointer access into mapped staging texture.
-            return TextureLock.From(box.DataPointer, box.RowPitch, () =>
+            return TextureLock.From(box.DataPointer, (int)box.RowPitch, () =>
             {
                 Context.Unmap(texture.StagingTexture, 0);
 
@@ -937,7 +941,7 @@ namespace Client.Rendering.SharpDXD3D11
                     try
                     {
                         IntPtr destPtr = box.DataPointer;
-                        int destPitch = box.RowPitch; // bytes per row of BLOCKS (can be > tightRowSize)
+                        int destPitch = (int)box.RowPitch; // bytes per row of BLOCKS (can be > tightRowSize)
 
                         // Copy row by row to account for any driver padding
                         for (int row = 0; row < blocksY; row++)
@@ -1173,12 +1177,10 @@ namespace Client.Rendering.SharpDXD3D11
         private static SharpD3D11RenderTarget CreateBackBufferTarget()
         {
             Texture2D backBuffer = SwapChain.GetBuffer<Texture2D>(0);
-            Device.CreateRenderTargetView(backBuffer, null, out RenderTargetView rtv).CheckError();
-            RenderTargetView view = rtv;
+            RenderTargetView view = Device.CreateRenderTargetView(backBuffer, (RenderTargetViewDescription?)null);
 
             using IDXGISurface surface = backBuffer.QueryInterface<IDXGISurface>();
-            D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target | BitmapOptions.CannotDraw), out Bitmap1 bitmapRef).CheckError();
-            Bitmap1 bitmap = bitmapRef;
+            Bitmap1 bitmap = D2DContext.CreateBitmapFromDxgiSurface(surface, new BitmapProperties1(new D2D1PixelFormat(Format.B8G8R8A8_UNorm, D2D1AlphaMode.Premultiplied), 96, 96, BitmapOptions.Target | BitmapOptions.CannotDraw));
 
             return new SharpD3D11RenderTarget(backBuffer, view, bitmap);
         }
@@ -1204,7 +1206,7 @@ namespace Client.Rendering.SharpDXD3D11
         {
             DisposeTargets();
 
-            SwapChain.GetFullscreenState(out bool isFs2, out _);
+            SwapChain.GetFullscreenState(out RawBool isFs2, out _);
             if (isFs2) SwapChain.SetFullscreenState(false, null);
 
             ApplyWindowStyle();

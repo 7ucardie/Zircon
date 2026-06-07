@@ -341,8 +341,8 @@ namespace Client.Rendering.SharpDXD3D9
             finalTransform.M32 += translation.Y;
 
             var levelDesc = dxTexture.GetLevelDesc(0);
-            float width = sourceRectangle?.Width ?? levelDesc.Width;
-            float height = sourceRectangle?.Height ?? levelDesc.Height;
+            float width = sourceRectangle?.Width ?? (int)levelDesc.Width;
+            float height = sourceRectangle?.Height ?? (int)levelDesc.Height;
 
             if (TryDrawSpriteEffect(texture, new GdiRectangleF(0, 0, width, height), sourceRectangle, colour, finalTransform))
                 return;

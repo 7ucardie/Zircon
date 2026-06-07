@@ -799,14 +799,12 @@ namespace Client.Rendering.SharpDXD3D11
             {
                 EnsureTintEffect(ctx);
 
-                var matrix = new RawMatrix5x4
-                {
-                    M11 = (colour.R / 255f) * colorScale * opacity,
-                    M22 = (colour.G / 255f) * colorScale * opacity,
-                    M33 = (colour.B / 255f) * colorScale * opacity,
-                    M44 = opacity,   // multiply existing alpha by this
-                    M54 = 0f
-                };
+                var matrix = new RawMatrix5x4(
+                    (colour.R / 255f) * colorScale * opacity, 0f, 0f, 0f,
+                    0f, (colour.G / 255f) * colorScale * opacity, 0f, 0f,
+                    0f, 0f, (colour.B / 255f) * colorScale * opacity, 0f,
+                    0f, 0f, 0f, opacity,
+                    0f, 0f, 0f, 0f);
 
                 _tintEffect.SetValue((int)ColorMatrixProperties.ColorMatrix, matrix);
                 _tintEffect.SetValue((int)ColorMatrixProperties.AlphaMode, (int)ColorMatrixAlphaMode.Straight);
@@ -881,14 +879,12 @@ namespace Client.Rendering.SharpDXD3D11
                 _unpremultiplyEffect.SetInput(0, bitmap, true);
 
                 _lightTintEffect.SetInputEffect(0, _unpremultiplyEffect, true);
-                var matrix = new RawMatrix5x4
-                {
-                    M11 = (colour.R / 255f) * colorScale,
-                    M22 = (colour.G / 255f) * colorScale,
-                    M33 = (colour.B / 255f) * colorScale,
-                    M44 = opacity,
-                    M54 = 0f
-                };
+                var matrix = new RawMatrix5x4(
+                    (colour.R / 255f) * colorScale, 0f, 0f, 0f,
+                    0f, (colour.G / 255f) * colorScale, 0f, 0f,
+                    0f, 0f, (colour.B / 255f) * colorScale, 0f,
+                    0f, 0f, 0f, opacity,
+                    0f, 0f, 0f, 0f);
 
                 _lightTintEffect.SetValue((int)ColorMatrixProperties.ColorMatrix, matrix);
                 _lightTintEffect.SetValue((int)ColorMatrixProperties.AlphaMode, (int)ColorMatrixAlphaMode.Straight);

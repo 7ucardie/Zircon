@@ -200,9 +200,9 @@ namespace Client.Rendering.SharpDXD3D11
             _outlineBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                ByteWidth = Unsafe.SizeOf<OutlineBufferType>(),
+                ByteWidth = (uint)Unsafe.SizeOf<OutlineBufferType>(),
                 BindFlags = BindFlags.ConstantBuffer,
-                CpuAccessFlags = CpuAccessFlags.Write,
+                CPUAccessFlags = CpuAccessFlags.Write,
                 MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
@@ -227,9 +227,9 @@ namespace Client.Rendering.SharpDXD3D11
             _dropShadowBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                ByteWidth = Unsafe.SizeOf<DropShadowBufferType>(),
+                ByteWidth = (uint)Unsafe.SizeOf<DropShadowBufferType>(),
                 BindFlags = BindFlags.ConstantBuffer,
-                CpuAccessFlags = CpuAccessFlags.Write,
+                CPUAccessFlags = CpuAccessFlags.Write,
                 MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
@@ -258,9 +258,9 @@ namespace Client.Rendering.SharpDXD3D11
             _vertexBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                ByteWidth = Unsafe.SizeOf<VertexType>() * 4,
+                ByteWidth = (uint)(Unsafe.SizeOf<VertexType>() * 4),
                 BindFlags = BindFlags.VertexBuffer,
-                CpuAccessFlags = CpuAccessFlags.Write,
+                CPUAccessFlags = CpuAccessFlags.Write,
                 MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
@@ -268,9 +268,9 @@ namespace Client.Rendering.SharpDXD3D11
             _matrixBuffer = _device.CreateBuffer(new BufferDescription
             {
                 Usage = ResourceUsage.Dynamic,
-                ByteWidth = Unsafe.SizeOf<Matrix4x4>(),
+                ByteWidth = (uint)Unsafe.SizeOf<Matrix4x4>(),
                 BindFlags = BindFlags.ConstantBuffer,
-                CpuAccessFlags = CpuAccessFlags.Write,
+                CPUAccessFlags = CpuAccessFlags.Write,
                 MiscFlags = ResourceOptionFlags.None,
                 StructureByteStride = 0
             });
@@ -284,9 +284,9 @@ namespace Client.Rendering.SharpDXD3D11
                 AddressU = TextureAddressMode.Clamp,
                 AddressV = TextureAddressMode.Clamp,
                 AddressW = TextureAddressMode.Clamp,
-                ComparisonFunction = ComparisonFunction.Never,
-                MinLod = 0,
-                MaxLod = float.MaxValue
+                ComparisonFunc = ComparisonFunction.Never,
+                MinLOD = 0,
+                MaxLOD = float.MaxValue
             });
         }
 
@@ -335,17 +335,17 @@ namespace Client.Rendering.SharpDXD3D11
         private void CreateBlendState(BlendMode mode, BlendOption src, BlendOption dest, BlendOption srcAlpha, BlendOption destAlpha)
         {
             var desc = new BlendDescription();
-            desc.RenderTarget[0].IsBlendEnabled = true;
+            desc.RenderTarget[0].BlendEnable = true;
 
             desc.RenderTarget[0].SourceBlend = src;
             desc.RenderTarget[0].DestinationBlend = dest;
             desc.RenderTarget[0].BlendOperation = BlendOperation.Add;
 
-            desc.RenderTarget[0].SourceAlphaBlend = srcAlpha;
-            desc.RenderTarget[0].DestinationAlphaBlend = destAlpha;
-            desc.RenderTarget[0].AlphaBlendOperation = BlendOperation.Add;
+            desc.RenderTarget[0].SourceBlendAlpha = srcAlpha;
+            desc.RenderTarget[0].DestinationBlendAlpha = destAlpha;
+            desc.RenderTarget[0].BlendOperationAlpha = BlendOperation.Add;
 
-            desc.RenderTarget[0].RenderTargetWriteMask = 15; // D3D11_COLOR_WRITE_ENABLE_ALL = RGBA
+            desc.RenderTarget[0].RenderTargetWriteMask = (ColorWriteEnable)15; // D3D11_COLOR_WRITE_ENABLE_ALL = RGBA
 
             _blendStates[mode] = _device.CreateBlendState(desc);
         }
