@@ -41,7 +41,7 @@ namespace Server.Models
             S.JoinInstance joinResult = new S.JoinInstance { Success = false };
 
             //Load up instance
-            var (index, result) = GetInstance(instance, dungeonFinder: true);
+            var (index, result) = GetInstance(instance, dungeonFinder: true, difficulty: p.Difficulty);
 
             joinResult.Result = result;
 

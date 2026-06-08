@@ -32,6 +32,8 @@ namespace Client.Scenes.Views
 
         public DXButton JoinButton;
 
+        public DXComboBox DifficultyBox;
+
         #endregion
 
         #region SelectedStoreRow
@@ -239,6 +241,33 @@ namespace Client.Scenes.Views
 
             #region Instance Details
 
+            DXLabel difficultyLabel = new DXLabel
+            {
+                Parent = this,
+                Location = new Point(330, 38),
+                Text = "Difficulty:",
+                Visible = false,
+            };
+
+            DifficultyBox = new DXComboBox
+            {
+                Parent = this,
+                Location = new Point(difficultyLabel.Location.X + difficultyLabel.Size.Width + 5, 35),
+                Size = new Size(90, DXComboBox.DefaultNormalHeight),
+                Visible = false,
+            };
+
+            foreach (DifficultyType diff in Enum.GetValues(typeof(DifficultyType)))
+            {
+                new DXListBoxItem
+                {
+                    Parent = DifficultyBox.ListBox,
+                    Label = { Text = diff.ToString() },
+                    Item = diff,
+                };
+            }
+
+            DifficultyBox.ListBox.SelectItem(DifficultyType.Normal);
 
             JoinButton = new DXButton
             {
@@ -250,6 +279,12 @@ namespace Client.Scenes.Views
                 Visible = false
             };
             JoinButton.MouseClick += (o, e) => JoinInstance();
+
+            SelectedDungeonRowChanged += (o, e) =>
+            {
+                difficultyLabel.Visible = JoinButton.Visible;
+                DifficultyBox.Visible = JoinButton.Visible;
+            };
 
             #endregion
         }
@@ -374,7 +409,7 @@ namespace Client.Scenes.Views
 
             if (instance.Type == InstanceType.Player)
             {
-                CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index });
+                CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index, Difficulty = (DifficultyType)(DifficultyBox.SelectedItem ?? DifficultyType.Normal) });
             }
             else if (instance.Type == InstanceType.Group)
             {
@@ -400,7 +435,7 @@ namespace Client.Scenes.Views
 
                 box.YesButton.MouseClick += (o1, e1) =>
                 {
-                    CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index });
+                    CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index, Difficulty = (DifficultyType)(DifficultyBox.SelectedItem ?? DifficultyType.Normal) });
                 };
 
                 return;
@@ -413,7 +448,7 @@ namespace Client.Scenes.Views
                     return;
                 }
 
-                CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index });
+                CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index, Difficulty = (DifficultyType)(DifficultyBox.SelectedItem ?? DifficultyType.Normal) });
             }
             else if (instance.Type == InstanceType.Castle)
             {
@@ -423,7 +458,7 @@ namespace Client.Scenes.Views
                     return;
                 }
 
-                CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index });
+                CEnvir.Enqueue(new C.JoinInstance { Index = SelectedDungeonRow.InstanceInfo.Index, Difficulty = (DifficultyType)(DifficultyBox.SelectedItem ?? DifficultyType.Normal) });
             }
         }
 
@@ -520,6 +555,14 @@ namespace Client.Scenes.Views
                         JoinButton.Dispose();
 
                     JoinButton = null;
+                }
+
+                if (DifficultyBox != null)
+                {
+                    if (!DifficultyBox.IsDisposed)
+                        DifficultyBox.Dispose();
+
+                    DifficultyBox = null;
                 }
             }
         }

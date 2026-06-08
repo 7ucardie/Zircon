@@ -184,6 +184,8 @@ namespace Server.Models
                     MapHealthRate += MapHealthRate * multiplier / 100;
                     MapDamageRate += MapDamageRate * multiplier / 100;
                     MapExperienceRate += MapExperienceRate * multiplier / 100;
+                    MapDropRate += MapDropRate * multiplier / 100;
+                    MapGoldRate += MapGoldRate * multiplier / 100;
                 }
             }
 

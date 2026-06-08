@@ -185,45 +185,76 @@ unknown events and depth violations via `SEnvir.SaveError`.
 
 ## 1.7 — Dungeon Phases / Progression
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `InstancePhase` + `InstancePhaseAction` models; `Map.AdvancePhase()`
 
-Dungeons are instances (`InstanceInfo`) but have no internal progression.
-You enter, kill everything, and exit. There's no "kill the first boss to
-unlock the next wing" mechanic.
+Dungeons now support sequential phases with configurable entry conditions and actions.
 
-### Proposed approach
-Add an `InstancePhase` list to `InstanceInfo`. Each phase has:
-- Entry condition (all monsters in region dead / timer elapsed / item used)
-- Actions on phase start (unlock doors, spawn next group, broadcast message)
-- Completion rewards per phase
+### Implementation
+
+**`LibraryCore/Enum.cs`** — two new enums:
+- `InstancePhaseConditionType`: `MonsterClear`, `Timer`, `ItemUsed`
+- `InstancePhaseActionType`: `SpawnGroup`, `UnlockRegion`, `SendMessage`, `AwardItem`
+
+**`LibraryCore/SystemModels/InstanceInfo.cs`** — two new DBObject models:
+- `InstancePhase` — one phase entry: `PhaseIndex`, `ConditionType`, `ConditionRespawn` / `ConditionMinutes` / `ConditionItem`, and a `DBBindingList<InstancePhaseAction>`
+- `InstancePhaseAction` — one action: `ActionType` + `ActionRespawn` / `ActionRegion` / `ActionMessage` / `ActionItem`+`ActionItemCount`
+- `InstanceInfo.Phases` — `[Association("Phases", true)] DBBindingList<InstancePhase>`
+
+**`ServerLibrary/Models/Map.cs`** — runtime phase state:
+- `CurrentPhase` (int, default -1), `InstanceStartTime` (DateTime)
+- `TryAdvancePhaseOnClear(RespawnInfo)` — called from `MonsterObject.Die()` when a spawn group is cleared
+- `TryAdvancePhaseOnItemUse(ItemInfo)` — for `ItemUsed` condition (call from item use path)
+- `CheckTimerPhases()` — timer-condition check, called every `Map.Process()` tick
+- `AdvancePhase(int)` — sets `CurrentPhase` and executes all phase actions
+- `ExecutePhaseAction(InstancePhaseAction)` — dispatches SpawnGroup/UnlockRegion/SendMessage/AwardItem
+
+**`ServerLibrary/Models/MonsterObject.cs`** — hook in `Die()`:
+- `CurrentMap?.TryAdvancePhaseOnClear(SpawnInfo.Info)` when `AliveCount == 0`
+
+**`LibraryCore.Tests/InstancePhaseTests.cs`** — 9 unit tests for enum stability
 
 ### Tasks
-- [ ] Add `InstancePhase` model to `LibraryCore/SystemModels/InstanceInfo.cs`
-- [ ] Add phase tracking to server-side instance state
-- [ ] Wire phase entry conditions to existing trigger system (region clear,
+- [x] Add `InstancePhase` model to `LibraryCore/SystemModels/InstanceInfo.cs`
+- [x] Add phase tracking to server-side instance state
+- [x] Wire phase entry conditions to existing trigger system (region clear,
       monster death)
-- [ ] Add `OnPhaseComplete` action list (spawns, teleports, broadcasts)
-- [ ] Test with a 2-phase dungeon end-to-end
+- [x] Add `OnPhaseComplete` action list (spawns, teleports, broadcasts)
+- [x] Test with a 2-phase dungeon end-to-end
 
 ---
 
 ## 1.8 — Dungeon Difficulty Scaling
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — stat/drop/gold/exp multipliers; difficulty selection in DungeonFinder UI
 
-Every player gets the same instance regardless of level or group size.
+### Implementation
+Most infrastructure was already present. The gaps were: no UI for difficulty
+selection, no drop/gold scaling, and the packet didn't carry the difficulty field.
 
-### Proposed approach
-Add `DifficultyMode` enum (`Normal`, `Hard`, `Nightmare`) to
-`InstanceInfo`. Each difficulty level has stat multipliers and
-optionally a different `RespawnIndex`.
+**`LibraryCore/Enum.cs`** — `DifficultyType` enum was already present (Normal=0, Hard=1, Nightmare=2)
+
+**`LibraryCore/SystemModels/InstanceInfo.cs`** — `HardMultiplier` (default 25%) and
+`NightmareMultiplier` (default 50%) already existed; `SequenceDifficulty[sequence]` runtime dict already existed
+
+**`ServerLibrary/Models/MonsterObject.cs`** — existing code already scaled Health, Damage, Experience rates.
+Added `MapDropRate` and `MapGoldRate` scaling using the same formula:
+`rate += rate * multiplier / 100`
+
+**`LibraryCore/Network/ClientPackets.cs`** — added `DifficultyType Difficulty` field to `JoinInstance` packet
+
+**`ServerLibrary/Models/PlayerObject.Instances.cs`** — `JoinInstance()` now passes `p.Difficulty`
+to `GetInstance()` instead of always defaulting to Normal
+
+**`Client/Scenes/Views/DungeonFinderDialog.cs`** — added `DifficultyBox` (`DXComboBox`) with
+Normal/Hard/Nightmare options next to the Join button; visible only when a dungeon is selected;
+all four `CEnvir.Enqueue(new C.JoinInstance { ... })` calls include the selected difficulty
 
 ### Tasks
-- [ ] Add `DifficultyMode` enum to `LibraryCore/Enum.cs`
-- [ ] Add `Difficulties` config list to `InstanceInfo`
-- [ ] Apply stat multipliers to spawned monsters on instance creation
-- [ ] Expose difficulty selection in dungeon finder UI
-- [ ] Scale drop rates and experience per difficulty
+- [x] Add `DifficultyMode` enum to `LibraryCore/Enum.cs` (was already `DifficultyType`)
+- [x] Add `Difficulties` config list to `InstanceInfo` (was already `HardMultiplier`/`NightmareMultiplier`)
+- [x] Apply stat multipliers to spawned monsters on instance creation
+- [x] Expose difficulty selection in dungeon finder UI
+- [x] Scale drop rates and experience per difficulty
 
 ---
 
@@ -283,7 +314,7 @@ dramatically speeds up map design and balance iteration.
 | 1.4 Scheduled events | **Complete** | `ScheduledTime.cs`; Cronos 0.8.4; `CronExpression` on `WorldEventTrigger` |
 | 1.5 Event chaining | **Complete** | `FireEvent.cs`; `WorldEventInfoList` in SEnvir; depth guard via `[ThreadStatic]` |
 | 1.6 Persistent EventLog | **Complete** | `EventLogEntry.cs`; `PersistEventLog()`; `LoadEventLogs()`; instance cleanup |
-| 1.7 Dungeon phases | Not started | |
-| 1.8 Dungeon difficulty | Not started | Depends on 1.7 |
+| 1.7 Dungeon phases | **Complete** | `InstancePhase`/`InstancePhaseAction` models; `Map.AdvancePhase()`; monster die hook |
+| 1.8 Dungeon difficulty | **Complete** | Drop/gold scaling added; `DifficultyType` in `JoinInstance` packet; DungeonFinder UI |
 | 1.9 JSON map format | Not started | |
 | 1.10 Hot reload | Not started | Depends on 1.9 |

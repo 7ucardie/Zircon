@@ -727,6 +727,7 @@ namespace Library.Network.ClientPackets
     public sealed class JoinInstance : Packet
     {
         public int Index { get; set; }
+        public DifficultyType Difficulty { get; set; }
     }
 
     public sealed class SendCompanionFilters : Packet

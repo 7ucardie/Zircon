@@ -41,8 +41,8 @@ events without touching or recompiling C# code.
 | 1.4 | Cron-style scheduled event triggers — `"0 20 * * 6"` = every Saturday 8pm | [x] |
 | 1.5 | Event chaining — actions can fire other events (multi-stage world events) | [x] |
 | 1.6 | Persistent EventLog — survives server restarts (store to DB) | [x] |
-| 1.7 | Dungeon phases — kill boss → unlock next area → spawn loot room | [ ] |
-| 1.8 | Dungeon difficulty scaling — Normal/Hard/Nightmare with stat scaling | [ ] |
+| 1.7 | Dungeon phases — kill boss → unlock next area → spawn loot room | [x] |
+| 1.8 | Dungeon difficulty scaling — Normal/Hard/Nightmare with stat scaling | [x] |
 | 1.9 | JSON/YAML map definitions — replace binary `.map` with human-readable format | [ ] |
 | 1.10 | Hot reload for map and content data during development | [ ] |
 
