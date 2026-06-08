@@ -2042,6 +2042,7 @@ namespace Server.Models
                 if (SpawnInfo.AliveCount == 0)
                 {
                     SEnvir.EventHandler.Process(this, "MONSTERCLEAR");
+                    CurrentMap?.TryAdvancePhaseOnClear(SpawnInfo.Info);
                 }
             }
 

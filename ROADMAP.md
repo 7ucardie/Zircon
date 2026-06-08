@@ -17,13 +17,13 @@ Foundation work. Nothing in later phases is safe without this.
 
 | # | Task | Status |
 |---|---|---|
-| 0.1 | Add GitHub Actions CI (build all projects on every push) | [ ] |
-| 0.2 | Complete Vortice.Windows migration — replace dead SharpDX | [ ] |
-| 0.3 | Promote DX11 to default renderer; demote DX9 to legacy/fallback | [ ] |
-| 0.4 | Refactor `PlayerObject.cs` (16,900 lines) into partial class files | [ ] |
-| 0.5 | Refactor `GameScene.cs` (5,000 lines) into partial class files | [ ] |
-| 0.6 | Add async/await to networking and database layers | [ ] |
-| 0.7 | Establish first automated test suite (unit tests for LibraryCore) | [ ] |
+| 0.1 | Add GitHub Actions CI (build all projects on every push) | [x] |
+| 0.2 | Complete Vortice.Windows migration — replace dead SharpDX | [x] |
+| 0.3 | Promote DX11 to default renderer; demote DX9 to legacy/fallback | [x] |
+| 0.4 | Refactor `PlayerObject.cs` (16,900 lines) into partial class files | [x] |
+| 0.5 | Refactor `GameScene.cs` (5,000 lines) into partial class files | [x] |
+| 0.6 | Add async/await to networking and database layers | [x] |
+| 0.7 | Establish first automated test suite (unit tests for LibraryCore) | [x] |
 
 ---
 
@@ -35,12 +35,12 @@ events without touching or recompiling C# code.
 
 | # | Task | Status |
 |---|---|---|
-| 1.1 | Dynamic monster AI registry — replace 400-line `GetMonster()` switch | [ ] |
-| 1.2 | Behavior composition flags — `HasPoison`, `Summons`, `Heals`, `Teleports` | [ ] |
-| 1.3 | NPC scripting support — Lua or C# scripts for custom NPC logic | [ ] |
-| 1.4 | Cron-style scheduled event triggers — `"0 20 * * 6"` = every Saturday 8pm | [ ] |
-| 1.5 | Event chaining — actions can fire other events (multi-stage world events) | [ ] |
-| 1.6 | Persistent EventLog — survives server restarts (store to DB) | [ ] |
+| 1.1 | Dynamic monster AI registry — replace 400-line `GetMonster()` switch | [x] |
+| 1.2 | Behavior composition flags — `HasPoison`, `Summons`, `Heals`, `Teleports` | [x] |
+| 1.3 | NPC scripting support — Lua or C# scripts for custom NPC logic | [x] |
+| 1.4 | Cron-style scheduled event triggers — `"0 20 * * 6"` = every Saturday 8pm | [x] |
+| 1.5 | Event chaining — actions can fire other events (multi-stage world events) | [x] |
+| 1.6 | Persistent EventLog — survives server restarts (store to DB) | [x] |
 | 1.7 | Dungeon phases — kill boss → unlock next area → spawn loot room | [ ] |
 | 1.8 | Dungeon difficulty scaling — Normal/Hard/Nightmare with stat scaling | [ ] |
 | 1.9 | JSON/YAML map definitions — replace binary `.map` with human-readable format | [ ] |
@@ -56,14 +56,14 @@ unchanged during the entire migration (wire-compatible protocol).
 
 | # | Task | Status |
 |---|---|---|
-| 2.1 | Scaffold Rust workspace — `server/`, `protocol/`, `db/` crates | [ ] |
-| 2.2 | Port `LibraryCore/Network/` protocol to Rust (`bytes` + `tokio-codec`) | [ ] |
-| 2.3 | Port database layer to `sqlx` (async, compile-time checked queries) | [ ] |
-| 2.4 | Port `ServerCore` game loop to Rust with Tokio async runtime | [ ] |
-| 2.5 | Port `ServerLibrary` — player, monster, map logic to Rust | [ ] |
-| 2.6 | Port `Patcher` and `PatchManager` to Rust CLI tools | [ ] |
-| 2.7 | Integration test: C# client connects to Rust server successfully | [ ] |
-| 2.8 | Performance baseline: benchmark Rust server vs C# server under load | [ ] |
+| 2.1 | Scaffold Rust workspace — `server/`, `protocol/`, `db/` crates | [x] |
+| 2.2 | Port `LibraryCore/Network/` protocol to Rust (`bytes` + `tokio-codec`) | [x] |
+| 2.3 | Port database layer to `sqlx` (async, compile-time checked queries) | [x] |
+| 2.4 | Port `ServerCore` game loop to Rust with Tokio async runtime | [x] |
+| 2.5 | Port `ServerLibrary` — player, monster, map logic to Rust | [x] |
+| 2.6 | Port `Patcher` and `PatchManager` to Rust CLI tools | [x] |
+| 2.7 | Integration test: C# client connects to Rust server successfully | [x] |
+| 2.8 | Performance baseline: benchmark Rust server vs C# server under load | [x] |
 
 ---
 

@@ -328,6 +328,9 @@ namespace Library.SystemModels
         [Association("InstanceInfoStats", true)]
         public DBBindingList<InstanceInfoStat> BuffStats { get; set; }
 
+        [Association("Phases", true)]
+        public DBBindingList<InstancePhase> Phases { get; set; }
+
         [JsonIgnore]
         [IgnoreProperty]
         public Dictionary<string, byte> UserRecord { get; set; }
@@ -471,5 +474,234 @@ namespace Library.SystemModels
             }
         }
         private int _Amount;
+    }
+
+    /// <summary>
+    /// One phase in a dungeon instance. Phases activate sequentially (ascending PhaseIndex).
+    /// A phase becomes active when its entry condition is met on the instance where it is running.
+    /// </summary>
+    public sealed class InstancePhase : DBObject
+    {
+        [IsIdentity]
+        [Association("Phases")]
+        public InstanceInfo Instance
+        {
+            get { return _Instance; }
+            set
+            {
+                if (_Instance == value) return;
+                var oldValue = _Instance;
+                _Instance = value;
+                OnChanged(oldValue, value, "Instance");
+            }
+        }
+        private InstanceInfo _Instance;
+
+        public int PhaseIndex
+        {
+            get { return _PhaseIndex; }
+            set
+            {
+                if (_PhaseIndex == value) return;
+                var oldValue = _PhaseIndex;
+                _PhaseIndex = value;
+                OnChanged(oldValue, value, "PhaseIndex");
+            }
+        }
+        private int _PhaseIndex;
+
+        public string Description
+        {
+            get { return _Description; }
+            set
+            {
+                if (_Description == value) return;
+                var oldValue = _Description;
+                _Description = value;
+                OnChanged(oldValue, value, "Description");
+            }
+        }
+        private string _Description;
+
+        public InstancePhaseConditionType ConditionType
+        {
+            get { return _ConditionType; }
+            set
+            {
+                if (_ConditionType == value) return;
+                var oldValue = _ConditionType;
+                _ConditionType = value;
+                OnChanged(oldValue, value, "ConditionType");
+            }
+        }
+        private InstancePhaseConditionType _ConditionType;
+
+        /// <summary>MonsterClear: spawn group that must be fully cleared to trigger this phase.</summary>
+        public RespawnInfo ConditionRespawn
+        {
+            get { return _ConditionRespawn; }
+            set
+            {
+                if (_ConditionRespawn == value) return;
+                var oldValue = _ConditionRespawn;
+                _ConditionRespawn = value;
+                OnChanged(oldValue, value, "ConditionRespawn");
+            }
+        }
+        private RespawnInfo _ConditionRespawn;
+
+        /// <summary>Timer: minutes elapsed since instance start before this phase triggers.</summary>
+        public int ConditionMinutes
+        {
+            get { return _ConditionMinutes; }
+            set
+            {
+                if (_ConditionMinutes == value) return;
+                var oldValue = _ConditionMinutes;
+                _ConditionMinutes = value;
+                OnChanged(oldValue, value, "ConditionMinutes");
+            }
+        }
+        private int _ConditionMinutes;
+
+        /// <summary>ItemUsed: item a player must use inside the instance to trigger this phase.</summary>
+        public ItemInfo ConditionItem
+        {
+            get { return _ConditionItem; }
+            set
+            {
+                if (_ConditionItem == value) return;
+                var oldValue = _ConditionItem;
+                _ConditionItem = value;
+                OnChanged(oldValue, value, "ConditionItem");
+            }
+        }
+        private ItemInfo _ConditionItem;
+
+        [Association("Actions", true)]
+        public DBBindingList<InstancePhaseAction> Actions { get; set; }
+
+        protected override void OnDeleted()
+        {
+            Instance = null;
+            ConditionRespawn = null;
+            ConditionItem = null;
+            for (int i = Actions.Count - 1; i >= 0; i--)
+                Actions[i].Delete();
+            base.OnDeleted();
+        }
+    }
+
+    /// <summary>
+    /// One action executed when an <see cref="InstancePhase"/> becomes active.
+    /// </summary>
+    public sealed class InstancePhaseAction : DBObject
+    {
+        [IsIdentity]
+        [Association("Actions")]
+        public InstancePhase Phase
+        {
+            get { return _Phase; }
+            set
+            {
+                if (_Phase == value) return;
+                var oldValue = _Phase;
+                _Phase = value;
+                OnChanged(oldValue, value, "Phase");
+            }
+        }
+        private InstancePhase _Phase;
+
+        public InstancePhaseActionType ActionType
+        {
+            get { return _ActionType; }
+            set
+            {
+                if (_ActionType == value) return;
+                var oldValue = _ActionType;
+                _ActionType = value;
+                OnChanged(oldValue, value, "ActionType");
+            }
+        }
+        private InstancePhaseActionType _ActionType;
+
+        /// <summary>SpawnGroup: the RespawnInfo group to force-spawn.</summary>
+        public RespawnInfo ActionRespawn
+        {
+            get { return _ActionRespawn; }
+            set
+            {
+                if (_ActionRespawn == value) return;
+                var oldValue = _ActionRespawn;
+                _ActionRespawn = value;
+                OnChanged(oldValue, value, "ActionRespawn");
+            }
+        }
+        private RespawnInfo _ActionRespawn;
+
+        /// <summary>UnlockRegion: the MapRegion to remove from LockedRegions.</summary>
+        public MapRegion ActionRegion
+        {
+            get { return _ActionRegion; }
+            set
+            {
+                if (_ActionRegion == value) return;
+                var oldValue = _ActionRegion;
+                _ActionRegion = value;
+                OnChanged(oldValue, value, "ActionRegion");
+            }
+        }
+        private MapRegion _ActionRegion;
+
+        /// <summary>SendMessage: broadcast text to all players in the instance.</summary>
+        public string ActionMessage
+        {
+            get { return _ActionMessage; }
+            set
+            {
+                if (_ActionMessage == value) return;
+                var oldValue = _ActionMessage;
+                _ActionMessage = value;
+                OnChanged(oldValue, value, "ActionMessage");
+            }
+        }
+        private string _ActionMessage;
+
+        /// <summary>AwardItem: item to give to every player in the instance.</summary>
+        public ItemInfo ActionItem
+        {
+            get { return _ActionItem; }
+            set
+            {
+                if (_ActionItem == value) return;
+                var oldValue = _ActionItem;
+                _ActionItem = value;
+                OnChanged(oldValue, value, "ActionItem");
+            }
+        }
+        private ItemInfo _ActionItem;
+
+        /// <summary>AwardItem: quantity of ActionItem to give per player.</summary>
+        public int ActionItemCount
+        {
+            get { return _ActionItemCount; }
+            set
+            {
+                if (_ActionItemCount == value) return;
+                var oldValue = _ActionItemCount;
+                _ActionItemCount = value;
+                OnChanged(oldValue, value, "ActionItemCount");
+            }
+        }
+        private int _ActionItemCount;
+
+        protected override void OnDeleted()
+        {
+            Phase = null;
+            ActionRespawn = null;
+            ActionRegion = null;
+            ActionItem = null;
+            base.OnDeleted();
+        }
     }
 }

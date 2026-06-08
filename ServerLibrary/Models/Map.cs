@@ -45,6 +45,11 @@ namespace Server.Models
 
         public DifficultyType Difficulty => Instance != null && Instance.SequenceDifficulty.TryGetValue(InstanceSequence, out DifficultyType d) ? d : DifficultyType.Normal;
 
+        /// <summary>Index of the last phase that has been activated (-1 = no phase active yet).</summary>
+        public int CurrentPhase { get; private set; } = -1;
+        /// <summary>When the instance was created (used for Timer-condition phases).</summary>
+        public DateTime InstanceStartTime { get; private set; } = DateTime.MinValue;
+
         public DateTime HalloweenEventTime, ChristmasEventTime;
 
         public Map(MapInfo info, InstanceInfo instance = null, byte instanceSequence = 0, int respawnIndex = 0)
@@ -57,6 +62,7 @@ namespace Server.Models
                 Instance = instance;
                 InstanceSequence = instanceSequence;
                 InstanceExpiry = instance.TimeLimitInMinutes > 0 ? SEnvir.Now.AddMinutes(instance.TimeLimitInMinutes) : DateTime.MinValue;
+                InstanceStartTime = SEnvir.Now;
             }
         }
 
@@ -321,6 +327,122 @@ namespace Server.Models
             if (LastPlayer.AddMinutes(1) < SEnvir.Now && Players.Any())
             {
                 LastPlayer = SEnvir.Now;
+            }
+
+            if (Instance != null)
+                CheckTimerPhases();
+        }
+
+        private void CheckTimerPhases()
+        {
+            if (Instance.Phases == null) return;
+            int next = CurrentPhase + 1;
+            foreach (InstancePhase phase in Instance.Phases)
+            {
+                if (phase.PhaseIndex != next) continue;
+                if (phase.ConditionType != InstancePhaseConditionType.Timer) continue;
+                if (phase.ConditionMinutes <= 0) continue;
+                if (SEnvir.Now >= InstanceStartTime.AddMinutes(phase.ConditionMinutes))
+                {
+                    AdvancePhase(next);
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Called from MonsterObject.Die() when a spawn group is fully cleared.
+        /// Checks whether the next phase uses MonsterClear on the given respawn group.
+        /// </summary>
+        public void TryAdvancePhaseOnClear(RespawnInfo clearedRespawn)
+        {
+            if (Instance?.Phases == null) return;
+            int next = CurrentPhase + 1;
+            foreach (InstancePhase phase in Instance.Phases)
+            {
+                if (phase.PhaseIndex != next) continue;
+                if (phase.ConditionType != InstancePhaseConditionType.MonsterClear) continue;
+                if (phase.ConditionRespawn == clearedRespawn)
+                {
+                    AdvancePhase(next);
+                    break;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Called from PlayerObject item-use path when a player uses an item inside the instance.
+        /// Checks whether the next phase uses ItemUsed with that item.
+        /// </summary>
+        public void TryAdvancePhaseOnItemUse(ItemInfo usedItem)
+        {
+            if (Instance?.Phases == null) return;
+            int next = CurrentPhase + 1;
+            foreach (InstancePhase phase in Instance.Phases)
+            {
+                if (phase.PhaseIndex != next) continue;
+                if (phase.ConditionType != InstancePhaseConditionType.ItemUsed) continue;
+                if (phase.ConditionItem == usedItem)
+                {
+                    AdvancePhase(next);
+                    break;
+                }
+            }
+        }
+
+        private void AdvancePhase(int phaseIndex)
+        {
+            CurrentPhase = phaseIndex;
+
+            InstancePhase phase = null;
+            foreach (InstancePhase p in Instance.Phases)
+            {
+                if (p.PhaseIndex == phaseIndex) { phase = p; break; }
+            }
+            if (phase == null) return;
+
+            foreach (InstancePhaseAction action in phase.Actions)
+                ExecutePhaseAction(action);
+        }
+
+        private void ExecutePhaseAction(InstancePhaseAction action)
+        {
+            switch (action.ActionType)
+            {
+                case InstancePhaseActionType.SpawnGroup:
+                {
+                    if (action.ActionRespawn == null) return;
+                    SpawnInfo spawn = SEnvir.Spawns.FirstOrDefault(s =>
+                        s.Info == action.ActionRespawn &&
+                        s.CurrentMap.Instance == Instance &&
+                        s.CurrentMap.InstanceSequence == InstanceSequence);
+                    spawn?.DoSpawn(true);
+                    break;
+                }
+                case InstancePhaseActionType.UnlockRegion:
+                {
+                    if (action.ActionRegion != null)
+                        LockedRegions.Remove(action.ActionRegion);
+                    break;
+                }
+                case InstancePhaseActionType.SendMessage:
+                {
+                    if (string.IsNullOrEmpty(action.ActionMessage)) return;
+                    for (int i = 0; i < Players.Count; i++)
+                        Players[i].Broadcast(new S.Chat { Text = action.ActionMessage, Type = MessageType.System });
+                    break;
+                }
+                case InstancePhaseActionType.AwardItem:
+                {
+                    if (action.ActionItem == null || action.ActionItemCount <= 0) return;
+                    for (int i = 0; i < Players.Count; i++)
+                    {
+                        ItemCheck check = new(action.ActionItem, action.ActionItemCount, UserItemFlags.None, TimeSpan.Zero);
+                        if (!Players[i].CanGainItems(false, check)) continue;
+                        Players[i].GainItem(SEnvir.CreateFreshItem(check));
+                    }
+                    break;
+                }
             }
         }
 

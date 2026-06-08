@@ -369,6 +369,21 @@ namespace Library
         Nightmare = 2
     }
 
+    public enum InstancePhaseConditionType : byte
+    {
+        MonsterClear = 0,
+        Timer = 1,
+        ItemUsed = 2,
+    }
+
+    public enum InstancePhaseActionType : byte
+    {
+        SpawnGroup = 0,
+        UnlockRegion = 1,
+        SendMessage = 2,
+        AwardItem = 3,
+    }
+
     public enum RegionType : byte
     {
         None = 0,

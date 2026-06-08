@@ -160,17 +160,26 @@ unknown events and depth violations via `SEnvir.SaveError`.
 
 ## 1.6 — Persistent EventLog (survives restarts)
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `EventLogEntry.cs` + `EventInfoHandler.PersistEventLog()`
 
-`EventLog` is in-memory. A server restart resets all event state —
-timed events lose their position, player event progress is wiped.
+`EventLog` is persisted via a `[UserObject]` MirDB model, surviving server restarts.
+
+### Implementation
+- `ServerLibrary/DBModels/EventLogEntry.cs` — MirDB persistent mirror of in-memory `EventLog`
+  - Fields: `Key`, `WorldEvent`, `PlayerEvent`, `MonsterEvent`, `PlayerIndex`, `InstanceInfo`, `InstanceSequence`, `CurrentValue`, `TriggerCountData`
+  - `TriggerCountData` serializes trigger-count dictionaries as `"W{index}:{count}|P{index}:{count}|M{index}:{count}"`
+  - All properties follow the MirDB backing-field + `OnChanged()` pattern
+- `SEnvir.EventLogEntryList` — `DBCollection<EventLogEntry>` wired into the session
+- `SEnvir.LoadEventLogs()` — called at startup; rebuilds in-memory `EventLogs` list from DB
+- `EventInfoHandler.PersistEventLog()` — called after every trigger fire (World, Player, Monster)
+- `SEnvir` instance cleanup (line 4400) — deletes `EventLogEntry` rows on instance expiry
 
 ### Tasks
-- [ ] Add `EventLog` DB table via MirDB
-- [ ] Persist event state changes to DB on update
-- [ ] Load event state from DB on server startup
-- [ ] Prune expired event logs on cleanup cycle
-- [ ] Ensure instance-scoped events are cleaned up when instance expires
+- [x] Add `EventLog` DB table via MirDB
+- [x] Persist event state changes to DB on update
+- [x] Load event state from DB on server startup
+- [x] Prune expired event logs on cleanup cycle
+- [x] Ensure instance-scoped events are cleaned up when instance expires
 
 ---
 
@@ -273,7 +282,7 @@ dramatically speeds up map design and balance iteration.
 | 1.3 NPC scripting | **Complete** | `NpcScriptEngine.cs`; MoonSharp Lua, sandboxed, `on_open`/Script check+action |
 | 1.4 Scheduled events | **Complete** | `ScheduledTime.cs`; Cronos 0.8.4; `CronExpression` on `WorldEventTrigger` |
 | 1.5 Event chaining | **Complete** | `FireEvent.cs`; `WorldEventInfoList` in SEnvir; depth guard via `[ThreadStatic]` |
-| 1.6 Persistent EventLog | Not started | |
+| 1.6 Persistent EventLog | **Complete** | `EventLogEntry.cs`; `PersistEventLog()`; `LoadEventLogs()`; instance cleanup |
 | 1.7 Dungeon phases | Not started | |
 | 1.8 Dungeon difficulty | Not started | Depends on 1.7 |
 | 1.9 JSON map format | Not started | |
