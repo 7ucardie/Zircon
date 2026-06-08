@@ -6,6 +6,8 @@ mod envir;
 mod map;
 mod network;
 mod objects;
+#[cfg(test)]
+mod tests;
 
 use config::Config;
 

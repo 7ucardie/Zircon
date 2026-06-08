@@ -2,6 +2,8 @@
 
 pub mod connection;
 
+use std::net::SocketAddr;
+
 use tokio::{net::TcpListener, sync::mpsc};
 use tracing::{error, info};
 
@@ -13,19 +15,25 @@ pub struct NewConnection {
     pub handle: ConnectionHandle,
 }
 
-/// Start the TCP listener.  For every accepted connection it spawns reader +
-/// writer tasks and pushes a `NewConnection` to the game loop via `new_conn_tx`.
-///
-/// Runs forever; returns only on fatal error.
-pub async fn start_listener(
-    config: Config,
+/// Bind a TCP listener and return it together with the actual local address
+/// (useful when `port = 0` lets the OS pick a free port in tests).
+pub async fn bind_listener(config: &Config) -> anyhow::Result<(TcpListener, SocketAddr)> {
+    let addr = config.bind_addr();
+    let listener = TcpListener::bind(&addr).await?;
+    let local_addr = listener.local_addr()?;
+    info!("Listening on {local_addr}");
+    Ok((listener, local_addr))
+}
+
+/// Run the accept loop on an already-bound listener.
+/// Spawns reader + writer tasks for every accepted connection and forwards
+/// `NewConnection` events to the game loop.  Returns on fatal error or when
+/// the game loop drops `new_conn_tx`.
+pub async fn run_listener(
+    listener: TcpListener,
     new_conn_tx: mpsc::Sender<NewConnection>,
     inbound_tx: mpsc::Sender<InboundFrame>,
 ) -> anyhow::Result<()> {
-    let addr = config.bind_addr();
-    let listener = TcpListener::bind(&addr).await?;
-    info!("Listening on {addr}");
-
     let mut next_id: u32 = 1;
 
     loop {
@@ -51,4 +59,14 @@ pub async fn start_listener(
     }
 
     Ok(())
+}
+
+/// Convenience entry point used by `main`.
+pub async fn start_listener(
+    config: Config,
+    new_conn_tx: mpsc::Sender<NewConnection>,
+    inbound_tx: mpsc::Sender<InboundFrame>,
+) -> anyhow::Result<()> {
+    let (listener, _) = bind_listener(&config).await?;
+    run_listener(listener, new_conn_tx, inbound_tx).await
 }
