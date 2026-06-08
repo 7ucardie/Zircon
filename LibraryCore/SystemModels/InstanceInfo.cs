@@ -581,7 +581,7 @@ namespace Library.SystemModels
         [Association("Actions", true)]
         public DBBindingList<InstancePhaseAction> Actions { get; set; }
 
-        protected override void OnDeleted()
+        protected internal override void OnDeleted()
         {
             Instance = null;
             ConditionRespawn = null;
@@ -695,7 +695,7 @@ namespace Library.SystemModels
         }
         private int _ActionItemCount;
 
-        protected override void OnDeleted()
+        protected internal override void OnDeleted()
         {
             Phase = null;
             ActionRespawn = null;
