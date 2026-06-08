@@ -31,6 +31,11 @@ namespace Server.Envir
         public static bool TestServer { get; set; } = false;
         public static string StarterGuildName { get; set; } = "Starter Guild";
         public static bool LazyLoadMaps { get; set; } = true;
+        /// <summary>
+        /// Enable development features: hot-reload of .map.json files on change.
+        /// Pass --dev on the command line or set DevMode=true in Server.ini.
+        /// </summary>
+        public static bool DevMode { get; set; } = false;
         public static DateTime EasterEventEnd { get; set; } = new DateTime(2018, 04, 09, 00, 00, 00, DateTimeKind.Utc);
         public static DateTime HalloweenEventEnd { get; set; } = new DateTime(2018, 11, 07, 00, 00, 00, DateTimeKind.Utc);
         public static DateTime ChristmasEventEnd { get; set; } = new DateTime(2019, 01, 03, 00, 00, 00, DateTimeKind.Utc);

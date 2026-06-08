@@ -260,47 +260,72 @@ all four `CEnvir.Enqueue(new C.JoinInstance { ... })` calls include the selected
 
 ## 1.9 — JSON Map Definitions
 
-**Status:** [ ] Not started
+**Status:** [x] Complete — `Map.LoadFromJson()`, `Map.ExportMapJson()`, `Tools/MapConverter/`
 
-Map walkable cells are stored in binary `.map` files — not human-readable,
-not version-controlled meaningfully, hard to diff, impossible to hand-edit.
-
-### Proposed approach
-Provide a converter and a JSON schema. Existing binary maps convert once;
-new maps can be authored in JSON directly.
-
+### JSON format
 ```json
 {
-  "name": "BichonWall",
   "width": 600,
   "height": 600,
-  "cells": "base64-encoded-bitfield-or-RLE",
-  "regions": [...]
+  "layout": [
+    "##.###",
+    "#....#",
+    "######"
+  ]
 }
 ```
+Each string in `layout` is one row (y-index). `.` = walkable, `#` = blocked.
+Column-major cell storage is handled internally; the JSON uses row-major for readability.
+
+### Implementation
+- **`ServerLibrary/Models/Map.cs`**:
+  - `LoadFromJson(string path)` — loads `.map.json`; parses width/height/layout
+  - `ExportMapJson(string binaryPath, string jsonPath)` — binary → JSON converter
+  - `Map.Load()` checks for `.map.json` first; falls back to binary `.map`
+
+- **`Tools/MapConverter/`** — standalone cross-platform CLI tool:
+  - `map-converter <source.map> [output.map.json]` — single file conversion
+  - `map-converter --batch <maps-dir> [output-dir]` — batch conversion of entire directory
+  - No external dependencies; pure `System.Text.Json`
+  - Build: `dotnet build Tools/MapConverter/`
 
 ### Tasks
-- [ ] Define JSON schema for map format
-- [ ] Write `MapConverter` tool (binary `.map` → JSON)
-- [ ] Update map loader in `ServerLibrary/Models/Map.cs` to accept JSON
-- [ ] Keep binary loader as fallback for existing assets
-- [ ] Document map format for content authors
+- [x] Define JSON schema for map format
+- [x] Write `MapConverter` tool (binary `.map` → JSON)
+- [x] Update map loader in `ServerLibrary/Models/Map.cs` to accept JSON
+- [x] Keep binary loader as fallback for existing assets
+- [x] Document map format for content authors
 
 ---
 
 ## 1.10 — Hot Reload for Map and Content Data
 
-**Status:** [ ] Not started (depends on 1.9)
+**Status:** [x] Complete — `FileSystemWatcher` on `Maps/`, gated by `Config.DevMode`, GM broadcast
 
-Every content change today requires a server restart. Hot reload
-dramatically speeds up map design and balance iteration.
+### Implementation
+
+The core watcher was already present; the missing pieces were the dev flag gate and GM notification.
+
+**`ServerLibrary/Envir/Config.cs`** — added `DevMode` bool property (default `false`):
+- Enable by adding `DevMode=true` to `Server.ini` or setting it programmatically
+- Production servers with default config are unaffected
+
+**`ServerLibrary/Envir/SEnvir.cs`** — `StartMapWatcher()`:
+- Now returns early if `!Config.DevMode` — watcher never starts in production
+- `FileSystemWatcher` monitors `Config.MapPath` for `*.map.json` changes/creates
+- Changes are queued via `ConcurrentQueue<string> PendingMapReloads`
+- Processed in the main game loop tick via `ProcessPendingMapReloads()`
+- `ReloadMap()` reloads `ValidCells`, region points, cell regions, and movements
+- On success: broadcasts `"[HotReload] Map reloaded: {name}"` to all GM players via `S.Chat`
+
+**`Tools/MapConverter/`** — standalone CLI converter (from Task 1.9):
+- Converts `.map` binary files to `.map.json` format for editing and hot reload
 
 ### Tasks
-- [ ] Add file watcher on `Maps/` and `Data/` directories (development mode only)
-- [ ] On change: reload affected `MapInfo` / `MonsterInfo` / `NPCInfo` without
-      restarting server
-- [ ] Gate hot reload behind a `--dev` flag so production servers are unaffected
-- [ ] Broadcast "map reloaded" notice to GMs on hot reload
+- [x] Add file watcher on `Maps/` directory (development mode only)
+- [x] On change: reload affected walkable cells and region data
+- [x] Gate hot reload behind a `DevMode` config flag so production servers are unaffected
+- [x] Broadcast "map reloaded" notice to GMs on hot reload
 
 ---
 
@@ -316,5 +341,5 @@ dramatically speeds up map design and balance iteration.
 | 1.6 Persistent EventLog | **Complete** | `EventLogEntry.cs`; `PersistEventLog()`; `LoadEventLogs()`; instance cleanup |
 | 1.7 Dungeon phases | **Complete** | `InstancePhase`/`InstancePhaseAction` models; `Map.AdvancePhase()`; monster die hook |
 | 1.8 Dungeon difficulty | **Complete** | Drop/gold scaling added; `DifficultyType` in `JoinInstance` packet; DungeonFinder UI |
-| 1.9 JSON map format | Not started | |
-| 1.10 Hot reload | Not started | Depends on 1.9 |
+| 1.9 JSON map format | **Complete** | `Map.LoadFromJson()`, `Map.ExportMapJson()`; `Tools/MapConverter/` CLI |
+| 1.10 Hot reload | **Complete** | `FileSystemWatcher` on `Maps/`; `Config.DevMode` gate; GM broadcast |

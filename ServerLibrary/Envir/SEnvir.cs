@@ -807,6 +807,7 @@ namespace Server.Envir
 
         private static void StartMapWatcher()
         {
+            if (!Config.DevMode) return;
             if (!Directory.Exists(Config.MapPath)) return;
 
             _mapWatcher = new FileSystemWatcher(Config.MapPath, "*.map.json")
@@ -848,6 +849,10 @@ namespace Server.Envir
             CreateMovements(null, 0, info);
 
             Log($"[HotReload] Reloaded map {fileName} ({map.ValidCells.Count} walkable cells).");
+
+            string notice = $"[HotReload] Map reloaded: {fileName} ({map.ValidCells.Count} walkable cells)";
+            foreach (PlayerObject gm in Players.Where(p => p.GameMaster))
+                gm.Enqueue(new S.Chat { Text = notice, Type = MessageType.System });
         }
 
         private static void ProcessPendingMapReloads()
