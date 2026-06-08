@@ -1,22 +1,13 @@
-//! `zircon-patchmgr` — CLI patch manager for Zircon game client updates.
-//!
-//! Workflow:
-//!   1. Scan client directory, compute MD5 of every file (parallel).
-//!   2. Load existing PList.Bin (optional) to identify unchanged files.
-//!   3. Gzip-compress new/changed files into the patch directory.
-//!   4. Write a new PList.Bin with all entries.
-//!
-//! The output is then uploaded to the patch server manually or via a CI step.
+//! `zircon-patchmgr` CLI entry point.
 
 use std::{collections::HashMap, path::PathBuf};
 
 use clap::{Parser, Subcommand};
-
-mod compress;
-mod patch_info;
-mod scanner;
-
-use patch_info::{read_plist, write_plist, PatchInfo};
+use zircon_patchmgr::{
+    compress,
+    patch_info::{read_plist, write_plist, PatchInfo},
+    scanner,
+};
 
 #[derive(Parser)]
 #[command(
@@ -108,12 +99,8 @@ fn cmd_build(
         let dst = patch_dir.join(&patch_name);
 
         let compressed_len = match existing_map.get(&norm_rel) {
-            Some(ex) if ex.checksum == entry.checksum => {
-                // File unchanged — carry forward the stored compressed length.
-                ex.compressed_len
-            }
+            Some(ex) if ex.checksum == entry.checksum => ex.compressed_len,
             _ => {
-                // New or modified file — compress it.
                 let len = compress::gzip_file(&src, &dst)
                     .map_err(|e| anyhow::anyhow!("compressing {}: {e}", entry.rel_path))?;
                 compressed_count += 1;

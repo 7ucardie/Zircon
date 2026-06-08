@@ -8,3 +8,10 @@ description = "Zircon wire-protocol codec (client ↔ server packets)"
 [dependencies]
 bytes     = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { workspace = true }
+
+[[bench]]
+name    = "framing"
+harness = false

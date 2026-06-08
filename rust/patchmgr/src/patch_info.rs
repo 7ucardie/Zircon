@@ -24,24 +24,34 @@ pub struct PatchInfo {
 
 // ── Public helpers ────────────────────────────────────────────────────────────
 
-/// Read all entries from a PList.Bin file (no leading count — reads until EOF).
-pub fn read_plist(path: &Path) -> anyhow::Result<Vec<PatchInfo>> {
-    let data = std::fs::read(path)?;
-    let mut pos = 0usize;
-    let mut list = Vec::new();
-    while pos < data.len() {
-        list.push(read_entry(&data, &mut pos)?);
-    }
-    Ok(list)
-}
-
-/// Write all entries to a PList.Bin file (no leading count).
-pub fn write_plist(entries: &[PatchInfo], path: &Path) -> anyhow::Result<()> {
+/// Serialize entries to bytes (PList.Bin format, no leading count).
+/// Useful for benchmarks and in-memory operations.
+pub fn to_bytes(entries: &[PatchInfo]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(entries.len() * 64);
     for e in entries {
         write_entry(e, &mut buf);
     }
-    std::fs::write(path, &buf)?;
+    buf
+}
+
+/// Deserialize entries from a byte slice (reads until end of slice).
+pub fn from_bytes(data: &[u8]) -> anyhow::Result<Vec<PatchInfo>> {
+    let mut pos = 0usize;
+    let mut list = Vec::new();
+    while pos < data.len() {
+        list.push(read_entry(data, &mut pos)?);
+    }
+    Ok(list)
+}
+
+/// Read all entries from a PList.Bin file (no leading count — reads until EOF).
+pub fn read_plist(path: &Path) -> anyhow::Result<Vec<PatchInfo>> {
+    from_bytes(&std::fs::read(path)?)
+}
+
+/// Write all entries to a PList.Bin file (no leading count).
+pub fn write_plist(entries: &[PatchInfo], path: &Path) -> anyhow::Result<()> {
+    std::fs::write(path, to_bytes(entries))?;
     Ok(())
 }
 
