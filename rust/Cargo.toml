@@ -3,6 +3,7 @@ members = [
     "protocol",
     "db",
     "server",
+    "patchmgr",
 ]
 resolver = "2"
 
