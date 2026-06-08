@@ -1,0 +1,26 @@
+[package]
+name = "zircon-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Zircon Bevy client — cross-platform game client"
+
+[[bin]]
+name = "zircon-client"
+path = "src/main.rs"
+
+[features]
+# "windowed" pulls in Bevy with its full 2D rendering stack.
+# CI builds with --no-default-features to skip windowed deps and stay fast.
+default = ["windowed"]
+windowed = [
+    "dep:bevy",
+]
+
+[dependencies]
+zircon-protocol = { path = "../protocol" }
+# Bevy is optional: omitted in headless/CI builds (--no-default-features).
+bevy = { version = "0.15", optional = true }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+anyhow     = { workspace = true }

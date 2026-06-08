@@ -75,7 +75,7 @@ same assets — adds Linux and macOS support alongside Windows.
 
 | # | Task | Status |
 |---|---|---|
-| 3.1 | Bevy proof-of-concept — load a `.map` file and render a single map tile | [ ] |
+| 3.1 | Bevy proof-of-concept — load a `.map` file and render a single map tile | [x] |
 | 3.2 | Sprite rendering pipeline — load `.lib` art assets in Bevy | [ ] |
 | 3.3 | Player movement and camera | [ ] |
 | 3.4 | Network client in Rust — connect to Rust server from Bevy client | [ ] |

@@ -117,9 +117,13 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('rust/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Build
+      - name: Build server crates
         working-directory: rust
-        run: cargo build --all
+        run: cargo build --workspace --exclude zircon-client
+
+      - name: Build client (headless — no windowed deps required)
+        working-directory: rust
+        run: cargo build -p zircon-client --no-default-features
 
       - name: Test
         working-directory: rust
