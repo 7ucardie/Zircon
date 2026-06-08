@@ -3,7 +3,9 @@ use tracing::info;
 
 mod config;
 mod envir;
+mod map;
 mod network;
+mod objects;
 
 use config::Config;
 

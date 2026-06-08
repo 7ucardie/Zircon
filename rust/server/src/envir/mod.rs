@@ -75,7 +75,8 @@ impl Envir {
         let (inbound_tx, inbound_rx) = mpsc::channel(INBOUND_CAP);
 
         let mut world = World::new();
-        world.load_maps(game_data.maps.clone());
+        let maps_dir = config.db_path.join("Maps");
+        world.load_maps(game_data.maps.clone(), &maps_dir);
 
         let envir = Envir {
             config,
@@ -174,8 +175,8 @@ impl Envir {
             if Instant::now() >= deadline {
                 break; // yield — process remaining next tick
             }
-            if let Some(_obj) = self.world.objects.get_mut(&id) {
-                // obj.process(self.tick);   ← Task 2.5
+            if let Some(obj) = self.world.objects.get_mut(&id) {
+                obj.process(self.tick);
             }
         }
     }
