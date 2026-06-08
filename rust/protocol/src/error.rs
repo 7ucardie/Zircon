@@ -13,4 +13,7 @@ pub enum ProtocolError {
 
     #[error("packet length field overflows available buffer")]
     LengthOverflow,
+
+    #[error("unknown enum discriminant: {0}")]
+    UnknownEnumValue(i32),
 }

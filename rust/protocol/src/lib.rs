@@ -22,9 +22,13 @@
 //! references are preceded by a 1-byte null flag (0 = null, 1 = present).
 
 pub mod codec;
+pub mod enums;
 pub mod error;
 pub mod frame;
+pub mod packets;
+pub mod shared;
 pub mod types;
+pub mod wire;
 
 pub use codec::{PacketCodec, PacketId};
 pub use error::ProtocolError;
