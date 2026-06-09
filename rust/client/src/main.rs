@@ -48,7 +48,7 @@ fn main() {
             }
         }
 
-        // <map.json>  — render a map
+        // <map.json>  — render a map with player movement
         (Some(map_path), _) => {
             let map = map::MapFile::load(std::path::Path::new(map_path))
                 .expect("failed to load map file");
@@ -58,13 +58,14 @@ fn main() {
                 App::new()
                     .add_plugins(DefaultPlugins.set(WindowPlugin {
                         primary_window: Some(Window {
-                            title: format!("Zircon — {map_path}"),
+                            title: format!("Zircon — {map_path} (WASD/arrows to move)"),
                             resolution: (1024.0, 768.0).into(),
                             ..default()
                         }),
                         ..default()
                     }))
                     .add_plugins(render::MapRenderPlugin { map })
+                    .add_plugins(render::PlayerPlugin)
                     .run();
             }
             #[cfg(not(feature = "windowed"))]

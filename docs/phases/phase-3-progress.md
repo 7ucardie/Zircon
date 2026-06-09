@@ -87,6 +87,33 @@ pub struct LibRenderPlugin {
 Decodes the requested image on startup, uploads as `Rgba8UnormSrgb` `Image` asset,
 and spawns a `Sprite` with `offset_x / offset_y` applied.
 
+---
+
+## Task 3.3 — Player Movement and Camera ✓
+
+**Goal**: WASD/arrow-key grid movement with the camera following the player.
+
+### `PlayerPlugin` (render.rs)
+
+Added alongside `MapRenderPlugin` in the map-rendering path.
+
+- `spawn_player`: finds the first walkable tile, spawns a blue `Sprite` at z=1
+- `handle_movement`: reads WASD/arrow input; moves immediately on key-down,
+  then repeats every 150ms while held; rejects moves into blocked tiles
+- `camera_follow`: snaps `Camera2d` position to the player each frame
+- `grid_to_world`: shared helper converting (gx, gy) to Bevy world coordinates
+
+### Controls
+
+| Key | Action |
+|-----|--------|
+| W / ↑ | Move up |
+| S / ↓ | Move down |
+| A / ← | Move left |
+| D / → | Move right |
+
+---
+
 ### Test coverage
 
 All tests pass (`cargo test -p zircon-client --no-default-features`):
