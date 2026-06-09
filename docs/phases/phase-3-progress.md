@@ -166,6 +166,46 @@ All tests pass (`cargo test -p zircon-client --no-default-features`):
 - Out-of-bounds decode returns `None`
 - Map parse/validation, walkability, edge cases
 - Invalid JSON, missing file, wrong dimensions
+---
+
+## Task 3.5 — Bevy UI Layer ✓
+
+**Goal**: HUD bars, inventory grid, NPC dialog panel, and connection status overlay.
+
+### `rust/client/src/ui.rs` (windowed feature)
+
+`UiPlugin` adds four systems:
+
+| System | Trigger | Effect |
+|--------|---------|--------|
+| `setup_ui` | Startup | Spawns all panels |
+| `update_status_hud` | Update | Reads `NetworkHandle.status` → updates top-right text |
+| `update_bars` | Update (on stat change) | Adjusts HP/MP fill widths + text |
+| `toggle_inventory` | Update | `I` key shows/hides inventory grid |
+| `toggle_dialog` | Update | `E` key shows/hides NPC dialog |
+
+### UI panels
+
+- **Status overlay** (top-right): single-line connection status
+- **HUD bar** (bottom-left): HP (red) and MP (blue) bars, each 160×16px with fill + text overlay
+- **Inventory** (centre, hidden): 5×6 CSS-grid of 28px slots with border
+- **NPC dialog** (above HUD, hidden): speaker name (gold), body text, close hint
+
+### Pure helpers (always compiled, in `network.rs`)
+
+`bar_pct(current, max)` and `status_label(status)` live in `network.rs` so they
+compile and are tested in headless/CI builds (no Bevy required).
+
+### Controls summary
+
+| Key | Action |
+|-----|--------|
+| WASD / Arrows | Move player |
+| I | Toggle inventory |
+| E | Toggle NPC dialog |
+
+---
+
 - Network: `Connected` frame → Version reply (id=6)
 - Network: `Ping` frame → PingResponse reply (id=5)
 - Network: `Disconnect` frame → event with correct reason

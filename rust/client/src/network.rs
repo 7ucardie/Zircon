@@ -283,6 +283,27 @@ mod bevy_glue {
     }
 }
 
+// ── Pure UI helpers ──────────────────────────────────────────────────────────
+// Kept here (always compiled) so tests run even in headless/CI builds.
+
+/// HP/MP bar fill percentage (0–100), clamped and safe against zero max.
+pub fn bar_pct(current: u32, max: u32) -> f32 {
+    if max == 0 {
+        return 0.0;
+    }
+    (current as f32 / max as f32 * 100.0).clamp(0.0, 100.0)
+}
+
+/// One-line status string for the HUD overlay.
+pub fn status_label(status: &ConnectionStatus) -> String {
+    match status {
+        ConnectionStatus::Connecting    => "Status: Connecting…".to_string(),
+        ConnectionStatus::Connected     => "Status: Connected".to_string(),
+        ConnectionStatus::Ready         => "Status: Online".to_string(),
+        ConnectionStatus::Disconnected(r) => format!("Disconnected: {r}"),
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -382,5 +403,40 @@ mod tests {
         assert_eq!(frame.packet_id, 5);
         let pr = PingResponse::decode(frame.payload).unwrap();
         assert_eq!(pr.ping, 42);
+    }
+
+    // ── bar_pct / status_label (UI helpers, always compiled) ──────────────
+
+    #[test]
+    fn bar_pct_normal_range() {
+        assert_eq!(bar_pct(50, 100), 50.0);
+        assert_eq!(bar_pct(100, 100), 100.0);
+        assert_eq!(bar_pct(0, 100), 0.0);
+    }
+
+    #[test]
+    fn bar_pct_zero_max_returns_zero() {
+        assert_eq!(bar_pct(0, 0), 0.0);
+        assert_eq!(bar_pct(99, 0), 0.0);
+    }
+
+    #[test]
+    fn bar_pct_overflow_clamped_to_100() {
+        assert_eq!(bar_pct(150, 100), 100.0);
+    }
+
+    #[test]
+    fn bar_pct_fractional() {
+        let p = bar_pct(1, 3);
+        assert!((p - 33.333).abs() < 0.01, "expected ~33.3, got {p}");
+    }
+
+    #[test]
+    fn status_label_variants() {
+        assert!(status_label(&ConnectionStatus::Connecting).contains("Connecting"));
+        assert!(status_label(&ConnectionStatus::Connected).contains("Connected"));
+        assert!(status_label(&ConnectionStatus::Ready).contains("Online"));
+        let disc = status_label(&ConnectionStatus::Disconnected("BadVersion".into()));
+        assert!(disc.contains("BadVersion"), "{disc}");
     }
 }
