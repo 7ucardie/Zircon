@@ -255,3 +255,41 @@ Both panels are full-screen `GlobalZIndex(10)` overlays with `BackgroundColor(0.
 - `scene_titles_are_distinct`
 - `scene_title_values`
 - `game_scene_eq_and_hash`
+
+---
+
+## Task 3.7 — Platform Validation ✓
+
+**Goal**: Verify the Bevy client builds (headless + windowed) and all tests pass on Windows, Linux, and macOS.
+
+### CI changes (`.github/workflows/build.yml`)
+
+New `build-rust-client` matrix job running on all three OS targets:
+
+```yaml
+build-rust-client:
+  name: Rust Client (${{ matrix.os }})
+  runs-on: ${{ matrix.os }}
+  strategy:
+    matrix:
+      os: [ubuntu-latest, windows-latest, macos-latest]
+```
+
+Steps per platform:
+1. **Install Linux system libraries** (ubuntu only) — ALSA, udev, xkbcommon, X11, Wayland headers required for Bevy's default feature set to link on Linux CI
+2. **Build client (headless)** — `cargo build -p zircon-client --no-default-features`
+3. **Build client (windowed)** — `cargo build -p zircon-client` — full Bevy compile validates platform ABI
+4. **Test client** — `cargo test -p zircon-client --no-default-features` (41 tests)
+
+### Platform-specific notes
+
+| Platform | Graphics backend | System libraries required |
+|----------|-----------------|--------------------------|
+| Linux    | wgpu Vulkan / GLES | `libx11-dev libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev` |
+| Windows  | wgpu DX12 / DX11 | None (MSVC runtime included in runner) |
+| macOS    | wgpu Metal       | None (Metal SDK included in Xcode toolchain) |
+
+### Existing `build-rust` job (ubuntu-only)
+
+Retained separately: builds server crates + client headless + all workspace tests.
+The new matrix job adds the per-platform windowed compile check on top of that.
