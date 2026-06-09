@@ -78,7 +78,7 @@ same assets — adds Linux and macOS support alongside Windows.
 | 3.1 | Bevy proof-of-concept — load a `.map` file and render a single map tile | [x] |
 | 3.2 | Sprite rendering pipeline — load `.lib` art assets in Bevy | [x] |
 | 3.3 | Player movement and camera | [x] |
-| 3.4 | Network client in Rust — connect to Rust server from Bevy client | [ ] |
+| 3.4 | Network client in Rust — connect to Rust server from Bevy client | [x] |
 | 3.5 | Port UI layer (HUD, inventory, NPC dialogs) to Bevy UI | [ ] |
 | 3.6 | Port game scenes — Login, CharacterSelect, GameScene | [ ] |
 | 3.7 | Platform validation — Windows, Linux, macOS | [ ] |

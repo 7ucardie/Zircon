@@ -114,6 +114,47 @@ Added alongside `MapRenderPlugin` in the map-rendering path.
 
 ---
 
+---
+
+## Task 3.4 — Network Client ✓
+
+**Goal**: Connect the Bevy client to the Rust server using the `zircon-protocol` crate.
+
+### Architecture
+
+```
+Bevy systems  ← NetEvent ─ NetworkHandle::poll()
+     │                           │
+     └── handle.send(NetOut) ────┤
+                                 │
+                          background thread (Tokio rt)
+                                 │
+                             TCP socket
+                                 │
+                           Zircon server
+```
+
+### `rust/client/src/network.rs`
+
+- `NetIn` — inbound events: `Connected`, `GoodVersion`, `Ping`, `CheckVersion`, `Disconnect`, `Error`
+- `NetOut` — outbound commands: `SendVersion`, `SendPingResponse`
+- `ConnectionStatus` — `Connecting` → `Connected` → `Ready` / `Disconnected`
+- `NetworkHandle` resource — wraps `Mutex<UnboundedReceiver>` + `UnboundedSender` + status
+- `start_network(addr)` — spawns background Tokio thread, returns handle
+- `dispatch_frame(frame, tx)` — pure packet dispatch; returns reply bytes when needed:
+  - `Connected` (id=1) → auto-send `Version { client_hash: [] }`
+  - `Ping` (id=4) → auto-send `PingResponse { ping: 0 }`
+  - `GoodVersion` (id=3) / `Disconnect` (id=2) / `CheckVersion` (id=0) → event only
+- `NetworkPlugin` (windowed feature) — inserts handle, adds `poll_network` Update system
+
+### CLI usage
+
+```
+zircon-client <map.json> [server_addr]
+# e.g.
+zircon-client Map/zone1.json 127.0.0.1:7000
+```
+
 ### Test coverage
 
 All tests pass (`cargo test -p zircon-client --no-default-features`):
@@ -125,3 +166,9 @@ All tests pass (`cargo test -p zircon-client --no-default-features`):
 - Out-of-bounds decode returns `None`
 - Map parse/validation, walkability, edge cases
 - Invalid JSON, missing file, wrong dimensions
+- Network: `Connected` frame → Version reply (id=6)
+- Network: `Ping` frame → PingResponse reply (id=5)
+- Network: `Disconnect` frame → event with correct reason
+- Network: `GoodVersion` frame → event with database_key
+- Network: unknown packet silently ignored
+- Network: outbound `Version` and `PingResponse` encode correctly

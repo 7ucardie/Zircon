@@ -20,7 +20,9 @@ windowed = [
 [dependencies]
 zircon-protocol = { path = "../protocol" }
 # Bevy is optional: omitted in headless/CI builds (--no-default-features).
-bevy = { version = "0.15", optional = true }
+bevy   = { version = "0.15", optional = true }
 serde      = { workspace = true }
 serde_json = { workspace = true }
 anyhow     = { workspace = true }
+tokio  = { workspace = true }
+bytes  = { workspace = true }

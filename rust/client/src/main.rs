@@ -1,5 +1,6 @@
 mod map;
 mod lib_asset;
+mod network;
 
 #[cfg(feature = "windowed")]
 mod render;
@@ -48,25 +49,31 @@ fn main() {
             }
         }
 
-        // <map.json>  — render a map with player movement
+        // <map.json> [server_addr]  — render a map with player + optional network
         (Some(map_path), _) => {
+            let server_addr = second.as_deref().map(str::to_owned);
             let map = map::MapFile::load(std::path::Path::new(map_path))
                 .expect("failed to load map file");
 
             #[cfg(feature = "windowed")]
             {
-                App::new()
-                    .add_plugins(DefaultPlugins.set(WindowPlugin {
-                        primary_window: Some(Window {
-                            title: format!("Zircon — {map_path} (WASD/arrows to move)"),
-                            resolution: (1024.0, 768.0).into(),
-                            ..default()
-                        }),
+                let mut app = App::new();
+                app.add_plugins(DefaultPlugins.set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: format!("Zircon — {map_path} (WASD/arrows to move)"),
+                        resolution: (1024.0, 768.0).into(),
                         ..default()
-                    }))
-                    .add_plugins(render::MapRenderPlugin { map })
-                    .add_plugins(render::PlayerPlugin)
-                    .run();
+                    }),
+                    ..default()
+                }))
+                .add_plugins(render::MapRenderPlugin { map })
+                .add_plugins(render::PlayerPlugin);
+
+                if let Some(addr) = server_addr {
+                    app.add_plugins(network::NetworkPlugin { server_addr: addr });
+                }
+
+                app.run();
             }
             #[cfg(not(feature = "windowed"))]
             {
@@ -82,7 +89,7 @@ fn main() {
         // no args — print usage
         _ => {
             eprintln!("Usage:");
-            eprintln!("  zircon-client <map.json>");
+            eprintln!("  zircon-client <map.json> [server_addr]");
             eprintln!("  zircon-client --lib <file.zl> [image_index]");
         }
     }
