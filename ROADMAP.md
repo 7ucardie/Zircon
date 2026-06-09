@@ -80,7 +80,7 @@ same assets — adds Linux and macOS support alongside Windows.
 | 3.3 | Player movement and camera | [x] |
 | 3.4 | Network client in Rust — connect to Rust server from Bevy client | [x] |
 | 3.5 | Port UI layer (HUD, inventory, NPC dialogs) to Bevy UI | [x] |
-| 3.6 | Port game scenes — Login, CharacterSelect, GameScene | [ ] |
+| 3.6 | Port game scenes — Login, CharacterSelect, GameScene | [x] |
 | 3.7 | Platform validation — Windows, Linux, macOS | [ ] |
 | 3.8 | Replace WinForms admin tools with Tauri (Rust backend, web frontend) | [ ] |
 

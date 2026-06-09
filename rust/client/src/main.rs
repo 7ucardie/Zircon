@@ -1,11 +1,14 @@
 mod map;
 mod lib_asset;
 mod network;
+mod game_state;
 
 #[cfg(feature = "windowed")]
 mod render;
 #[cfg(feature = "windowed")]
 mod ui;
+#[cfg(feature = "windowed")]
+mod scenes;
 
 #[cfg(feature = "windowed")]
 use bevy::prelude::*;
@@ -70,7 +73,8 @@ fn main() {
                 }))
                 .add_plugins(render::MapRenderPlugin { map })
                 .add_plugins(render::PlayerPlugin)
-                .add_plugins(ui::UiPlugin);
+                .add_plugins(ui::UiPlugin)
+                .add_plugins(scenes::ScenesPlugin);
 
                 if let Some(addr) = server_addr {
                     app.add_plugins(network::NetworkPlugin { server_addr: addr });

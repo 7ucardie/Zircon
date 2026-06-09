@@ -212,3 +212,46 @@ compile and are tested in headless/CI builds (no Bevy required).
 - Network: `GoodVersion` frame → event with database_key
 - Network: unknown packet silently ignored
 - Network: outbound `Version` and `PingResponse` encode correctly
+
+---
+
+## Task 3.6 — Game Scenes ✓
+
+**Goal**: Port Login, CharacterSelect, and Game state machine to Bevy States.
+
+### Architecture
+
+`game_state.rs` (always compiled — no Bevy deps):
+- `GameScene` enum: `Login` (default), `CharacterSelect`, `Game`
+- `#[cfg_attr(feature = "windowed", derive(bevy::prelude::States))]`
+- `scene_title(scene)` pure helper — tested in CI headless builds
+
+`scenes.rs` (windowed feature only):
+- `ScenesPlugin`: registers `GameScene` state, spawns overlay panels, wires transitions
+- `LoginPanel` / `CharSelectPanel` marker components for visibility toggling
+
+### Panel layout
+
+Both panels are full-screen `GlobalZIndex(10)` overlays with `BackgroundColor(0.04, 0.04, 0.08, 0.97)`. Initial visibility: Login=Visible, CharSelect=Hidden.
+
+**Login panel**: title "ZIRCON", subtitle "Cross-platform Mir3 Client", hint "[Enter] Connect to server"
+
+**CharSelect panel**: "Select Character" heading, three character slots (Warrior/Wizard/empty) in bordered boxes, navigation hint "[1/2/3] or [Enter] Play  [Esc] Back"
+
+### Transitions
+
+| From            | To              | Trigger                              |
+|-----------------|-----------------|--------------------------------------|
+| Login           | CharacterSelect | Enter / NumpadEnter key              |
+| Login           | CharacterSelect | `NetworkHandle.status == Ready`      |
+| CharacterSelect | Game            | Enter / 1 / 2 / 3 keys              |
+| CharacterSelect | Login           | Escape key                           |
+| Any (not Login) | Login           | `NetworkHandle.status == Disconnected` |
+
+### Test coverage
+
+4 tests in `game_state::tests` (always compiled, run in CI headless builds):
+- `default_scene_is_login`
+- `scene_titles_are_distinct`
+- `scene_title_values`
+- `game_scene_eq_and_hash`
