@@ -1,100 +1,100 @@
-# Phase 3 — Cross-Platform Client
+# Phase 3 — Cross-Platform Client Progress
 
-**Goal:** Replace the Windows-only DirectX client with a Bevy (Rust) client that
-runs on Windows, Linux, and macOS. Same visual quality and assets; different
-runtime foundation.
+## Task 3.1 — Bevy Proof-of-Concept ✓
 
-**Branch:** `phase/3-client-modernization` / `claude/codebase-review-rust-migration-SiWCK`
-
----
-
-## 3.1 — Bevy Proof-of-Concept
-
-**Status:** [x] Complete — `rust/client/` crate
-
-### Tasks
-- [x] Scaffold `rust/client/` Bevy crate in the Rust workspace
-- [x] Implement `MapFile` — deserializes `.map.json` files (JSON format from Tasks 1.9/1.10)
-- [x] Implement `MapRenderPlugin` — spawns one `Sprite` per tile, centred on origin
-- [x] Window title shows map dimensions; camera auto-positioned
-- [x] Feature-gated: `default = ["windowed"]`; CI builds with `--no-default-features`
-  (Bevy optional dep — no system-graphics libs needed in CI)
-- [x] 8 unit tests for `MapFile` (parsing, walkability, bounds, error cases)
-- [x] CI updated: separate headless build step for client crate
+**Goal**: Load a `.map` file (JSON format from Task 1.9) and render a tile grid.
 
 ### Crate structure
 
 ```
 rust/client/
-├── Cargo.toml          — bevy = "0.15" optional, windowed feature gate
+├── Cargo.toml          # zircon-client, bevy optional via `windowed` feature
 └── src/
-    ├── main.rs         — App entry: loads map path from argv, runs Bevy
-    ├── map.rs          — MapFile struct (Deserialize) + walkability helpers + tests
-    └── render.rs       — MapRenderPlugin: Camera2d + tile Sprite spawning
+    ├── main.rs         # entry point; args: <map.json> or --lib <file.zl> [idx]
+    ├── map.rs          # MapFile loader + unit tests
+    ├── render.rs       # Bevy MapRenderPlugin + LibRenderPlugin
+    └── lib_asset.rs    # .zl decoder (see Task 3.2)
 ```
 
-### Usage
+### Feature gates
 
-```bash
-# Developer: full windowed build (requires system graphics libs)
-cargo run -p zircon-client -- Map/my_map.map.json
+`windowed` (default) pulls in `bevy`. CI builds with `--no-default-features` to
+avoid system graphics library requirements (X11, Wayland, ALSA) on headless runners.
 
-# CI / headless: no graphics libs needed
-cargo build -p zircon-client --no-default-features
-cargo test  -p zircon-client --no-default-features
+### CI changes (`.github/workflows/build.yml`)
+
+```yaml
+- name: Build server crates
+  run: cargo build --workspace --exclude zircon-client
+
+- name: Build client (headless)
+  run: cargo build -p zircon-client --no-default-features
+
+- name: Test
+  run: cargo test --all
 ```
 
-### Rendering design
+### Map tile rendering
 
-- Tile size: 16 × 16 px (constant `TILE_PX`)
-- Walkable cell: `Color::srgb(0.85, 0.85, 0.85)` (light grey)
-- Blocked cell: `Color::srgb(0.15, 0.15, 0.2)` (near-black)
-- Rendered area capped at 100 × 100 tiles (`MAX_RENDER_DIM`) for PoC performance
-- Grid centred on world origin; camera at origin looks at the grid
-
----
-
-## 3.2 — Sprite Rendering Pipeline
-
-**Status:** [ ] Not started
-
-Load `.lib` art assets in Bevy and render them in place of the coloured
-placeholder tiles.
+`MapRenderPlugin` spawns one `Sprite` per tile:
+- walkable (`.`) → light grey (`0.85, 0.85, 0.85`)
+- blocked (`#`) → near-black (`0.15, 0.15, 0.2`)
+- `TILE_PX = 16`, grid centred on origin, capped at `MAX_RENDER_DIM = 100`
 
 ---
 
-## 3.3 — Player Movement and Camera
+## Task 3.2 — Sprite Rendering Pipeline ✓
 
-**Status:** [ ] Not started
+**Goal**: Load Mir3 `.zl` (Library) art asset files and render decoded sprites in Bevy.
 
----
+### File format (`lib_asset.rs`)
 
-## 3.4 — Network Client in Rust
+```
+[4B headerSize][metadata blob][pixel data]
+metadata: [4B packed: bits 0-24 = count, bits 25-31 = version]
+          [26B × count: 1B enabled + 25B header]
+header: position(u32), w/h/ox/oy(i16×4), shadowType(u8),
+        shadowW/H/OX/OY(i16×4), overlayW/H(i16×2)
+```
 
-**Status:** [ ] Not started
+### Pixel encoding
 
-Connect Bevy client to the Rust server using the `zircon-protocol` crate.
+| Version | Format | Bytes per aligned block |
+|---------|--------|------------------------|
+| 0       | BC1 / DXT1 | `aligned_w × aligned_h / 2` |
+| 1       | BC3 / DXT5 | `aligned_w × aligned_h` |
 
----
+`aligned = n + (4 - n%4) % 4`
 
-## 3.5 — Port UI Layer
+### Decoders
 
-**Status:** [ ] Not started
+Pure-Rust BC1 and BC3 decoders; no external image crates required.
 
----
+- `decode_bc1` / `decode_bc1_block` — 4-colour opaque + 1-bit transparent mode
+- `decode_bc3` / `decode_bc3_block` — 8-bit alpha block + opaque colour block
+- `decode_rgb565` — 5/6/5 → R8G8B8 with high-bit replication
+- `crop_rgba` — strips DXT alignment padding to true pixel dimensions
 
-## 3.6 — Port Game Scenes
+### Bevy integration (`render.rs — LibRenderPlugin`)
 
-**Status:** [ ] Not started
+```rust
+pub struct LibRenderPlugin {
+    pub lib: LibFile,
+    pub image_index: usize,
+}
+```
 
----
+Decodes the requested image on startup, uploads as `Rgba8UnormSrgb` `Image` asset,
+and spawns a `Sprite` with `offset_x / offset_y` applied.
 
-## 3.7 — Platform Validation
+### Test coverage
 
-**Status:** [ ] Not started
-
----
-
-## 3.8 — Tauri Admin Tools
-
-**Status:** [ ] Not started
+All tests pass (`cargo test -p zircon-client --no-default-features`):
+- RGB565 decode (full red/green/blue/black/white)
+- `align4` (already aligned, rounds up, zero)
+- BC1 opaque block, BC1 transparent mode
+- BC3 alpha (8-value and 6-value modes)
+- File parse + image decode (solid red 4×4)
+- Out-of-bounds decode returns `None`
+- Map parse/validation, walkability, edge cases
+- Invalid JSON, missing file, wrong dimensions

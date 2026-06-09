@@ -22,14 +22,29 @@ impl MapFile {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let data = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("cannot read {:?}: {e}", path))?;
-        let map: MapFile = serde_json::from_str(&data)
-            .map_err(|e| anyhow::anyhow!("invalid map JSON in {:?}: {e}", path))?;
-        Ok(map)
+        Self::from_str(&data)
     }
 
     /// Parse from an in-memory JSON string (useful for tests).
     pub fn from_str(json: &str) -> anyhow::Result<Self> {
-        Ok(serde_json::from_str(json)?)
+        let m: MapFile = serde_json::from_str(json)
+            .map_err(|e| anyhow::anyhow!("invalid map JSON: {e}"))?;
+        anyhow::ensure!(
+            m.layout.len() == m.height as usize,
+            "layout row count {} != height {}",
+            m.layout.len(),
+            m.height
+        );
+        for (i, row) in m.layout.iter().enumerate() {
+            anyhow::ensure!(
+                row.chars().count() == m.width as usize,
+                "row {} length {} != width {}",
+                i,
+                row.chars().count(),
+                m.width
+            );
+        }
+        Ok(m)
     }
 
     /// Returns `true` if cell `(x, y)` is walkable.
@@ -47,8 +62,6 @@ impl MapFile {
     }
 }
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -60,16 +73,17 @@ mod tests {
         let m = MapFile::from_str(SMALL_MAP).unwrap();
         assert_eq!(m.width, 3);
         assert_eq!(m.height, 3);
+        assert_eq!(m.layout.len(), 3);
     }
 
     #[test]
-    fn centre_cell_is_walkable() {
+    fn centre_is_walkable() {
         let m = MapFile::from_str(SMALL_MAP).unwrap();
         assert!(m.is_walkable(1, 1));
     }
 
     #[test]
-    fn corner_cells_are_blocked() {
+    fn corners_are_blocked() {
         let m = MapFile::from_str(SMALL_MAP).unwrap();
         assert!(!m.is_walkable(0, 0));
         assert!(!m.is_walkable(2, 0));
@@ -80,12 +94,13 @@ mod tests {
     #[test]
     fn out_of_bounds_is_not_walkable() {
         let m = MapFile::from_str(SMALL_MAP).unwrap();
-        assert!(!m.is_walkable(3, 3));
+        assert!(!m.is_walkable(3, 0));
+        assert!(!m.is_walkable(0, 3));
         assert!(!m.is_walkable(100, 100));
     }
 
     #[test]
-    fn walkable_count() {
+    fn walkable_count_correct() {
         let m = MapFile::from_str(SMALL_MAP).unwrap();
         assert_eq!(m.walkable_count(), 1);
     }
@@ -107,5 +122,17 @@ mod tests {
     #[test]
     fn load_missing_file_returns_error() {
         assert!(MapFile::load(Path::new("/nonexistent/map.json")).is_err());
+    }
+
+    #[test]
+    fn wrong_row_count_errors() {
+        let json = r#"{"width":2,"height":3,"layout":["..",".."]}"#;
+        assert!(MapFile::from_str(json).is_err());
+    }
+
+    #[test]
+    fn wrong_row_width_errors() {
+        let json = r#"{"width":3,"height":1,"layout":[".."]}"#;
+        assert!(MapFile::from_str(json).is_err());
     }
 }

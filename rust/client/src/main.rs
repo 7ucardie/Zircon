@@ -1,62 +1,88 @@
-//! Zircon Bevy client — Phase 3 proof-of-concept.
-//!
-//! # Usage
-//!
-//!   zircon-client [map.map.json]
-//!
-//! Loads the given `.map.json` (or `Map/default.map.json` if omitted) and
-//! renders its tile layout in a Bevy window.
-//!
-//! Build with the default `windowed` feature for an on-screen window.
-//! Build with `--no-default-features` for a headless/CI compile check.
-
 mod map;
+mod lib_asset;
+
 #[cfg(feature = "windowed")]
 mod render;
-
-use std::path::PathBuf;
 
 #[cfg(feature = "windowed")]
 use bevy::prelude::*;
 
-fn main() -> anyhow::Result<()> {
-    let map_path: PathBuf = std::env::args()
-        .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("Map/default.map.json"));
+fn main() {
+    let mut args = std::env::args().skip(1);
+    let first = args.next();
+    let second = args.next();
 
-    let map = map::MapFile::load(&map_path)?;
+    match (first.as_deref(), second.as_deref()) {
+        // --lib <path> [index]  — display a single sprite from a .zl file
+        (Some("--lib"), Some(lib_path)) => {
+            let index: usize = args
+                .next()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
 
-    println!(
-        "Loaded map {:?}: {}×{}, {} walkable cells",
-        map_path,
-        map.width,
-        map.height,
-        map.walkable_count()
-    );
+            #[cfg(feature = "windowed")]
+            {
+                let lib = lib_asset::LibFile::load(std::path::Path::new(lib_path))
+                    .expect("failed to load lib file");
+                App::new()
+                    .add_plugins(DefaultPlugins.set(WindowPlugin {
+                        primary_window: Some(Window {
+                            title: format!("Zircon — {lib_path}[{index}]"),
+                            ..default()
+                        }),
+                        ..default()
+                    }))
+                    .add_plugins(render::LibRenderPlugin { lib, image_index: index })
+                    .run();
+            }
+            #[cfg(not(feature = "windowed"))]
+            {
+                let lib = lib_asset::LibFile::load(std::path::Path::new(lib_path))
+                    .expect("failed to load lib file");
+                println!("LibFile: version={} images={}", lib.version, lib.len());
+                if let Some(img) = lib.decode_image(index) {
+                    println!("  [{}] {}×{} offset ({},{})", index, img.width, img.height, img.offset_x, img.offset_y);
+                } else {
+                    println!("  [{}] disabled or out of range", index);
+                }
+            }
+        }
 
-    #[cfg(feature = "windowed")]
-    {
-        App::new()
-            .add_plugins(DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: format!(
-                        "Zircon — {}×{} map",
-                        map.width, map.height
-                    ),
-                    resolution: (1024.0, 768.0).into(),
-                    ..default()
-                }),
-                ..default()
-            }))
-            .add_plugins(render::MapRenderPlugin { map })
-            .run();
+        // <map.json>  — render a map
+        (Some(map_path), _) => {
+            let map = map::MapFile::load(std::path::Path::new(map_path))
+                .expect("failed to load map file");
+
+            #[cfg(feature = "windowed")]
+            {
+                App::new()
+                    .add_plugins(DefaultPlugins.set(WindowPlugin {
+                        primary_window: Some(Window {
+                            title: format!("Zircon — {map_path}"),
+                            resolution: (1024.0, 768.0).into(),
+                            ..default()
+                        }),
+                        ..default()
+                    }))
+                    .add_plugins(render::MapRenderPlugin { map })
+                    .run();
+            }
+            #[cfg(not(feature = "windowed"))]
+            {
+                println!(
+                    "Map {}×{}: {} walkable tiles",
+                    map.width,
+                    map.height,
+                    map.walkable_count()
+                );
+            }
+        }
+
+        // no args — print usage
+        _ => {
+            eprintln!("Usage:");
+            eprintln!("  zircon-client <map.json>");
+            eprintln!("  zircon-client --lib <file.zl> [image_index]");
+        }
     }
-
-    #[cfg(not(feature = "windowed"))]
-    {
-        println!("(headless build — windowed feature disabled, skipping Bevy app)");
-    }
-
-    Ok(())
 }
