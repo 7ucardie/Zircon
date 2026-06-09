@@ -127,7 +127,7 @@ jobs:
 
       - name: Test
         working-directory: rust
-        run: cargo test --all
+        run: cargo test --workspace --exclude zircon-client
 
   build-rust-client:
     name: Rust Client (${{ matrix.os }})
@@ -165,7 +165,9 @@ jobs:
             libasound2-dev \
             libudev-dev \
             libxkbcommon-dev \
-            libwayland-dev
+            libwayland-dev \
+            libwebkit2gtk-4.1-dev \
+            libssl-dev
 
       - name: Build client (headless)
         working-directory: rust
@@ -174,6 +176,10 @@ jobs:
       - name: Build client (windowed)
         working-directory: rust
         run: cargo build -p zircon-client
+
+      - name: Build admin tool
+        working-directory: rust/admin
+        run: cargo build
 
       - name: Test client
         working-directory: rust

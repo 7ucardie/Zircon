@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Zircon Admin Tools</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <header>
+      <span class="logo">Zircon Admin</span>
+      <nav class="tabs">
+        <button class="tab active" data-panel="patch-manager">Patch Manager</button>
+        <button class="tab" data-panel="server-tools">Server Monitor</button>
+        <button class="tab" data-panel="image-manager">Image Manager</button>
+        <button class="tab" data-panel="library-editor">Library Editor</button>
+      </nav>
+    </header>
+
+    <main>
+
+      <!-- ── Patch Manager ─────────────────────────────────────────────── -->
+      <section id="patch-manager" class="panel active">
+        <h2>Patch Manager</h2>
+
+        <div class="card">
+          <h3>Configuration</h3>
+          <div class="form-grid">
+            <label for="cfg-client-dir">Client Directory</label>
+            <input id="cfg-client-dir" type="text" placeholder="/path/to/clean-client">
+
+            <label for="cfg-patch-dir">Patch Output Dir</label>
+            <input id="cfg-patch-dir" type="text" value="Patch">
+
+            <label for="cfg-plist-path">PList.Bin Path</label>
+            <input id="cfg-plist-path" type="text" value="PList.Bin">
+
+            <label for="cfg-ftp-host">FTP Host</label>
+            <input id="cfg-ftp-host" type="text" placeholder="ftp.example.com">
+
+            <label for="cfg-ftp-user">FTP User</label>
+            <input id="cfg-ftp-user" type="text" placeholder="username">
+
+            <label for="cfg-use-sftp">Use SFTP</label>
+            <input id="cfg-use-sftp" type="checkbox">
+          </div>
+          <div class="btn-row">
+            <button id="btn-save-config">Save Config</button>
+            <button id="btn-load-config" class="secondary">Load Config</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Actions</h3>
+          <div class="btn-row">
+            <button id="btn-scan">Scan Directory</button>
+            <button id="btn-build" class="accent">Build Patches</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Output</h3>
+          <pre id="log" class="log">Ready.</pre>
+        </div>
+      </section>
+
+      <!-- ── Server Monitor ────────────────────────────────────────────── -->
+      <section id="server-tools" class="panel">
+        <h2>Server Monitor</h2>
+        <div class="card stub">
+          <p>Real-time server monitoring — connections, active game objects, network throughput.</p>
+          <p class="muted">Coming in a future phase.</p>
+        </div>
+      </section>
+
+      <!-- ── Image Manager ─────────────────────────────────────────────── -->
+      <section id="image-manager" class="panel">
+        <h2>Image Manager</h2>
+        <div class="card stub">
+          <p>Batch-convert WTL / BMP art assets into <code>.zl</code> library files.</p>
+          <p class="muted">Coming in a future phase.</p>
+        </div>
+      </section>
+
+      <!-- ── Library Editor ────────────────────────────────────────────── -->
+      <section id="library-editor" class="panel">
+        <h2>Library Editor</h2>
+        <div class="card stub">
+          <p>Visual editor for <code>.zl</code> image libraries — preview, edit, and export sprites.</p>
+          <p class="muted">Coming in a future phase.</p>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -291,5 +291,68 @@ Steps per platform:
 
 ### Existing `build-rust` job (ubuntu-only)
 
-Retained separately: builds server crates + client headless + all workspace tests.
+Retained separately: builds server crates + client headless + server/patchmgr tests.
 The new matrix job adds the per-platform windowed compile check on top of that.
+
+---
+
+## Task 3.8 — Tauri Admin Tools ✓
+
+**Goal**: Replace the five WinForms admin tools with a Tauri 2.x app (Rust backend, vanilla HTML/JS frontend).
+
+### Existing WinForms tools superseded
+
+| Tool | Purpose | Status |
+|------|---------|--------|
+| Server | Game server control panel (30+ views) | Stub (future phase) |
+| PatchManager | Incremental patch generation + FTP upload | **Ported** |
+| ImageManager | WTL/BMP → .zl batch converter | Stub (future phase) |
+| LibraryEditor | Visual .zl image library editor | Stub (future phase) |
+| Patcher | Auto-executable updater | Not needed (handled by patchmgr CLI) |
+
+### Project structure (`rust/admin/`)
+
+```
+rust/admin/              ← standalone Cargo workspace (separate from rust/)
+├── Cargo.toml           ← [workspace] + [package]; path-dep on ../patchmgr
+├── build.rs             ← tauri_build::build()
+├── tauri.conf.json      ← Tauri 2.x config; frontendDist = "frontend"
+├── capabilities/
+│   └── default.json     ← core:default permissions
+├── src/
+│   ├── main.rs          ← #![windows_subsystem = "windows"] + run()
+│   ├── lib.rs           ← Builder::default().invoke_handler().run()
+│   └── commands.rs      ← #[tauri::command] functions
+└── frontend/
+    ├── index.html       ← 4-tab layout
+    ├── style.css        ← dark gold theme
+    └── app.js           ← invoke() calls; withGlobalTauri = true
+```
+
+Admin is a **separate Cargo workspace** (not a member of `rust/`) to avoid pulling the webkit2gtk system dependency into the server/patchmgr build graph.
+
+### Backend commands (`commands.rs`)
+
+| Command | Parameters | Returns |
+|---------|-----------|---------|
+| `scan_client_dir` | `path: String` | `Vec<FileScanResult>` (path + MD5 hex) |
+| `build_patches` | `client_dir`, `patch_dir`, `plist_path` | `PatchBuildResult` (counts + plist path) |
+| `read_patch_config` | — | `PatchConfig` (loaded from app data dir) |
+| `save_patch_config` | `config: PatchConfig` | `Result<(), String>` |
+
+All file I/O is in Rust; the frontend only uses `invoke()`. No built-in Tauri FS plugin needed.
+
+### Frontend tabs
+
+- **Patch Manager** (functional): config form → scan directory / build patches → output log
+- **Server Monitor**: stub placeholder
+- **Image Manager**: stub placeholder
+- **Library Editor**: stub placeholder
+
+### CI changes
+
+`build-rust-client` matrix job adds:
+- `libwebkit2gtk-4.1-dev libssl-dev` to the Linux system library install
+- `cargo build` step with `working-directory: rust/admin`
+
+`build-rust` server job test command changed to `cargo test --workspace --exclude zircon-client` to avoid pulling the windowed Bevy/ALSA build into the headless test runner.
