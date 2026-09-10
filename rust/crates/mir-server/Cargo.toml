@@ -1,0 +1,18 @@
+[package]
+name = "mir-server"
+description = "Game server for the Rust Zircon game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mir-formats = { path = "../mir-formats" }
+mir-proto = { path = "../mir-proto" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json = "1"
+argon2 = { version = "0.5", features = ["std"] }

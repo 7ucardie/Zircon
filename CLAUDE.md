@@ -19,16 +19,20 @@
 | `Server/` | Server entry point |
 | `docs/phases/` | Phase progress tracking docs |
 
-## Development Branches
+## Branching
 
-| Branch | Purpose |
-|---|---|
-| `master` | Upstream baseline — never push directly |
-| `phase/0-stabilize` | Vortice 3.8.3 API compatibility fixes |
-| `phase/1-content-pipeline` | Content pipeline improvements (tasks 1.1–1.10) |
-| `claude/codebase-review-rust-migration-SiWCK` | Active development branch |
+`master` is the upstream baseline. Do not push to it directly; create a feature branch and open a pull request.
+Active Rust work happens on `rust/prototype`.
 
-Always develop on `claude/codebase-review-rust-migration-SiWCK` and push there.
+## Rust Rewrite (`rust/`)
+
+The game is being rebuilt in Rust as a purpose-built client + server (see `rust/README.md`).
+
+- **Never edit the C# projects.** They are the reference specification for formats and rules only.
+- Assets are not in the repo: `~/zircon-assets/Client` (Data, Map, Sound) and `~/zircon-assets/Database/System.db`. Set `ZIRCON_ASSETS` to run asset-backed tests.
+- Every milestone must end with something runnable and visible; use `ZIRCON_SCREENSHOT=out.png:5 cargo run -p mir-client` to check rendering.
+- CI for Rust is `.github/workflows/rust.yml`: fmt, clippy `-D warnings`, build and test on Linux/macOS/Windows, plus the server Docker image. Keep it green like the C# build.
+- Build/test: `cd rust && cargo build --workspace && cargo test --workspace`.
 
 ## Key Constraints
 
