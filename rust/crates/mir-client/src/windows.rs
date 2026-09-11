@@ -386,8 +386,8 @@ impl WindowState {
                     c.text.draw(
                         "Right-click bag items to sell",
                         11,
-                        win.x + 10.0,
-                        win.y + win.h - 62.0,
+                        win.x + 118.0,
+                        win.y + win.h - 38.0,
                         [200, 200, 160, 255],
                     );
                     self.inventory_open = true;
