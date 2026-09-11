@@ -33,12 +33,26 @@ pub struct Client {
     auto_login: Option<(String, String)>,
     auto_start: Option<String>,
     auto_tried_create: bool,
+    auto_tried_account: bool,
 }
 
 impl Client {
     pub fn new(assets: Assets, server_addr: String) -> Client {
+        let db = std::env::var_os("ZIRCON_DB")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| assets.root().join("../Database/System.db"));
+        let catalog = match crate::items::ItemCatalog::load(&db) {
+            Ok(c) => {
+                tracing::info!(path = %db.display(), items = c.len(), "item catalogue loaded");
+                c
+            }
+            Err(e) => {
+                tracing::warn!("no item catalogue: {e}");
+                crate::items::ItemCatalog::empty()
+            }
+        };
         let mut c = Client {
-            game: Game::new(assets),
+            game: Game::new(assets, catalog),
             scene: Scene::Login(Box::new(LoginScene::new())),
             input: Input::default(),
             conn: None,
@@ -53,6 +67,7 @@ impl Client {
             }),
             auto_start: std::env::var("ZIRCON_AUTOSTART").ok(),
             auto_tried_create: false,
+            auto_tried_account: false,
         };
         c.connect();
         c
@@ -169,8 +184,8 @@ impl Client {
                 }
                 mir_proto::LoginResult::Failed { reason } => {
                     if let Some((email, password)) = self.auto_login.clone() {
-                        if reason == "Account not found" && !self.auto_tried_create {
-                            self.auto_tried_create = true;
+                        if reason == "Account not found" && !self.auto_tried_account {
+                            self.auto_tried_account = true;
                             self.send(ClientMessage::NewAccount { email, password });
                         }
                     }
@@ -250,10 +265,14 @@ impl Client {
                 self.game.lmb = self.input.lmb_down;
                 self.game.rmb = self.input.rmb_down;
                 self.game.debug = self.debug;
+                self.game.input = self.input.clone();
                 self.game.update(now, width, height, self.conn.as_ref());
                 self.game
                     .render(gpu, renderer, text, width, height, now, fps);
-                if self.input.escape {
+                for m in self.game.take_messages() {
+                    self.send(m);
+                }
+                if self.input.escape && !self.game.windows_were_open() {
                     SceneAction::Send(ClientMessage::Logout)
                 } else {
                     SceneAction::None

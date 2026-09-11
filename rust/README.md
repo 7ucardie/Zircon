@@ -40,14 +40,25 @@ are stored by the server in `data/accounts.json` (Argon2 password hashes),
 override the directory with `--data DIR` or `ZIRCON_DATA`.
 
 Controls in the world: hold left mouse to walk, right mouse to run, click an
-adjacent monster to attack, `Esc` returns to the character list. `F1` toggles
-the debug line, `F12` saves a screenshot.
+adjacent monster to attack, click an NPC to talk (you walk over), click a
+ground item to walk to it and pick it up, `Tab` picks up what is under you,
+`W` opens the bag, `Q` the character window, `Esc` closes windows and then
+returns to the character list. In the bag, right-click uses or equips an item
+(or sells it while a shop is open); in the character window right-click
+unequips. `F1` toggles the debug line, `F12` saves a screenshot.
+
+What exists in the world: real spawns with Zircon's drop tables (1 in N per
+row), ground items that only the killer can take for two minutes, gold, the
+125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's
+prices, and every map exit from `MovementInfo` (with level requirements).
 
 Developer automation (also used for visual checks):
 `ZIRCON_SCREENSHOT=out.png:5` saves a frame after 5 s and exits;
 `ZIRCON_AUTOLOGIN=email:password` logs in, creating the account if missing;
 `ZIRCON_AUTOSTART=name` enters the world with that character, creating a
-warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog.
+warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
+`ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
+`ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog.
 
 `cargo run -p mir-server -- --inspect` prints the start map, player stats and
 spawn table without opening a port. `--map <file>` forces a start map.

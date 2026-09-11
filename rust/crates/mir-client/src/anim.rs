@@ -38,6 +38,18 @@ pub fn player_frame(action: Action) -> Frame {
     }
 }
 
+/// NPC standing loop (`Client/Models/NPCObject.cs`): a few images have
+/// longer or static animations, the rest use 4 frames at 1 s.
+pub fn npc_frame(image: u16) -> Frame {
+    match image {
+        64 | 65 | 91 | 92 | 93 | 157 | 158 | 160 | 165 | 166 | 168 | 208 | 209 | 210 | 211
+        | 212 | 213 | 214 | 231 | 234 => Frame::new(0, 1, 3_600_000),
+        56 | 57 => Frame::new(0, 12, 200),
+        156 => Frame::new(0, 16, 200),
+        _ => Frame::new(0, 4, 1000),
+    }
+}
+
 /// `FrameSet.DefaultMonster`.
 pub fn monster_frame(action: Action) -> Frame {
     match action {
@@ -83,16 +95,16 @@ pub struct ClientObject {
 
 impl ClientObject {
     pub fn new(state: &mir_proto::ObjectState, now: u64) -> ClientObject {
-        let is_player = matches!(state.appearance, Appearance::Player { .. });
         let action = if state.dead {
             Action::Dead
         } else {
             Action::Standing
         };
-        let frame = if is_player {
-            player_frame(action)
-        } else {
-            monster_frame(action)
+        let frame = match &state.appearance {
+            Appearance::Player { .. } => player_frame(action),
+            Appearance::Monster { .. } => monster_frame(action),
+            Appearance::Npc { image, .. } => npc_frame(*image),
+            Appearance::Item { .. } => Frame::new(0, 1, 3_600_000),
         };
         ClientObject {
             id: state.id,
@@ -118,18 +130,33 @@ impl ClientObject {
         matches!(self.appearance, Appearance::Player { .. })
     }
 
+    pub fn is_monster(&self) -> bool {
+        matches!(self.appearance, Appearance::Monster { .. })
+    }
+
+    pub fn is_npc(&self) -> bool {
+        matches!(self.appearance, Appearance::Npc { .. })
+    }
+
+    pub fn is_item(&self) -> bool {
+        matches!(self.appearance, Appearance::Item { .. })
+    }
+
     pub fn name(&self) -> &str {
         match &self.appearance {
             Appearance::Player { name, .. } => name,
             Appearance::Monster { name, .. } => name,
+            Appearance::Npc { name, .. } => name,
+            Appearance::Item { .. } => "",
         }
     }
 
     fn frame_for(&self, action: Action) -> Frame {
-        if self.is_player() {
-            player_frame(action)
-        } else {
-            monster_frame(action)
+        match &self.appearance {
+            Appearance::Player { .. } => player_frame(action),
+            Appearance::Monster { .. } => monster_frame(action),
+            Appearance::Npc { image, .. } => npc_frame(*image),
+            Appearance::Item { .. } => Frame::new(0, 1, 3_600_000),
         }
     }
 
@@ -240,10 +267,24 @@ impl ClientObject {
     /// Sprite index within the body library for the current frame.
     pub fn sprite_index(&self, shape: u16) -> u32 {
         let base = self.frame_index + self.frame.start + 10 * self.direction.index() as u32;
-        if self.is_player() {
-            base + (shape as u32 % 11) * 5000
-        } else {
-            base + (shape as u32 % 10) * 1000
+        match &self.appearance {
+            Appearance::Player { class, .. } => {
+                let stride = if *class == mir_proto::Class::Assassin {
+                    3000
+                } else {
+                    5000
+                };
+                base + (shape as u32 % 11) * stride
+            }
+            Appearance::Monster { .. } => base + (shape as u32 % 10) * 1000,
+            // NPCs never face a direction: index = image * 100 + frame.
+            Appearance::Npc { image, .. } => self.frame_index + *image as u32 * 100,
+            Appearance::Item { .. } => 0,
         }
+    }
+
+    /// Frame index within the current animation, without shape or direction.
+    pub fn draw_frame(&self) -> u32 {
+        self.frame_index + self.frame.start + 10 * self.direction.index() as u32
     }
 }

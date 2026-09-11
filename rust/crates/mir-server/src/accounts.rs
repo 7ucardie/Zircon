@@ -15,6 +15,8 @@ use argon2::Argon2;
 use mir_proto::{rules, CharacterSummary, Class, Direction, Gender, Point};
 use serde::{Deserialize, Serialize};
 
+use crate::items::StoredItem;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterRecord {
     pub id: u32,
@@ -33,6 +35,13 @@ pub struct CharacterRecord {
     pub created: u64,
     pub last_login: u64,
     pub deleted: bool,
+    #[serde(default)]
+    pub items: Vec<StoredItem>,
+    #[serde(default)]
+    pub gold: u64,
+    /// Highest item id handed out for this character.
+    #[serde(default)]
+    pub next_item_id: u32,
 }
 
 impl CharacterRecord {
@@ -256,6 +265,9 @@ impl Accounts {
             created: now_secs(),
             last_login: 0,
             deleted: false,
+            items: Vec::new(),
+            gold: 0,
+            next_item_id: 0,
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;

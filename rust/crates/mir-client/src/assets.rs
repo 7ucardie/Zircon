@@ -12,10 +12,66 @@ use crate::monster_table::library_path;
 pub mod lib {
     pub const INTERFACE: u16 = 3;
     pub const GAME_INTER: u16 = 4;
+    pub const STORE_ITEMS: u16 = 14;
+    pub const GROUND: u16 = 16;
+    pub const NPC: u16 = 17;
     pub const M_HUM: u16 = 31;
     pub const M_HAIR: u16 = 41;
     pub const WM_HUM: u16 = 42;
     pub const WM_HAIR: u16 = 52;
+    pub const M_HUM_A: u16 = 53;
+    pub const M_HAIR_A: u16 = 58;
+    pub const WM_HUM_A: u16 = 59;
+    pub const WM_HAIR_A: u16 = 64;
+}
+
+/// Zircon `PlayerObject.ArmourList`: armour shape / 11 -> body library.
+pub fn armour_library(shape: u16, female: bool, assassin: bool) -> Option<u16> {
+    let key = shape / 11;
+    let base = match (assassin, female) {
+        (false, false) => [Some(31), Some(32), Some(33), Some(34), Some(35)],
+        (false, true) => [Some(42), Some(43), Some(44), Some(45), Some(46)],
+        (true, false) => [Some(53), Some(54), Some(55), Some(56), None],
+        (true, true) => [Some(59), Some(60), Some(61), Some(62), None],
+    };
+    match key {
+        0..=4 => base[key as usize],
+        10..=13 if !assassin => Some(if female { 47 } else { 36 } + (key - 10)),
+        20 => Some(match (assassin, female) {
+            (false, false) => 40,
+            (false, true) => 51,
+            (true, false) => 57,
+            (true, true) => 63,
+        }),
+        _ => None,
+    }
+}
+
+/// Zircon `PlayerObject.WeaponList`: weapon shape / 10 -> weapon library.
+pub fn weapon_library(shape: u16, female: bool) -> Option<u16> {
+    let key = shape / 10;
+    let male = match key {
+        0..=6 => Some(83 + key),
+        10..=16 => Some(90 + (key - 10)),
+        110..=112 => Some(117 + (key - 110)),
+        113 => Some(119),
+        114..=116 => Some(120 + (key - 114)),
+        120 => Some(111),
+        122 => Some(112),
+        126 => Some(113),
+        _ => None,
+    }?;
+    // Female libraries mirror the male ones 14 entries later for the basic
+    // sets and 12 later for the AOH/ADL sets.
+    Some(if female {
+        match male {
+            83..=96 => male + 14,
+            111..=122 => male + 12,
+            other => other,
+        }
+    } else {
+        male
+    })
 }
 
 /// Map-file library byte (`Libraries.KROrder`) -> `LibraryFile` value.
@@ -91,7 +147,21 @@ impl Assets {
             return l.clone();
         }
         let loaded = library_path(id).and_then(|rel| {
-            let path = self.root.join(rel);
+            let mut path = self.root.join(rel);
+            if !path.exists() {
+                // Asset packs differ in filename case (e.g. Storeitems.Zl).
+                if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
+                    let wanted = name.to_string_lossy().to_lowercase();
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for e in entries.flatten() {
+                            if e.file_name().to_string_lossy().to_lowercase() == wanted {
+                                path = e.path();
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
             match ZlLibrary::open(&path) {
                 Ok(l) => {
                     tracing::info!(id, path = %path.display(), images = l.len(), version = l.version(), "library opened");

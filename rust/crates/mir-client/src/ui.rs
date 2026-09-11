@@ -36,6 +36,7 @@ pub struct Input {
     pub lmb_pressed: bool,
     pub lmb_released: bool,
     pub rmb_down: bool,
+    pub rmb_pressed: bool,
     pub text: String,
     pub backspace: bool,
     pub enter: bool,
@@ -49,6 +50,7 @@ impl Input {
     pub fn end_frame(&mut self) {
         self.lmb_pressed = false;
         self.lmb_released = false;
+        self.rmb_pressed = false;
         self.text.clear();
         self.backspace = false;
         self.enter = false;

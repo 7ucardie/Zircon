@@ -9,16 +9,20 @@ use std::collections::HashMap;
 use mir_formats::zl::SurfaceKind;
 use mir_formats::MapFile;
 use mir_proto::{
-    Action, Appearance, CharacterSummary, ClientMessage, Direction, Gender, ObjectId, ObjectState,
-    PlayerStats, Point, ServerMessage,
+    Action, Appearance, CharacterSummary, Class, ClientMessage, Direction, Gender, ItemInstance,
+    ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights, EQUIPMENT_SIZE,
+    INVENTORY_SIZE,
 };
 
 use crate::anim::{ClientObject, Queued};
-use crate::assets::{kr_library, lib, Assets};
+use crate::assets::{armour_library, kr_library, lib, weapon_library, Assets};
 use crate::gfx::{Blend, Gpu, SpriteKey, SpriteRegion, SpriteRenderer, Surface};
+use crate::items::ItemCatalog;
 use crate::monster_table::monster_sprite;
 use crate::net::Connection;
 use crate::text::TextLayer;
+use crate::ui::{Ctx, Input};
+use crate::windows::{Bag, NpcDialog, WindowState};
 
 pub const CELL_W: i32 = 48;
 pub const CELL_H: i32 = 32;
@@ -49,6 +53,17 @@ pub struct Game {
     chat: Vec<(String, u64)>,
     hovered: Option<ObjectId>,
     pub debug: bool,
+    pub input: Input,
+    pub catalog: ItemCatalog,
+    inventory: Vec<Option<ItemInstance>>,
+    equipment: Vec<Option<ItemInstance>>,
+    gold: u64,
+    weights: Weights,
+    windows: WindowState,
+    /// Object we are walking toward to interact with (NPC or ground item).
+    goal: Option<ObjectId>,
+    windows_open_last_frame: bool,
+    pending_messages: Vec<ClientMessage>,
 }
 
 struct View {
@@ -107,9 +122,31 @@ impl View {
 
 #[allow(clippy::too_many_arguments)]
 impl Game {
-    pub fn new(assets: Assets) -> Game {
+    pub fn new(assets: Assets, catalog: ItemCatalog) -> Game {
         Game {
             assets,
+            catalog,
+            input: Input::default(),
+            inventory: (0..INVENTORY_SIZE).map(|_| None).collect(),
+            equipment: (0..EQUIPMENT_SIZE).map(|_| None).collect(),
+            gold: 0,
+            weights: Weights {
+                bag: 0,
+                max_bag: 1,
+                wear: 0,
+                max_wear: 1,
+                hand: 0,
+                max_hand: 1,
+            },
+            windows: {
+                let mut w = WindowState::default();
+                w.inventory_open = std::env::var_os("ZIRCON_OPEN_WINDOWS").is_some();
+                w.character_open = w.inventory_open;
+                w
+            },
+            goal: None,
+            windows_open_last_frame: false,
+            pending_messages: Vec::new(),
             character: None,
             status: String::new(),
             map: None,
@@ -124,6 +161,12 @@ impl Game {
                 max_mp: 1,
                 experience: 0,
                 max_experience: 100,
+                min_dc: 0,
+                max_dc: 0,
+                min_ac: 0,
+                max_ac: 0,
+                accuracy: 0,
+                agility: 0,
             },
             mouse: (0.0, 0.0),
             lmb: false,
@@ -167,18 +210,7 @@ impl Game {
                 direction,
                 stats,
             } => {
-                let path = self.assets.root().join(format!("Map/{}.map", map.file));
-                match MapFile::load(&path) {
-                    Ok(m) => {
-                        tracing::info!(map = map.name, w = m.width, h = m.height, "map loaded");
-                        self.map = Some(m);
-                    }
-                    Err(e) => {
-                        self.status = format!("cannot load {}: {e}", path.display());
-                        tracing::error!("{}", self.status);
-                    }
-                }
-                self.map_name = map.name.clone();
+                self.load_map(&map.file, &map.name);
                 self.objects.clear();
                 let (name, gender, class, hair) = self
                     .character
@@ -194,7 +226,7 @@ impl Game {
                         gender,
                         class,
                         armour: 0,
-                        weapon: 0,
+                        weapon: None,
                         hair,
                     },
                     location,
@@ -215,6 +247,17 @@ impl Game {
             ServerMessage::ObjectShow(state) => {
                 if Some(state.id) == self.user {
                     return;
+                }
+                // Developer automation: walk to and talk to a named NPC.
+                if let (Ok(wanted), Appearance::Npc { name, .. }) =
+                    (std::env::var("ZIRCON_AUTO_NPC"), &state.appearance)
+                {
+                    if name.eq_ignore_ascii_case(&wanted)
+                        && self.goal.is_none()
+                        && self.windows.npc.is_none()
+                    {
+                        self.goal = Some(state.id);
+                    }
                 }
                 match self.objects.get_mut(&state.id) {
                     Some(o) => {
@@ -359,6 +402,78 @@ impl Game {
                 }
             }
             ServerMessage::StatsChanged(stats) => self.stats = stats,
+            ServerMessage::Inventory {
+                inventory,
+                equipment,
+                gold,
+                weights,
+            } => {
+                self.inventory = (0..INVENTORY_SIZE).map(|_| None).collect();
+                self.equipment = (0..EQUIPMENT_SIZE).map(|_| None).collect();
+                for (slot, item) in inventory {
+                    if let Some(c) = self.inventory.get_mut(slot as usize) {
+                        *c = Some(item);
+                    }
+                }
+                for (slot, item) in equipment {
+                    if let Some(c) = self.equipment.get_mut(slot as usize) {
+                        *c = Some(item);
+                    }
+                }
+                self.gold = gold;
+                self.weights = weights;
+            }
+            ServerMessage::ItemChanged { grid, slot, item } => {
+                let grid = match grid {
+                    mir_proto::Grid::Inventory => &mut self.inventory,
+                    mir_proto::Grid::Equipment => &mut self.equipment,
+                };
+                if let Some(c) = grid.get_mut(slot as usize) {
+                    *c = item;
+                }
+            }
+            ServerMessage::GoldChanged { gold } => self.gold = gold,
+            ServerMessage::WeightsChanged(w) => self.weights = w,
+            ServerMessage::ObjectAppearance { id, appearance } => {
+                if let Some(o) = self.objects.get_mut(&id) {
+                    o.appearance = appearance;
+                }
+            }
+            ServerMessage::MapChanged {
+                map,
+                location,
+                direction,
+            } => {
+                self.load_map(&map.file, &map.name);
+                let user = self.user;
+                self.objects.retain(|id, _| Some(*id) == user);
+                self.goal = None;
+                self.windows.npc = None;
+                if let Some(u) = self.user_mut() {
+                    u.snap(location, direction, now);
+                }
+                self.move_time = 0;
+                self.action_time = 0;
+                self.say(format!("Entered {}.", map.name), now);
+            }
+            ServerMessage::NpcResponse {
+                npc,
+                page,
+                say,
+                dialog_type,
+                goods,
+                sell_types,
+            } => {
+                self.windows.npc = Some(NpcDialog::new(
+                    npc,
+                    page,
+                    &say,
+                    dialog_type,
+                    goods,
+                    sell_types,
+                ));
+            }
+            ServerMessage::NpcClose => self.windows.npc = None,
             ServerMessage::Chat { text } => self.say(text, now),
             ServerMessage::Pong { .. } => {}
             // Pre-game messages are handled by the client shell.
@@ -380,6 +495,29 @@ impl Game {
         self.user = None;
         self.chat.clear();
         self.hovered = None;
+        self.windows = WindowState::default();
+        self.goal = None;
+    }
+
+    /// True if a window consumed Escape this frame.
+    pub fn windows_were_open(&self) -> bool {
+        self.windows_open_last_frame
+    }
+
+    fn load_map(&mut self, file: &str, name: &str) {
+        let path = self.assets.root().join(format!("Map/{file}.map"));
+        match MapFile::load(&path) {
+            Ok(m) => {
+                tracing::info!(map = name, w = m.width, h = m.height, "map loaded");
+                self.map = Some(m);
+            }
+            Err(e) => {
+                self.status = format!("cannot load {}: {e}", path.display());
+                tracing::error!("{}", self.status);
+                self.map = None;
+            }
+        }
+        self.map_name = name.to_string();
     }
 
     pub fn update(&mut self, now: u64, width: i32, height: i32, conn: Option<&Connection>) {
@@ -399,18 +537,44 @@ impl Game {
 
     fn body_sprite(&self, o: &ClientObject) -> Option<(u16, u32)> {
         match &o.appearance {
-            Appearance::Player { gender, armour, .. } => {
-                let library = match gender {
-                    Gender::Male => lib::M_HUM,
-                    Gender::Female => lib::WM_HUM,
-                };
+            Appearance::Player {
+                gender,
+                armour,
+                class,
+                ..
+            } => {
+                let female = *gender == Gender::Female;
+                let assassin = *class == Class::Assassin;
+                let library =
+                    armour_library(*armour, female, assassin).unwrap_or(match (assassin, female) {
+                        (false, false) => lib::M_HUM,
+                        (false, true) => lib::WM_HUM,
+                        (true, false) => lib::M_HUM_A,
+                        (true, true) => lib::WM_HUM_A,
+                    });
                 Some((library, o.sprite_index(*armour)))
             }
             Appearance::Monster { image, .. } => {
                 let (library, shape) = monster_sprite(*image)?;
                 Some((library, o.sprite_index(shape)))
             }
+            Appearance::Npc { .. } => Some((lib::NPC, o.sprite_index(0))),
+            Appearance::Item { info, .. } => {
+                let image = self.catalog.get(*info).map(|d| d.image).unwrap_or(0);
+                Some((lib::GROUND, image.max(0) as u32))
+            }
         }
+    }
+
+    /// Weapon library and index for a player, if one is equipped.
+    fn weapon_sprite(&self, o: &ClientObject) -> Option<(u16, u32)> {
+        let Appearance::Player { gender, weapon, .. } = &o.appearance else {
+            return None;
+        };
+        let shape = (*weapon)?;
+        let library = weapon_library(shape, *gender == Gender::Female)?;
+        let draw_shape = if shape >= 1000 { shape - 1000 } else { shape };
+        Some((library, o.draw_frame() + (draw_shape as u32 % 10) * 5000))
     }
 
     fn hit_test(&mut self, width: i32, height: i32) -> Option<ObjectId> {
@@ -431,8 +595,14 @@ impl Game {
             let Some(info) = self.assets.info(library, index) else {
                 continue;
             };
-            let x0 = dx + info.offset_x as i32;
-            let y0 = dy + info.offset_y as i32;
+            let (x0, y0) = if o.is_item() {
+                (
+                    dx + (CELL_W - info.width as i32) / 2,
+                    dy + (CELL_H - info.height as i32) / 2,
+                )
+            } else {
+                (dx + info.offset_x as i32, dy + info.offset_y as i32)
+            };
             let inside =
                 mx >= x0 && mx < x0 + info.width as i32 && my >= y0 && my < y0 + info.height as i32;
             if inside && best.map(|(y, _)| ry >= y).unwrap_or(true) {
@@ -451,12 +621,34 @@ impl Game {
         }
         self.objects
             .values()
-            .any(|o| !o.dead && Some(o.id) != self.user && o.location == p)
+            .any(|o| !o.dead && !o.is_item() && Some(o.id) != self.user && o.location == p)
     }
 
     fn handle_input(&mut self, now: u64, width: i32, height: i32, conn: Option<&Connection>) {
-        if !(self.lmb || self.rmb) {
-            return;
+        // Keyboard shortcuts (Zircon defaults: Tab pick up, W bag, Q character).
+        for ch in self.input.text.chars() {
+            match ch.to_ascii_lowercase() {
+                'w' | 'i' => self.windows.inventory_open = !self.windows.inventory_open,
+                'q' | 'c' => self.windows.character_open = !self.windows.character_open,
+                _ => {}
+            }
+        }
+        if self.input.tab {
+            if let Some(c) = conn {
+                c.send(ClientMessage::PickUp);
+            }
+        }
+        if self.input.escape && self.windows_open_last_frame {
+            self.windows.inventory_open = false;
+            self.windows.character_open = false;
+            if self.windows.npc.take().is_some() {
+                if let Some(c) = conn {
+                    c.send(ClientMessage::NpcClose);
+                }
+            }
+        }
+        if self.input.lmb_pressed || self.input.rmb_pressed {
+            self.goal = None;
         }
         let Some(user) = self.user() else {
             return;
@@ -468,10 +660,46 @@ impl Game {
         let user_dir = user.direction;
         let view = View::new(width, height, Some(user));
 
+        // Interacting with a goal object once close enough.
+        if let Some(gid) = self.goal {
+            match self.objects.get(&gid) {
+                Some(g) if user_loc.distance(g.location) <= 1 => {
+                    if let Some(c) = conn {
+                        if g.is_item() {
+                            c.send(ClientMessage::PickUp);
+                        } else if g.is_npc() {
+                            c.send(ClientMessage::NpcCall { id: gid });
+                        }
+                    }
+                    self.goal = None;
+                    return;
+                }
+                Some(g) if now >= self.action_time && now >= self.move_time => {
+                    let target = g.location;
+                    self.step_toward(now, user_loc, target, false, conn);
+                    return;
+                }
+                Some(_) => return,
+                None => self.goal = None,
+            }
+        }
+
+        if self.input.lmb_pressed {
+            if let Some(target) = self.hovered.and_then(|id| self.objects.get(&id)) {
+                if target.is_npc() || target.is_item() {
+                    self.goal = Some(target.id);
+                    return;
+                }
+            }
+        }
+        if !(self.lmb || self.rmb) {
+            return;
+        }
+
         // Attack a hovered monster in melee range.
         if self.lmb {
             if let Some(target) = self.hovered.and_then(|id| self.objects.get(&id)) {
-                if !target.is_player() && !target.dead && user_loc.distance(target.location) <= 1 {
+                if target.is_monster() && !target.dead && user_loc.distance(target.location) <= 1 {
                     if now >= self.action_time && now >= self.attack_time {
                         let direction = Direction::from_points(user_loc, target.location);
                         self.action_time = now + ATTACK_TIME;
@@ -498,8 +726,22 @@ impl Game {
         if target == user_loc || now < self.action_time || now < self.move_time {
             return;
         }
-        let wanted = Direction::from_points(user_loc, target);
         let run = self.rmb && user_loc.distance(target) >= 2;
+        let _ = user_dir;
+        self.step_toward(now, user_loc, target, run, conn);
+    }
+
+    /// One walk/run step toward `target`, turning if blocked.
+    fn step_toward(
+        &mut self,
+        now: u64,
+        user_loc: Point,
+        target: Point,
+        run: bool,
+        conn: Option<&Connection>,
+    ) {
+        let user_dir = self.user().map(|u| u.direction).unwrap_or(Direction::Down);
+        let wanted = Direction::from_points(user_loc, target);
         let steps = if run { 2 } else { 1 };
         let candidates = [
             wanted,
@@ -722,7 +964,34 @@ impl Game {
                 if dx < -100 || dx > width + 100 || dy < -150 || dy > height + 100 {
                     continue;
                 }
-                let name_color = if o.is_player() {
+                if o.is_item() {
+                    if let Appearance::Item { info, count } = &o.appearance {
+                        let mut label = self.catalog.name(*info);
+                        if *count > 1 {
+                            label = format!("{label} ({count})");
+                        }
+                        let w = text.width(&label, 11) + 6.0;
+                        let (lx, ly) = (dx as f32 + 24.0 - w / 2.0, dy as f32 - 4.0);
+                        renderer.fill_rect(
+                            lx,
+                            ly,
+                            w,
+                            15.0,
+                            [0.0, 24.0 / 255.0, 48.0 / 255.0, 0.75],
+                        );
+                        text.draw_centered(
+                            &label,
+                            11,
+                            dx as f32 + 24.0,
+                            ly - 1.0,
+                            [255, 255, 255, 255],
+                        );
+                    }
+                    continue;
+                }
+                let name_color = if o.is_npc() {
+                    [0, 255, 0, 255]
+                } else if o.is_player() {
                     [255, 255, 255, 255]
                 } else {
                     [255, 255, 255, 220]
@@ -790,6 +1059,7 @@ impl Game {
         self.map = map_taken;
 
         self.draw_hud(gpu, renderer, text, width, height, now, fps);
+        self.draw_windows(gpu, renderer, text, width, height, now);
     }
 
     fn draw_object(&mut self, id: ObjectId, view: &View, gpu: &Gpu, renderer: &mut SpriteRenderer) {
@@ -800,16 +1070,50 @@ impl Game {
             return;
         };
         let (dx, dy) = view.object_px(o);
+        if o.is_item() {
+            if let Some(info) = self.assets.info(library, index) {
+                let x = dx + (CELL_W - info.width as i32) / 2;
+                let y = dy + (CELL_H - info.height as i32) / 2;
+                if let Some(r) = Self::sprite(
+                    &mut self.assets,
+                    renderer,
+                    gpu,
+                    library,
+                    index,
+                    Surface::Image,
+                ) {
+                    renderer.draw(r, x as f32, y as f32, [1.0, 1.0, 1.0, 1.0], Blend::Alpha);
+                }
+            }
+            return;
+        }
+        let weapon = self.weapon_sprite(o);
+        let direction = o.direction;
+        // Zircon: WeaponLibrary1 is behind the body for Up/DownLeft/Left/UpLeft.
+        let weapon_behind = matches!(
+            direction,
+            Direction::Up | Direction::DownLeft | Direction::Left | Direction::UpLeft
+        );
         let hair = match &o.appearance {
-            Appearance::Player { hair, gender, .. } if *hair > 0 => {
-                let hair_lib = match gender {
-                    Gender::Male => lib::M_HAIR,
-                    Gender::Female => lib::WM_HAIR,
+            Appearance::Player {
+                hair,
+                gender,
+                class,
+                ..
+            } if *hair > 0 => {
+                let hair_lib = match (*class == Class::Assassin, *gender == Gender::Female) {
+                    (false, false) => lib::M_HAIR,
+                    (false, true) => lib::WM_HAIR,
+                    (true, false) => lib::M_HAIR_A,
+                    (true, true) => lib::WM_HAIR_A,
                 };
-                Some((hair_lib, index + (*hair as u32 - 1) * 5000))
+                Some((hair_lib, o.draw_frame() + (*hair as u32 - 1) * 5000))
             }
             _ => None,
         };
+        if let (Some((wl, wi)), true) = (weapon, weapon_behind) {
+            self.draw_layer(wl, wi, dx, dy, gpu, renderer);
+        }
         let Some(info) = self.assets.info(library, index) else {
             return;
         };
@@ -878,25 +1182,103 @@ impl Game {
             );
         }
         if let Some((hair_lib, hair_index)) = hair {
-            if let Some(hi) = self.assets.info(hair_lib, hair_index) {
-                if let Some(r) = Self::sprite(
-                    &mut self.assets,
-                    renderer,
-                    gpu,
-                    hair_lib,
-                    hair_index,
-                    Surface::Image,
-                ) {
-                    renderer.draw(
-                        r,
-                        (dx + hi.offset_x as i32) as f32,
-                        (dy + hi.offset_y as i32) as f32,
-                        white,
-                        Blend::Alpha,
-                    );
-                }
+            self.draw_layer(hair_lib, hair_index, dx, dy, gpu, renderer);
+        }
+        if let (Some((wl, wi)), false) = (weapon, weapon_behind) {
+            self.draw_layer(wl, wi, dx, dy, gpu, renderer);
+        }
+    }
+
+    /// Draw one equipment/hair layer with the image's own offsets.
+    fn draw_layer(
+        &mut self,
+        library: u16,
+        index: u32,
+        dx: i32,
+        dy: i32,
+        gpu: &Gpu,
+        renderer: &mut SpriteRenderer,
+    ) {
+        if let Some(info) = self.assets.info(library, index) {
+            if let Some(r) = Self::sprite(
+                &mut self.assets,
+                renderer,
+                gpu,
+                library,
+                index,
+                Surface::Image,
+            ) {
+                renderer.draw(
+                    r,
+                    (dx + info.offset_x as i32) as f32,
+                    (dy + info.offset_y as i32) as f32,
+                    [1.0, 1.0, 1.0, 1.0],
+                    Blend::Alpha,
+                );
             }
         }
+    }
+
+    /// Inventory, character and NPC windows on top of everything; consumes
+    /// clicks over them.
+    fn draw_windows(
+        &mut self,
+        gpu: &Gpu,
+        renderer: &mut SpriteRenderer,
+        text: &mut TextLayer,
+        width: i32,
+        height: i32,
+        now: u64,
+    ) {
+        let mut out = Vec::new();
+        let over = {
+            let Game {
+                assets,
+                windows,
+                inventory,
+                equipment,
+                gold,
+                weights,
+                stats,
+                catalog,
+                input,
+                ..
+            } = self;
+            let mut c = Ctx {
+                input,
+                assets,
+                renderer,
+                gpu,
+                text,
+                now,
+            };
+            let bag = Bag {
+                inventory,
+                equipment,
+                gold: *gold,
+                weights,
+                stats,
+                catalog,
+            };
+            windows.draw(&mut c, &bag, width, height, &mut out)
+        };
+        self.windows_open_last_frame = self.windows.inventory_open
+            || self.windows.character_open
+            || self.windows.npc.is_some();
+        self.pending_messages.extend(out);
+        if over {
+            // Swallow world input while the mouse is over a window.
+            self.lmb = false;
+            self.rmb = false;
+            self.input.lmb_pressed = false;
+            self.input.rmb_pressed = false;
+            self.hovered = None;
+        }
+    }
+
+    /// Messages produced by the windows, sent by the client shell.
+    pub fn take_messages(&mut self) -> Vec<ClientMessage> {
+        std::mem::take(&mut self.pending_messages)
     }
 
     fn draw_hud(
@@ -1004,14 +1386,15 @@ impl Game {
         if self.debug {
             let (pages, sprites) = renderer.stats();
             let dbg = format!(
-                "{} | {:.0} fps | {} objects | {} sprites / {} pages | LMB walk, RMB run, click monster to attack, F1 hide",
+                "{} | {:.0} fps | {} objects | {} sprites / {} pages | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, F1 hide",
                 self.status,
                 fps,
                 self.objects.len(),
                 sprites,
                 pages
             );
-            text.draw(&dbg, 12, 12.0, y + 4.0, [200, 200, 200, 255]);
+            let _ = y;
+            text.draw(&dbg, 12, 12.0, height as f32 - 110.0, [200, 200, 200, 255]);
             if let Some(h) = self.hovered.and_then(|id| self.objects.get(&id)) {
                 text.draw(
                     &format!("{} {}/{}", h.name(), h.hp, h.max_hp),

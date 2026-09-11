@@ -11,13 +11,14 @@ use std::path::{Path, PathBuf};
 use mir_formats::mirdb::stat;
 use mir_formats::MapFile;
 use mir_proto::{
-    Appearance, Class, Direction, MapDescriptor, ObjectId, ObjectState, PlayerStats, Point,
-    ServerMessage,
+    item_type, parse_dialog, slot, Appearance, Class, Direction, Gender, Good, Grid, MapDescriptor,
+    ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights,
 };
 use rand::Rng;
 
 use crate::accounts::CharacterRecord;
-use crate::data::{GameData, MonsterDef, RespawnDef};
+use crate::data::{DropDef, GameData, MonsterDef, RespawnDef};
+use crate::items::{can_use, default_slot, sell_price, Bag, Changed, UserItem};
 
 pub const MOVE_TIME: u64 = 600;
 pub const TURN_TIME: u64 = 300;
@@ -32,6 +33,12 @@ pub const REGEN_DELAY: u64 = 10_000;
 /// Prototype: revive after 10 s instead of Zircon's 10 minutes.
 pub const REVIVE_DELAY: u64 = 10_000;
 pub const CELL_GRACE: u64 = 300;
+/// Ground items vanish after this (Zircon `Config.DropDuration`, 60 min).
+pub const DROP_DURATION: u64 = 60 * 60_000;
+/// Other players may take a drop after this (Zircon group rule: 2 min).
+pub const DROP_SHARE_AFTER: u64 = 120_000;
+pub const DROP_DISTANCE: i32 = 5;
+pub const PICKUP_RADIUS: i32 = 1;
 
 pub type ConnId = u64;
 
@@ -54,8 +61,11 @@ pub struct CombatStats {
 #[allow(dead_code)]
 pub struct PlayerData {
     pub conn: ConnId,
+    pub account: u32,
     pub name: String,
     pub class: Class,
+    pub gender: Gender,
+    pub hair: u8,
     /// Account character id, for persistence.
     pub character: u32,
     pub level: i32,
@@ -65,6 +75,14 @@ pub struct PlayerData {
     pub revive_time: u64,
     pub bind_region: i32,
     pub regen_time: u64,
+    pub bag: Bag,
+    pub next_item_id: u32,
+    pub attack_speed: i64,
+    pub max_bag: i32,
+    pub max_wear: i32,
+    pub max_hand: i32,
+    /// Open NPC dialog: (npc object, page index).
+    pub npc: Option<(ObjectId, i32)>,
 }
 
 #[derive(Debug)]
@@ -84,9 +102,27 @@ pub struct MonsterData {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
+pub struct NpcData {
+    pub info: i32,
+    pub entry_page: i32,
+}
+
+#[derive(Debug)]
+pub struct ItemData {
+    pub item: UserItem,
+    /// Owning account while the drop is protected.
+    pub owner: Option<u32>,
+    pub spawn_time: u64,
+    pub expire: u64,
+}
+
+#[derive(Debug)]
 pub enum Kind {
     Player(PlayerData),
     Monster(MonsterData),
+    Npc(NpcData),
+    Item(ItemData),
 }
 
 #[derive(Debug)]
@@ -131,8 +167,14 @@ impl Object {
             _ => None,
         }
     }
+    pub fn is_monster(&self) -> bool {
+        matches!(self.kind, Kind::Monster(_))
+    }
+    pub fn is_item(&self) -> bool {
+        matches!(self.kind, Kind::Item(_))
+    }
     pub fn blocking(&self) -> bool {
-        !self.dead
+        !self.dead && !self.is_item()
     }
     pub fn state(&self) -> ObjectState {
         ObjectState {
@@ -163,6 +205,8 @@ pub struct MapState {
     pub spawns: Vec<SpawnGroup>,
     pub objects: Vec<ObjectId>,
     cells: HashMap<(i32, i32), Vec<ObjectId>>,
+    /// Cells that trigger travel: indices into `GameData::movements`.
+    movements: HashMap<(i32, i32), Vec<usize>>,
 }
 
 impl MapState {
@@ -212,11 +256,20 @@ pub struct World {
     pub outgoing: Vec<Outgoing>,
     last_spawn_check: u64,
     force_map: Option<String>,
+    drops_by_monster: HashMap<i32, Vec<DropDef>>,
 }
 
 impl World {
     pub fn new(data: GameData, map_dir: impl AsRef<Path>, force_map: Option<String>) -> World {
+        let mut drops_by_monster: HashMap<i32, Vec<DropDef>> = HashMap::new();
+        for d in &data.drops {
+            drops_by_monster
+                .entry(d.monster)
+                .or_default()
+                .push(d.clone());
+        }
         World {
+            drops_by_monster,
             data,
             map_dir: map_dir.as_ref().to_path_buf(),
             maps: HashMap::new(),
@@ -290,6 +343,18 @@ impl World {
             monsters = spawns.iter().map(|s| s.def.count).sum::<i32>(),
             "map loaded"
         );
+        let mut movements: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (i, m) in self.data.movements.iter().enumerate() {
+            let Some(src) = self.data.regions.get(&m.source_region) else {
+                continue;
+            };
+            if src.map != index {
+                continue;
+            }
+            for p in src.movement_points(width) {
+                movements.entry(p).or_default().push(i);
+            }
+        }
         self.maps.insert(
             index,
             MapState {
@@ -302,9 +367,11 @@ impl World {
                 spawns,
                 objects: Vec::new(),
                 cells: HashMap::new(),
+                movements,
             },
         );
         self.do_spawns(index);
+        self.spawn_npcs(index);
         Ok(())
     }
 
@@ -376,7 +443,12 @@ impl World {
 
     /// Enter the world with a saved character. Spawns at the saved map/cell
     /// when it is walkable, otherwise at a start zone for the class.
-    pub fn add_player(&mut self, conn: ConnId, rec: &CharacterRecord) -> anyhow::Result<ObjectId> {
+    pub fn add_player(
+        &mut self,
+        conn: ConnId,
+        account: u32,
+        rec: &CharacterRecord,
+    ) -> anyhow::Result<ObjectId> {
         let class = rec.class;
         let mut placed = None;
         if !rec.map.is_empty() && self.force_map.is_none() {
@@ -410,12 +482,17 @@ impl World {
             base.mana
         };
         let id = self.alloc_id();
+        let bag = Bag::from_stored(&rec.items, rec.gold);
+        let next_item_id = rec.next_item_id.max(bag.max_id());
         let obj = Object {
             id,
             kind: Kind::Player(PlayerData {
                 conn,
+                account,
                 name: rec.name.clone(),
                 class,
+                gender: rec.gender,
+                hair: rec.hair.max(1),
                 character: rec.id,
                 level,
                 experience: rec.experience,
@@ -424,6 +501,13 @@ impl World {
                 revive_time: 0,
                 bind_region,
                 regen_time: self.now + REGEN_DELAY,
+                bag,
+                next_item_id,
+                attack_speed: 0,
+                max_bag: base.bag_weight,
+                max_wear: base.wear_weight,
+                max_hand: base.hand_weight,
+                npc: None,
             }),
             map,
             location,
@@ -448,12 +532,18 @@ impl World {
                 gender: rec.gender,
                 class,
                 armour: 0,
-                weapon: 0,
+                weapon: None,
                 hair: rec.hair.max(1),
             },
             visible: HashSet::new(),
         };
         self.insert_object(obj);
+        // Never had items yet (new character, or one from before items existed).
+        if rec.next_item_id == 0 && rec.items.is_empty() {
+            self.give_start_items(id);
+        }
+        self.refresh_stats(id, false);
+        self.refresh_appearance(id);
         let o = &self.objects[&id];
         let stats = self.player_stats(o);
         let desc = self.maps[&map].descriptor.clone();
@@ -467,6 +557,7 @@ impl World {
                 stats,
             },
         ));
+        self.send_inventory(id);
         Ok(id)
     }
 
@@ -483,6 +574,9 @@ impl World {
         rec.hp = if o.dead { 0 } else { o.hp };
         rec.mp = p.mp;
         rec.direction = o.direction;
+        rec.items = p.bag.to_stored();
+        rec.gold = p.bag.gold;
+        rec.next_item_id = p.next_item_id;
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;
@@ -499,6 +593,12 @@ impl World {
             max_mp: p.max_mp,
             experience: p.experience,
             max_experience: GameData::max_experience(p.level),
+            min_dc: o.stats.min_dc,
+            max_dc: o.stats.max_dc,
+            min_ac: o.stats.min_ac,
+            max_ac: o.stats.max_ac,
+            accuracy: o.stats.accuracy,
+            agility: o.stats.agility,
         }
     }
 
@@ -541,6 +641,43 @@ impl World {
     #[cfg(test)]
     pub fn teleport(&mut self, id: ObjectId, to: Point) {
         self.move_object(id, to);
+    }
+
+    #[cfg(test)]
+    pub fn test_set_gold(&mut self, id: ObjectId, gold: u64) {
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.bag.gold = gold;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_open_page(&mut self, id: ObjectId, page: i32) {
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.npc = Some((ObjectId(0), page));
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_bag(&self, id: ObjectId) -> (u64, Vec<(i32, u32)>) {
+        let p = self.objects[&id].player().unwrap();
+        (
+            p.bag.gold,
+            p.bag
+                .inventory
+                .iter()
+                .flatten()
+                .map(|i| (i.info, i.count))
+                .collect(),
+        )
+    }
+
+    #[cfg(test)]
+    pub fn test_movement_cells(&self, map: i32) -> Vec<Point> {
+        self.maps[&map]
+            .movements
+            .keys()
+            .map(|(x, y)| Point::new(*x, *y))
+            .collect()
     }
 
     fn spawn_monster(&mut self, map: i32, group: usize) -> bool {
@@ -731,6 +868,9 @@ impl World {
             o.move_time = self.now + MOVE_TIME;
         }
         self.move_object(id, to);
+        if self.try_travel(id) {
+            return;
+        }
         self.events.push((
             id,
             ServerMessage::ObjectMove {
@@ -760,7 +900,8 @@ impl World {
         }
         o.direction = direction;
         o.action_time = self.now + ATTACK_TIME;
-        o.attack_time = self.now + attack_delay(0);
+        let aspeed = o.player().map(|p| p.attack_speed).unwrap_or(0);
+        o.attack_time = self.now + attack_delay(aspeed);
         let stats = o.stats;
         let target_cell = (o.map, o.location.step(direction, 1));
         let power = self.roll_dc(stats);
@@ -827,7 +968,12 @@ impl World {
                     continue;
                 }
                 // Players hit monsters; monsters hit players (no PvP in the prototype).
-                if attacker_is_player == target.is_player() {
+                let valid = if attacker_is_player {
+                    target.is_monster()
+                } else {
+                    target.is_player()
+                };
+                if !valid {
                     continue;
                 }
                 if hit.target.is_some()
@@ -931,6 +1077,7 @@ impl World {
         if let Some(owner) = owner {
             self.gain_experience(owner, exp as u64);
         }
+        self.drop_loot(id, owner);
     }
 
     fn gain_experience(&mut self, id: ObjectId, amount: u64) {
@@ -953,23 +1100,9 @@ impl World {
         let name = p.name.clone();
         let level = p.level;
         let class = p.class;
+        let _ = class;
         if leveled {
-            if let Some(base) = self.data.base_stat(class.mir_class(), level).cloned() {
-                let o = self.objects.get_mut(&id).unwrap();
-                o.max_hp = base.health;
-                o.hp = base.health;
-                o.stats = CombatStats {
-                    accuracy: base.accuracy,
-                    agility: base.agility,
-                    min_ac: base.min_ac,
-                    max_ac: base.max_ac,
-                    min_dc: base.min_dc,
-                    max_dc: base.max_dc,
-                };
-                let p = o.player_mut().unwrap();
-                p.max_mp = base.mana;
-                p.mp = base.mana;
-            }
+            self.refresh_stats(id, true);
             self.events.push((
                 id,
                 ServerMessage::Chat {
@@ -1339,10 +1472,19 @@ impl World {
             .iter()
             .map(|id| (self.objects[id].map, self.objects[id].location))
             .collect();
+        let expired: Vec<ObjectId> = self
+            .objects
+            .values()
+            .filter(|o| matches!(&o.kind, Kind::Item(i) if now >= i.expire))
+            .map(|o| o.id)
+            .collect();
+        for id in expired {
+            self.remove_object(id);
+        }
         let active: Vec<ObjectId> = self
             .objects
             .values()
-            .filter(|o| !o.is_player())
+            .filter(|o| o.is_monster())
             .filter(|o| {
                 o.dead
                     || player_positions
@@ -1369,6 +1511,1072 @@ impl World {
         self.flush_events();
     }
 
+    // ---- stats, inventory, equipment --------------------------------------
+
+    /// Zircon `RefreshStats`: base stats for class/level plus equipped items.
+    fn refresh_stats(&mut self, id: ObjectId, restore: bool) {
+        let Some(o) = self.objects.get(&id) else {
+            return;
+        };
+        let Some(p) = o.player() else {
+            return;
+        };
+        let Some(base) = self.data.base_stat(p.class.mir_class(), p.level).cloned() else {
+            return;
+        };
+        let eq = p.bag.equipment_stats(&self.data);
+        let g = |k: i32| eq.get(&k).copied().unwrap_or(0);
+        let o = self.objects.get_mut(&id).unwrap();
+        o.max_hp = base.health + g(stat::HEALTH);
+        o.stats = CombatStats {
+            accuracy: base.accuracy + g(stat::ACCURACY),
+            agility: base.agility + g(stat::AGILITY),
+            min_ac: base.min_ac + g(stat::MIN_AC),
+            max_ac: base.max_ac + g(stat::MAX_AC),
+            min_dc: base.min_dc + g(stat::MIN_DC),
+            max_dc: base.max_dc + g(stat::MAX_DC),
+        };
+        if restore {
+            o.hp = o.max_hp;
+        } else {
+            o.hp = o.hp.min(o.max_hp);
+        }
+        let p = o.player_mut().unwrap();
+        p.max_mp = base.mana + g(stat::MANA);
+        if restore {
+            p.mp = p.max_mp;
+        } else {
+            p.mp = p.mp.min(p.max_mp);
+        }
+        p.attack_speed = g(stat::ATTACK_SPEED) as i64;
+        p.max_bag = base.bag_weight + g(73);
+        p.max_wear = base.wear_weight + g(74);
+        p.max_hand = base.hand_weight + g(75);
+    }
+
+    fn weights_of(&self, id: ObjectId) -> Option<Weights> {
+        let p = self.objects.get(&id)?.player()?;
+        Some(p.bag.weights(&self.data, p.max_bag, p.max_wear, p.max_hand))
+    }
+
+    fn send_inventory(&mut self, id: ObjectId) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        let inventory = p
+            .bag
+            .inventory
+            .iter()
+            .enumerate()
+            .filter_map(|(i, it)| it.as_ref().map(|it| (i as u8, it.instance())))
+            .collect();
+        let equipment = p
+            .bag
+            .equipment
+            .iter()
+            .enumerate()
+            .filter_map(|(i, it)| it.as_ref().map(|it| (i as u8, it.instance())))
+            .collect();
+        let gold = p.bag.gold;
+        let weights = p.bag.weights(&self.data, p.max_bag, p.max_wear, p.max_hand);
+        self.send_to(
+            id,
+            ServerMessage::Inventory {
+                inventory,
+                equipment,
+                gold,
+                weights,
+            },
+        );
+    }
+
+    fn send_changes(&mut self, id: ObjectId, changes: Changed) {
+        for (grid, slot, item) in changes {
+            self.send_to(id, ServerMessage::ItemChanged { grid, slot, item });
+        }
+        if let Some(w) = self.weights_of(id) {
+            self.send_to(id, ServerMessage::WeightsChanged(w));
+        }
+    }
+
+    fn send_gold(&mut self, id: ObjectId) {
+        if let Some(gold) = self
+            .objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .map(|p| p.bag.gold)
+        {
+            self.send_to(id, ServerMessage::GoldChanged { gold });
+        }
+    }
+
+    fn send_player_stats(&mut self, id: ObjectId) {
+        if let Some(o) = self.objects.get(&id) {
+            if o.is_player() {
+                let stats = self.player_stats(o);
+                let (hp, max_hp) = (o.hp, o.max_hp);
+                self.send_to(id, ServerMessage::StatsChanged(stats));
+                self.events
+                    .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+            }
+        }
+    }
+
+    /// Update the player's look from equipment and broadcast on change.
+    fn refresh_appearance(&mut self, id: ObjectId) {
+        let Some(o) = self.objects.get(&id) else {
+            return;
+        };
+        let Some(p) = o.player() else {
+            return;
+        };
+        let armour = p
+            .bag
+            .equipped_shape(&self.data, slot::ARMOUR)
+            .unwrap_or(0)
+            .max(0) as u16;
+        let weapon = p
+            .bag
+            .equipped_shape(&self.data, slot::WEAPON)
+            .map(|s| s.max(0) as u16);
+        let appearance = Appearance::Player {
+            name: p.name.clone(),
+            gender: p.gender,
+            class: p.class,
+            armour,
+            weapon,
+            hair: p.hair,
+        };
+        if o.appearance != appearance {
+            let o = self.objects.get_mut(&id).unwrap();
+            o.appearance = appearance.clone();
+            self.events
+                .push((id, ServerMessage::ObjectAppearance { id, appearance }));
+        }
+    }
+
+    /// Zircon `NewCharacter`: every `StartItem` usable by the class/gender.
+    fn give_start_items(&mut self, id: ObjectId) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        let (class, gender) = (p.class, p.gender);
+        let gflag = match gender {
+            Gender::Male => 1,
+            Gender::Female => 2,
+        };
+        let mut starts: Vec<i32> = self
+            .data
+            .items
+            .values()
+            .filter(|i| {
+                i.start_item
+                    && i.required_class & class.flag() != 0
+                    && i.required_gender & gflag != 0
+            })
+            .map(|i| i.index)
+            .collect();
+        starts.sort();
+        let o = self.objects.get_mut(&id).unwrap();
+        let p = o.player_mut().unwrap();
+        for info in starts {
+            let mut next = p.next_item_id;
+            p.bag.gain(&self.data, info, 1, &mut next);
+            p.next_item_id = next;
+        }
+        // Auto-equip what fits so the character does not start naked.
+        let mut auto = Vec::new();
+        for (i, it) in p.bag.inventory.iter().enumerate() {
+            if let Some(it) = it {
+                if let Some(def) = self.data.items.get(&it.info) {
+                    if !item_type::slots(def.item_type).is_empty() {
+                        auto.push(i as u8);
+                    }
+                }
+            }
+        }
+        for slot in auto {
+            let _ = self.item_use_inner(id, slot);
+        }
+    }
+
+    pub fn item_move(&mut self, id: ObjectId, from: Grid, from_slot: u8, to: Grid, to_slot: u8) {
+        let result = self.item_move_inner(id, from, from_slot, to, to_slot);
+        match result {
+            Ok(changes) => {
+                self.send_changes(id, changes);
+                self.refresh_stats(id, false);
+                self.refresh_appearance(id);
+                self.send_player_stats(id);
+            }
+            Err(e) => self.send_to(id, ServerMessage::Chat { text: e }),
+        }
+    }
+
+    fn item_move_inner(
+        &mut self,
+        id: ObjectId,
+        from: Grid,
+        from_slot: u8,
+        to: Grid,
+        to_slot: u8,
+    ) -> Result<Changed, String> {
+        let o = self.objects.get(&id).ok_or("no player")?;
+        let p = o.player().ok_or("no player")?;
+        let (class, gender, level) = (p.class, p.gender, p.level);
+        let (max_wear, max_hand) = (p.max_wear, p.max_hand);
+        if from == Grid::Equipment && to == Grid::Equipment {
+            return Err("Cannot move between equipment slots".into());
+        }
+        let src = p
+            .bag
+            .grid(from)
+            .get(from_slot as usize)
+            .cloned()
+            .flatten()
+            .ok_or("Nothing there")?;
+        let dst = p.bag.grid(to).get(to_slot as usize).cloned().flatten();
+        if to == Grid::Equipment || from == Grid::Equipment {
+            // The item moving INTO equipment must fit; the item moving out
+            // (if any) needs no check.
+            let (moving_in, target_slot) = if to == Grid::Equipment {
+                (Some(&src), to_slot as usize)
+            } else {
+                (dst.as_ref(), from_slot as usize)
+            };
+            if let Some(item) = moving_in {
+                let def = self.data.items.get(&item.info).ok_or("Unknown item")?;
+                if !item_type::slots(def.item_type).contains(&target_slot) {
+                    return Err("That does not go there".into());
+                }
+                can_use(def, class, gender, level)?;
+                let replaced_weight = p
+                    .bag
+                    .equipment
+                    .get(target_slot)
+                    .and_then(|c| c.as_ref())
+                    .map(|c| crate::items::item_weight(&self.data, c))
+                    .unwrap_or(0);
+                let hand = matches!(
+                    def.item_type,
+                    item_type::WEAPON | item_type::TORCH | item_type::SHIELD
+                );
+                let (current, max) = if hand {
+                    (p.bag.hand_weight(&self.data), max_hand)
+                } else {
+                    (p.bag.wear_weight(&self.data), max_wear)
+                };
+                if current - replaced_weight + def.weight > max {
+                    return Err("Too heavy to wear".into());
+                }
+            }
+        }
+        let o = self.objects.get_mut(&id).unwrap();
+        let p = o.player_mut().unwrap();
+        let mut changes = Changed::new();
+        // Merge stacks when moving within the inventory.
+        if from == Grid::Inventory && to == Grid::Inventory {
+            if let Some(d) = &dst {
+                if d.info == src.info && d.id != src.id {
+                    let stack = self
+                        .data
+                        .items
+                        .get(&src.info)
+                        .map(|i| i.stack_size)
+                        .unwrap_or(1) as u32;
+                    if d.count < stack {
+                        let add = (stack - d.count).min(src.count);
+                        let d = p.bag.inventory[to_slot as usize].as_mut().unwrap();
+                        d.count += add;
+                        changes.push((to, to_slot, Some(d.instance())));
+                        let s = p.bag.inventory[from_slot as usize].as_mut().unwrap();
+                        s.count -= add;
+                        if s.count == 0 {
+                            p.bag.inventory[from_slot as usize] = None;
+                            changes.push((from, from_slot, None));
+                        } else {
+                            changes.push((from, from_slot, Some(s.instance())));
+                        }
+                        return Ok(changes);
+                    }
+                }
+            }
+        }
+        p.bag.grid_mut(from)[from_slot as usize] = dst.clone();
+        p.bag.grid_mut(to)[to_slot as usize] = Some(src.clone());
+        changes.push((from, from_slot, dst.map(|d| d.instance())));
+        changes.push((to, to_slot, Some(src.instance())));
+        Ok(changes)
+    }
+
+    pub fn item_use(&mut self, id: ObjectId, slot: u8) {
+        match self.item_use_inner(id, slot) {
+            Ok(changes) => {
+                self.send_changes(id, changes);
+                self.refresh_stats(id, false);
+                self.refresh_appearance(id);
+                self.send_player_stats(id);
+            }
+            Err(e) => self.send_to(id, ServerMessage::Chat { text: e }),
+        }
+    }
+
+    fn item_use_inner(&mut self, id: ObjectId, slot: u8) -> Result<Changed, String> {
+        let o = self.objects.get(&id).ok_or("no player")?;
+        let p = o.player().ok_or("no player")?;
+        let item = p
+            .bag
+            .inventory
+            .get(slot as usize)
+            .cloned()
+            .flatten()
+            .ok_or("Nothing there")?;
+        let def = self
+            .data
+            .items
+            .get(&item.info)
+            .ok_or("Unknown item")?
+            .clone();
+        if !item_type::slots(def.item_type).is_empty() {
+            let target = default_slot(def.item_type, &p.bag.equipment).ok_or("Cannot equip")?;
+            return self.item_move_inner(id, Grid::Inventory, slot, Grid::Equipment, target as u8);
+        }
+        match def.item_type {
+            item_type::CONSUMABLE if def.shape == 0 => {
+                can_use(&def, p.class, p.gender, p.level)?;
+                let heal_hp = def.stat(stat::HEALTH);
+                let heal_mp = def.stat(stat::MANA);
+                let o = self.objects.get_mut(&id).unwrap();
+                o.hp = (o.hp + heal_hp).min(o.max_hp);
+                let p = o.player_mut().unwrap();
+                p.mp = (p.mp + heal_mp).min(p.max_mp);
+                let change = p.bag.take(Grid::Inventory, slot, 1);
+                Ok(change.into_iter().collect())
+            }
+            item_type::BOOK => Err("Skills are not learnable yet".into()),
+            _ => Err(format!("{} cannot be used", def.name)),
+        }
+    }
+
+    pub fn item_drop(&mut self, id: ObjectId, slot: u8, count: u32) {
+        let Some(o) = self.objects.get(&id) else {
+            return;
+        };
+        let Some(p) = o.player() else {
+            return;
+        };
+        if o.dead {
+            return;
+        }
+        let (map, loc) = (o.map, o.location);
+        let Some(item) = p.bag.inventory.get(slot as usize).cloned().flatten() else {
+            return;
+        };
+        let Some(def) = self.data.items.get(&item.info) else {
+            return;
+        };
+        if !def.can_drop {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: "That cannot be dropped".into(),
+                },
+            );
+            return;
+        }
+        let count = count.clamp(1, item.count);
+        let change = self
+            .objects
+            .get_mut(&id)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .bag
+            .take(Grid::Inventory, slot, count);
+        let dropped = UserItem { count, ..item };
+        self.spawn_ground_item(map, loc, dropped, None, 0);
+        self.send_changes(id, change.into_iter().collect());
+    }
+
+    pub fn pick_up(&mut self, id: ObjectId) {
+        let Some(o) = self.objects.get(&id) else {
+            return;
+        };
+        let Some(p) = o.player() else {
+            return;
+        };
+        if o.dead {
+            return;
+        }
+        let (map, loc, account, max_bag) = (o.map, o.location, p.account, p.max_bag);
+        let mut candidates: Vec<ObjectId> = Vec::new();
+        for d in 0..=PICKUP_RADIUS {
+            for dy in -d..=d {
+                for dx in -d..=d {
+                    if dx.abs().max(dy.abs()) != d {
+                        continue;
+                    }
+                    let cell = Point::new(loc.x + dx, loc.y + dy);
+                    if let Some(m) = self.maps.get(&map) {
+                        candidates.extend(m.objects_at(cell).iter().copied());
+                    }
+                }
+            }
+        }
+        for cid in candidates {
+            let (item, allowed) = {
+                let Some(obj) = self.objects.get(&cid) else {
+                    continue;
+                };
+                let Kind::Item(i) = &obj.kind else { continue };
+                let allowed = i.owner.is_none_or(|a| a == account)
+                    || self.now >= i.spawn_time + DROP_SHARE_AFTER;
+                (i.item.clone(), allowed)
+            };
+            if !allowed {
+                continue;
+            }
+            let Some(def) = self.data.items.get(&item.info).cloned() else {
+                continue;
+            };
+            if item.info == self.data.gold_item {
+                let o = self.objects.get_mut(&id).unwrap();
+                let p = o.player_mut().unwrap();
+                p.bag.gold += item.count as u64;
+                self.remove_object(cid);
+                self.send_gold(id);
+                self.send_to(
+                    id,
+                    ServerMessage::Chat {
+                        text: format!("You picked up {} gold.", item.count),
+                    },
+                );
+                return;
+            }
+            let p = self.objects[&id].player().unwrap();
+            if !p.bag.can_gain(&self.data, item.info, item.count, max_bag) {
+                self.send_to(
+                    id,
+                    ServerMessage::Chat {
+                        text: "You cannot carry any more.".into(),
+                    },
+                );
+                return;
+            }
+            let o = self.objects.get_mut(&id).unwrap();
+            let p = o.player_mut().unwrap();
+            let mut next = p.next_item_id;
+            let changes = p.bag.gain(&self.data, item.info, item.count, &mut next);
+            p.next_item_id = next;
+            self.remove_object(cid);
+            self.send_changes(id, changes);
+            let text = if item.count > 1 {
+                format!("You picked up {} ({}).", def.name, item.count)
+            } else {
+                format!("You picked up {}.", def.name)
+            };
+            self.send_to(id, ServerMessage::Chat { text });
+            return;
+        }
+    }
+
+    fn spawn_ground_item(
+        &mut self,
+        map: i32,
+        near: Point,
+        item: UserItem,
+        owner: Option<u32>,
+        spread: i32,
+    ) {
+        let mut location = near;
+        if spread > 0 {
+            for _ in 0..20 {
+                let p = Point::new(
+                    near.x + self.rng.random_range(-spread..=spread),
+                    near.y + self.rng.random_range(-spread..=spread),
+                );
+                let ok = self
+                    .maps
+                    .get(&map)
+                    .map(|m| m.file.is_walkable(p.x, p.y))
+                    .unwrap_or(false);
+                if ok {
+                    location = p;
+                    break;
+                }
+            }
+        }
+        if !self.maps.contains_key(&map) {
+            return;
+        }
+        let id = self.alloc_id();
+        let appearance = Appearance::Item {
+            info: item.info,
+            count: item.count,
+        };
+        let obj = Object {
+            id,
+            kind: Kind::Item(ItemData {
+                item,
+                owner,
+                spawn_time: self.now,
+                expire: self.now + DROP_DURATION,
+            }),
+            map,
+            location,
+            direction: Direction::Down,
+            hp: 0,
+            max_hp: 0,
+            dead: false,
+            stats: CombatStats {
+                accuracy: 0,
+                agility: 0,
+                min_ac: 0,
+                max_ac: 0,
+                min_dc: 0,
+                max_dc: 0,
+            },
+            action_time: 0,
+            move_time: 0,
+            attack_time: 0,
+            cell_time: 0,
+            appearance,
+            visible: HashSet::new(),
+        };
+        self.insert_object(obj);
+    }
+
+    /// Zircon `MonsterObject.Drop`: every DropInfo row rolls `1 in Chance`.
+    fn drop_loot(&mut self, monster: ObjectId, killer: Option<ObjectId>) {
+        let (map, loc, def_index) = {
+            let o = &self.objects[&monster];
+            (o.map, o.location, o.monster_ref().def)
+        };
+        let owner = killer
+            .and_then(|k| self.objects.get(&k))
+            .and_then(|o| o.player())
+            .map(|p| p.account);
+        let drops = self
+            .drops_by_monster
+            .get(&def_index)
+            .cloned()
+            .unwrap_or_default();
+        for d in drops {
+            if d.chance <= 0 || d.part_only {
+                continue;
+            }
+            let Some(item) = self.data.items.get(&d.item).cloned() else {
+                continue;
+            };
+            let amount = (d.amount / 2 + self.rng.random_range(0..d.amount.max(1))).max(1);
+            if self.rng.random_range(0..d.chance) != 0 {
+                continue;
+            }
+            let mut remaining = amount as u32;
+            let stack = item.stack_size.max(1) as u32;
+            while remaining > 0 {
+                let count = remaining.min(stack);
+                remaining -= count;
+                let ui = UserItem {
+                    id: 0,
+                    info: item.index,
+                    count,
+                    durability: item.durability,
+                    max_durability: item.durability,
+                };
+                self.spawn_ground_item(map, loc, ui, owner, DROP_DISTANCE);
+                if item.index == self.data.gold_item {
+                    break;
+                }
+            }
+        }
+    }
+
+    // ---- NPCs ----------------------------------------------------------------------
+
+    fn spawn_npcs(&mut self, map: i32) {
+        let width = self.maps[&map].file.width as i32;
+        let npcs: Vec<(i32, i32, String, i32, i32)> = self
+            .data
+            .npcs
+            .iter()
+            .filter_map(|n| {
+                let r = self.data.regions.get(&n.region)?;
+                if r.map != map {
+                    return None;
+                }
+                Some((n.index, n.region, n.name.clone(), n.image, n.entry_page))
+            })
+            .collect();
+        for (info, region, name, image, entry_page) in npcs {
+            let points: Vec<Point> = self.data.regions[&region]
+                .points(width)
+                .into_iter()
+                .map(|(x, y)| Point::new(x, y))
+                .collect();
+            let Some(location) = self.random_point(&points) else {
+                continue;
+            };
+            let id = self.alloc_id();
+            let display = name.rsplit('_').next().unwrap_or(&name).to_string();
+            let obj = Object {
+                id,
+                kind: Kind::Npc(NpcData { info, entry_page }),
+                map,
+                location,
+                direction: Direction::Up,
+                hp: 1,
+                max_hp: 1,
+                dead: false,
+                stats: CombatStats {
+                    accuracy: 0,
+                    agility: 0,
+                    min_ac: 0,
+                    max_ac: 0,
+                    min_dc: 0,
+                    max_dc: 0,
+                },
+                action_time: 0,
+                move_time: 0,
+                attack_time: 0,
+                cell_time: 0,
+                appearance: Appearance::Npc {
+                    name: display,
+                    image: image.max(0) as u16,
+                },
+                visible: HashSet::new(),
+            };
+            self.insert_object(obj);
+        }
+    }
+
+    pub fn npc_call(&mut self, id: ObjectId, npc: ObjectId) {
+        let Some(o) = self.objects.get(&id) else {
+            return;
+        };
+        let (map, loc) = (o.map, o.location);
+        let entry = match self.objects.get(&npc) {
+            Some(n) if n.map == map && n.location.distance(loc) <= MAX_VIEW_RANGE => {
+                match &n.kind {
+                    Kind::Npc(d) => d.entry_page,
+                    _ => return,
+                }
+            }
+            _ => return,
+        };
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.npc = None;
+        }
+        self.npc_run_page(id, npc, entry);
+    }
+
+    pub fn npc_button(&mut self, id: ObjectId, button: i32) {
+        let Some((npc, page)) = self
+            .objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .and_then(|p| p.npc)
+        else {
+            return;
+        };
+        let Some(def) = self.data.npc_pages.get(&page) else {
+            return;
+        };
+        let Some((_, dest)) = def.buttons.iter().find(|(b, d)| *b == button && *d != 0) else {
+            return;
+        };
+        let dest = *dest;
+        self.npc_run_page(id, npc, dest);
+    }
+
+    pub fn npc_close(&mut self, id: ObjectId) {
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.npc = None;
+        }
+    }
+
+    /// Zircon `NPCObject.NPCCall`: walk pages through checks and actions until
+    /// one with text is reached.
+    fn npc_run_page(&mut self, id: ObjectId, npc: ObjectId, mut page: i32) {
+        for _ in 0..20 {
+            if page == 0 {
+                self.npc_close(id);
+                self.send_to(id, ServerMessage::NpcClose);
+                return;
+            }
+            let Some(def) = self.data.npc_pages.get(&page).cloned() else {
+                self.npc_close(id);
+                self.send_to(id, ServerMessage::NpcClose);
+                return;
+            };
+            let mut failed = None;
+            for c in &def.checks {
+                if !self.npc_check(id, c) {
+                    failed = Some(c.fail_page);
+                    break;
+                }
+            }
+            if let Some(fail) = failed {
+                page = fail;
+                continue;
+            }
+            for a in &def.actions {
+                self.npc_action(id, a);
+            }
+            if def.say.trim().is_empty() {
+                if def.success_page != 0 {
+                    page = def.success_page;
+                    continue;
+                }
+                self.npc_close(id);
+                self.send_to(id, ServerMessage::NpcClose);
+                return;
+            }
+            let goods = def
+                .goods
+                .iter()
+                .filter_map(|(item, rate)| {
+                    let d = self.data.items.get(item)?;
+                    Some(Good {
+                        info: *item,
+                        price: ((d.price as f64 * rate).round() as u64).max(1),
+                    })
+                })
+                .collect();
+            if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                p.npc = Some((npc, page));
+            }
+            // Strip markup the client does not render.
+            let say = def.say.clone();
+            let _ = parse_dialog(&say);
+            self.send_to(
+                id,
+                ServerMessage::NpcResponse {
+                    npc,
+                    page,
+                    say,
+                    dialog_type: def.dialog_type,
+                    goods,
+                    sell_types: def.types.clone(),
+                },
+            );
+            return;
+        }
+    }
+
+    fn npc_check(&mut self, id: ObjectId, c: &crate::data::NpcCheckDef) -> bool {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return false;
+        };
+        let cmp = |op: i32, a: i64, b: i64| match op {
+            0 => a == b,
+            1 => a != b,
+            2 => a < b,
+            3 => a <= b,
+            4 => a > b,
+            5 => a >= b,
+            _ => true,
+        };
+        match c.check_type {
+            0 => cmp(c.operator, p.level as i64, c.int1 as i64),
+            1 => cmp(c.operator, p.class.mir_class() as i64, c.int1 as i64),
+            3 => cmp(c.operator, p.bag.gold as i64, c.int1 as i64),
+            4 => cmp(c.operator, p.bag.count_of(c.item1) as i64, c.int1 as i64),
+            13 => {
+                let ok = p
+                    .bag
+                    .can_gain(&self.data, c.item1, c.int1.max(1) as u32, p.max_bag);
+                cmp(c.operator, ok as i64, 1)
+            }
+            15 => {
+                let roll = self.rng.random_range(0..c.int1.max(1)) as i64;
+                cmp(c.operator, roll, c.int2 as i64)
+            }
+            // Unimplemented checks (horses, marriage, refining...) pass so
+            // dialogs stay navigable.
+            _ => true,
+        }
+    }
+
+    fn npc_action(&mut self, id: ObjectId, a: &crate::data::NpcActionDef) {
+        match a.action_type {
+            0 => {
+                // Teleport to MapParameter1 at (int1, int2) or a random cell.
+                let Some(map) = self.data.maps.get(&a.map1).map(|m| m.index) else {
+                    return;
+                };
+                if self.ensure_map(map).is_err() {
+                    return;
+                }
+                let target = if a.int1 == 0 && a.int2 == 0 {
+                    self.random_walkable(map)
+                } else {
+                    Some(Point::new(a.int1, a.int2))
+                };
+                if let Some(t) = target {
+                    self.change_map(id, map, t);
+                }
+            }
+            1 | 2 => {
+                if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                    if a.action_type == 1 {
+                        p.bag.gold += a.int1.max(0) as u64;
+                    } else {
+                        p.bag.gold = p.bag.gold.saturating_sub(a.int1.max(0) as u64);
+                    }
+                }
+                self.send_gold(id);
+            }
+            3 => {
+                let count = a.int1.max(1) as u32;
+                if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                    let mut next = p.next_item_id;
+                    let changes = p.bag.gain(&self.data, a.item1, count, &mut next);
+                    p.next_item_id = next;
+                    self.send_changes(id, changes);
+                }
+            }
+            4 => {
+                let count = a.int1.max(1) as u32;
+                if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                    let changes = p.bag.take_info(a.item1, count);
+                    self.send_changes(id, changes);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    pub fn npc_buy(&mut self, id: ObjectId, info: i32, count: u32) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        let Some((_, page)) = p.npc else {
+            return;
+        };
+        let Some(def) = self.data.npc_pages.get(&page) else {
+            return;
+        };
+        let Some((_, rate)) = def.goods.iter().find(|(i, _)| *i == info) else {
+            return;
+        };
+        let Some(item) = self.data.items.get(&info) else {
+            return;
+        };
+        let count = count.clamp(1, item.stack_size.max(1) as u32);
+        let price = ((item.price as f64 * rate).round() as u64).max(1);
+        let total = price * count as u64;
+        if p.bag.gold < total {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: "Not enough gold.".into(),
+                },
+            );
+            return;
+        }
+        if !p.bag.can_gain(&self.data, info, count, p.max_bag) {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: "You cannot carry that.".into(),
+                },
+            );
+            return;
+        }
+        let name = item.name.clone();
+        let o = self.objects.get_mut(&id).unwrap();
+        let p = o.player_mut().unwrap();
+        p.bag.gold -= total;
+        let mut next = p.next_item_id;
+        let changes = p.bag.gain(&self.data, info, count, &mut next);
+        p.next_item_id = next;
+        self.send_gold(id);
+        self.send_changes(id, changes);
+        self.send_to(
+            id,
+            ServerMessage::Chat {
+                text: format!("Bought {name} x{count} for {total} gold."),
+            },
+        );
+    }
+
+    pub fn npc_sell(&mut self, id: ObjectId, slots: Vec<u8>) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        let Some((_, page)) = p.npc else {
+            return;
+        };
+        let Some(def) = self.data.npc_pages.get(&page).cloned() else {
+            return;
+        };
+        if def.dialog_type != 1 || def.types.is_empty() {
+            return;
+        }
+        let mut earned = 0u64;
+        let mut sold = 0u32;
+        let mut changes = Changed::new();
+        for slot in slots {
+            let Some(item) = self.objects[&id]
+                .player()
+                .unwrap()
+                .bag
+                .inventory
+                .get(slot as usize)
+                .cloned()
+                .flatten()
+            else {
+                continue;
+            };
+            let Some(idef) = self.data.items.get(&item.info) else {
+                continue;
+            };
+            if !idef.can_sell || !def.types.contains(&idef.item_type) {
+                continue;
+            }
+            let price = sell_price(idef, &item);
+            let o = self.objects.get_mut(&id).unwrap();
+            let p = o.player_mut().unwrap();
+            if let Some(c) = p.bag.take(Grid::Inventory, slot, item.count) {
+                changes.push(c);
+            }
+            p.bag.gold += price;
+            earned += price;
+            sold += item.count;
+        }
+        self.send_gold(id);
+        self.send_changes(id, changes);
+        if sold > 0 {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: format!("Sold {sold} item(s) for {earned} gold."),
+                },
+            );
+        }
+    }
+
+    // ---- map travel -------------------------------------------------------------
+
+    fn random_walkable(&mut self, map: i32) -> Option<Point> {
+        let (w, h) = {
+            let m = self.maps.get(&map)?;
+            (m.file.width as i32, m.file.height as i32)
+        };
+        for _ in 0..10_000 {
+            let p = Point::new(self.rng.random_range(0..w), self.rng.random_range(0..h));
+            if self.maps[&map].file.is_walkable(p.x, p.y) && !self.cell_blocked(map, p, true) {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Zircon `Cell.GetMovement`: pick a random movement on the cell, a random
+    /// destination cell, check level, then relocate.
+    fn try_travel(&mut self, id: ObjectId) -> bool {
+        let Some(o) = self.objects.get(&id) else {
+            return false;
+        };
+        if !o.is_player() {
+            return false;
+        }
+        let (map, loc, level) = (o.map, o.location, o.player().unwrap().level);
+        let Some(indices) = self
+            .maps
+            .get(&map)
+            .and_then(|m| m.movements.get(&(loc.x, loc.y)).cloned())
+        else {
+            return false;
+        };
+        for _ in 0..5 {
+            let mi = indices[self.rng.random_range(0..indices.len())];
+            let m = self.data.movements[mi].clone();
+            let Some(dest) = self.data.regions.get(&m.destination_region).cloned() else {
+                continue;
+            };
+            let Some(dest_map) = self.data.maps.get(&dest.map).cloned() else {
+                continue;
+            };
+            if dest_map.minimum_level > level {
+                self.send_to(
+                    id,
+                    ServerMessage::Chat {
+                        text: format!(
+                            "You need level {} to enter {}.",
+                            dest_map.minimum_level, dest_map.description
+                        ),
+                    },
+                );
+                return false;
+            }
+            if self.ensure_map(dest_map.index).is_err() {
+                continue;
+            }
+            let width = self.maps[&dest_map.index].file.width as i32;
+            let points: Vec<Point> = dest
+                .points(width)
+                .into_iter()
+                .map(|(x, y)| Point::new(x, y))
+                .filter(|p| self.maps[&dest_map.index].file.is_walkable(p.x, p.y))
+                .collect();
+            let Some(target) = self.random_point(&points) else {
+                continue;
+            };
+            self.change_map(id, dest_map.index, target);
+            return true;
+        }
+        false
+    }
+
+    /// Move a player to another map (or cell) and resync the client.
+    fn change_map(&mut self, id: ObjectId, map: i32, to: Point) {
+        if self.ensure_map(map).is_err() {
+            return;
+        }
+        let (old_map, old_loc) = {
+            let o = &self.objects[&id];
+            (o.map, o.location)
+        };
+        if let Some(m) = self.maps.get_mut(&old_map) {
+            m.objects.retain(|x| *x != id);
+            m.remove_from_cell(id, old_loc);
+        }
+        {
+            let o = self.objects.get_mut(&id).unwrap();
+            o.map = map;
+            o.location = to;
+            o.cell_time = self.now + CELL_GRACE;
+            if let Some(p) = o.player_mut() {
+                p.npc = None;
+            }
+        }
+        let m = self.maps.get_mut(&map).unwrap();
+        m.objects.push(id);
+        m.add_to_cell(id, to);
+        let desc = m.descriptor.clone();
+        let dir = self.objects[&id].direction;
+        // Forget everything seen; visibility will re-add what is around.
+        let old: Vec<ObjectId> = self.objects[&id].visible.iter().copied().collect();
+        for v in old {
+            self.send_to(id, ServerMessage::ObjectRemove { id: v });
+        }
+        self.objects.get_mut(&id).unwrap().visible.clear();
+        self.send_to(
+            id,
+            ServerMessage::MapChanged {
+                map: desc,
+                location: to,
+                direction: dir,
+            },
+        );
+        // Landing on another movement cell chains (Zircon recurses).
+        if old_map != map || old_loc != to {
+            let _ = self.try_travel(id);
+        }
+    }
+
     /// Recompute each player's visible set and emit show/remove.
     fn update_visibility(&mut self) {
         let players: Vec<ObjectId> = self
@@ -1378,16 +2586,30 @@ impl World {
             .map(|o| o.id)
             .collect();
         for pid in players {
-            let (map, loc, conn) = {
+            let (map, loc, conn, account) = {
                 let p = &self.objects[&pid];
-                (p.map, p.location, p.player().unwrap().conn)
+                let pd = p.player().unwrap();
+                (p.map, p.location, pd.conn, pd.account)
             };
+            let now = self.now;
             let now_visible: HashSet<ObjectId> = self.maps[&map]
                 .objects
                 .iter()
                 .copied()
                 .filter(|id| *id != pid)
-                .filter(|id| self.objects[id].location.distance(loc) <= MAX_VIEW_RANGE)
+                .filter(|id| {
+                    let o = &self.objects[id];
+                    if o.location.distance(loc) > MAX_VIEW_RANGE {
+                        return false;
+                    }
+                    match &o.kind {
+                        Kind::Item(i) => {
+                            i.owner.is_none_or(|a| a == account)
+                                || now >= i.spawn_time + DROP_SHARE_AFTER
+                        }
+                        _ => true,
+                    }
+                })
                 .collect();
             let old = std::mem::take(&mut self.objects.get_mut(&pid).unwrap().visible);
             for id in old.difference(&now_visible) {

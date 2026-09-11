@@ -11,11 +11,13 @@ mod assets;
 mod client;
 mod game;
 mod gfx;
+mod items;
 mod monster_table;
 mod net;
 mod scenes;
 mod text;
 mod ui;
+mod windows;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -230,7 +232,12 @@ impl ApplicationHandler for App {
                                 c.input.lmb_released = true;
                             }
                         }
-                        MouseButton::Right => c.input.rmb_down = down,
+                        MouseButton::Right => {
+                            c.input.rmb_down = down;
+                            if down {
+                                c.input.rmb_pressed = true;
+                            }
+                        }
                         _ => {}
                     }
                 }

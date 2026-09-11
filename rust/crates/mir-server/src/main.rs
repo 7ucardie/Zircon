@@ -8,6 +8,7 @@
 
 mod accounts;
 mod data;
+mod items;
 mod net;
 mod world;
 
@@ -364,7 +365,7 @@ fn handle_message(
                 );
                 return;
             };
-            match world.add_player(conn, &rec) {
+            match world.add_player(conn, account, &rec) {
                 Ok(object) => {
                     tracing::info!(conn, account, name = rec.name, ?object, "entered world");
                     if let Some(r) = accounts.character_mut(account, id) {
@@ -411,6 +412,33 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::Attack { direction }) => {
             world.player_attack(object, direction)
         }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::ItemMove {
+                from,
+                from_slot,
+                to,
+                to_slot,
+            },
+        ) => world.item_move(object, from, from_slot, to, to_slot),
+        (Stage::InGame { object, .. }, ClientMessage::ItemUse { slot }) => {
+            world.item_use(object, slot)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::ItemDrop { slot, count }) => {
+            world.item_drop(object, slot, count)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::PickUp) => world.pick_up(object),
+        (Stage::InGame { object, .. }, ClientMessage::NpcCall { id }) => world.npc_call(object, id),
+        (Stage::InGame { object, .. }, ClientMessage::NpcButton { button }) => {
+            world.npc_button(object, button)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::NpcBuy { info, count }) => {
+            world.npc_buy(object, info, count)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::NpcSell { slots }) => {
+            world.npc_sell(object, slots)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::NpcClose) => world.npc_close(object),
         (stage, msg) => {
             tracing::debug!(conn, ?stage, ?msg, "message ignored in this stage");
         }
@@ -435,12 +463,15 @@ fn test_character(name: &str) -> CharacterRecord {
         created: 0,
         last_login: 0,
         deleted: false,
+        items: Vec::new(),
+        gold: 0,
+        next_item_id: 0,
     }
 }
 
 /// Print what a new warrior would get, then exit. Useful without a client.
 fn inspect(world: &mut World) -> anyhow::Result<()> {
-    let id = world.add_player(0, &test_character("Inspector"))?;
+    let id = world.add_player(0, 0, &test_character("Inspector"))?;
     let o = &world.objects[&id];
     let map = &world.maps[&o.map];
     println!(
@@ -532,7 +563,7 @@ mod tests {
             eprintln!("ZIRCON_ASSETS not set; skipping");
             return;
         };
-        let me = world.add_player(1, &test_character("Tester")).unwrap();
+        let me = world.add_player(1, 1, &test_character("Tester")).unwrap();
         world.tick(0);
         let msgs = drain(&mut world);
         assert!(matches!(msgs[0], ServerMessage::Welcome { .. }));
@@ -585,11 +616,136 @@ mod tests {
     }
 
     #[test]
+    fn chicken_drops_meat_that_can_be_picked_up_and_sold() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let me = world.add_player(1, 1, &test_character("Tester")).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let map = world.objects[&me].map;
+        let loc = world.objects[&me].location;
+        let victim = world
+            .objects
+            .values()
+            .find(|o| !o.dead && matches!(&o.appearance, Appearance::Monster { name, .. } if name == "Chicken"))
+            .map(|o| o.id)
+            .expect("a chicken");
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 1))
+            .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+            .unwrap();
+        world.teleport(victim, cell);
+        let dir = Direction::from_points(loc, cell);
+        let mut now = 100;
+        for _ in 0..400 {
+            world.player_attack(me, dir);
+            now += 1600;
+            world.tick(now);
+            if world.objects.get(&victim).map(|v| v.dead).unwrap_or(true) {
+                break;
+            }
+        }
+        // Chicken Meat (179) has Chance 1 => always drops.
+        let meat = world
+            .objects
+            .values()
+            .find(|o| matches!(&o.appearance, Appearance::Item { info: 179, .. }))
+            .map(|o| (o.id, o.location))
+            .expect("meat on the ground");
+        world.teleport(me, meat.1);
+        world.pick_up(me);
+        let (_, bag) = world.test_bag(me);
+        assert!(
+            bag.iter().any(|(info, _)| *info == 179),
+            "meat should be in the bag: {bag:?}"
+        );
+        assert!(!world.objects.contains_key(&meat.0));
+
+        // Sell it to the meat shop page (4) which buys ItemType 12.
+        world.test_set_gold(me, 0);
+        world.test_open_page(me, 4);
+        let slot = world.objects[&me]
+            .player()
+            .unwrap()
+            .bag
+            .inventory
+            .iter()
+            .position(|s| s.as_ref().map(|i| i.info == 179).unwrap_or(false))
+            .unwrap() as u8;
+        world.npc_sell(me, vec![slot]);
+        let (gold, bag) = world.test_bag(me);
+        assert!(gold > 0, "selling should pay gold");
+        assert!(!bag.iter().any(|(info, _)| *info == 179));
+
+        // Buy one back.
+        world.test_set_gold(me, 100_000);
+        world.npc_buy(me, 179, 1);
+        let (gold, bag) = world.test_bag(me);
+        assert!(gold < 100_000);
+        assert!(bag.iter().any(|(info, c)| *info == 179 && *c == 1));
+    }
+
+    #[test]
+    fn walking_onto_an_exit_changes_map() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let me = world.add_player(1, 1, &test_character("Tester")).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let map = world.objects[&me].map;
+        let exits = world.test_movement_cells(map);
+        assert!(!exits.is_empty(), "Bichon should have exits");
+        // Find an exit with a walkable neighbour to step from.
+        let mut done = false;
+        let mut now = 1000;
+        for exit in exits.iter() {
+            now += 1000;
+            let Some(from) = Direction::ALL
+                .iter()
+                .map(|d| exit.step(*d, 1))
+                .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+            else {
+                continue;
+            };
+            // Nothing may stand on the exit cell.
+            let blockers: Vec<ObjectId> = world
+                .objects
+                .values()
+                .filter(|o| o.id != me && o.map == map && o.location == *exit)
+                .map(|o| o.id)
+                .collect();
+            for b in blockers {
+                world.remove_object(b);
+            }
+            world.teleport(me, from);
+            world.tick(now);
+            drain(&mut world);
+            let dir = Direction::from_points(from, *exit);
+            world.player_move(me, dir, false);
+            let msgs = drain(&mut world);
+            if world.objects[&me].map != map {
+                assert!(msgs
+                    .iter()
+                    .any(|m| matches!(m, ServerMessage::MapChanged { .. })));
+                done = true;
+                break;
+            }
+        }
+        assert!(
+            done,
+            "no exit led anywhere (level requirement or unloaded map)"
+        );
+    }
+
+    #[test]
     fn passive_animals_do_not_aggro_but_hunters_do() {
         let Some(mut world) = world() else {
             return;
         };
-        let _me = world.add_player(1, &test_character("Tester")).unwrap();
+        let _me = world.add_player(1, 1, &test_character("Tester")).unwrap();
         world.tick(0);
         let passive: Vec<ObjectId> = world
             .objects
@@ -618,7 +774,7 @@ mod tests {
         let Some(mut world) = world() else {
             return;
         };
-        let me = world.add_player(1, &test_character("Tester")).unwrap();
+        let me = world.add_player(1, 1, &test_character("Tester")).unwrap();
         world.tick(0);
         drain(&mut world);
         let map = world.objects[&me].map;

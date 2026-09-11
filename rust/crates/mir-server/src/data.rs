@@ -38,6 +38,15 @@ impl RegionDef {
             map_width,
         )
     }
+
+    /// Cells used as movement sources (Zircon attaches movements to
+    /// `SourceRegion.PointRegion`).
+    pub fn movement_points(&self, map_width: i32) -> Vec<(i32, i32)> {
+        match &self.point_region {
+            Some(p) if !p.is_empty() => p.clone(),
+            _ => self.points(map_width),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +117,9 @@ pub struct BaseStatDef {
     pub max_mr: i32,
     pub min_dc: i32,
     pub max_dc: i32,
+    pub bag_weight: i32,
+    pub wear_weight: i32,
+    pub hand_weight: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -116,6 +128,102 @@ pub struct NpcDef {
     pub region: i32,
     pub name: String,
     pub image: i32,
+    pub face_image: i32,
+    pub entry_page: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct ItemDef {
+    pub index: i32,
+    pub name: String,
+    /// Zircon `ItemType` value.
+    pub item_type: u8,
+    /// `RequiredClass` flags (Warrior=1, Wizard=2, Taoist=4, Assassin=8).
+    pub required_class: u8,
+    /// `RequiredGender` flags (Male=1, Female=2).
+    pub required_gender: u8,
+    pub required_type: u8,
+    pub required_amount: i32,
+    pub shape: i32,
+    pub image: i32,
+    pub durability: i32,
+    pub price: i32,
+    pub weight: i32,
+    pub stack_size: i32,
+    pub start_item: bool,
+    pub sell_rate: f64,
+    pub can_sell: bool,
+    pub can_drop: bool,
+    pub description: String,
+    pub stats: HashMap<i32, i32>,
+}
+
+impl ItemDef {
+    pub fn stat(&self, id: i32) -> i32 {
+        self.stats.get(&id).copied().unwrap_or(0)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DropDef {
+    pub monster: i32,
+    pub item: i32,
+    /// Zircon: drops when `Random.Next(Chance) == 0`, i.e. 1 in `chance`.
+    pub chance: i32,
+    pub amount: i32,
+    pub drop_set: i32,
+    pub part_only: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct NpcPageDef {
+    pub index: i32,
+    pub description: String,
+    pub dialog_type: i32,
+    pub say: String,
+    pub success_page: i32,
+    pub arguments: String,
+    pub buttons: Vec<(i32, i32)>,
+    pub goods: Vec<(i32, f64)>,
+    pub checks: Vec<NpcCheckDef>,
+    pub actions: Vec<NpcActionDef>,
+    /// Item types accepted by a sell/repair page.
+    pub types: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NpcCheckDef {
+    pub check_type: i32,
+    pub operator: i32,
+    pub string1: String,
+    pub int1: i32,
+    pub int2: i32,
+    pub item1: i32,
+    pub stat1: i32,
+    pub fail_page: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct NpcActionDef {
+    pub action_type: i32,
+    pub string1: String,
+    pub int1: i32,
+    pub int2: i32,
+    pub item1: i32,
+    pub map1: i32,
+    pub stat1: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct MovementDef {
+    pub index: i32,
+    pub source_region: i32,
+    pub destination_region: i32,
+    pub icon: i32,
+    pub need_item: i32,
+    pub need_spawn: i32,
+    pub effect: i32,
+    pub required_class: u8,
 }
 
 /// Zircon `Globals.ExperienceList`: experience needed at each level.
@@ -135,6 +243,12 @@ pub struct GameData {
     pub safe_zones: Vec<SafeZoneDef>,
     pub base_stats: Vec<BaseStatDef>,
     pub npcs: Vec<NpcDef>,
+    pub items: HashMap<i32, ItemDef>,
+    pub drops: Vec<DropDef>,
+    pub npc_pages: HashMap<i32, NpcPageDef>,
+    pub movements: Vec<MovementDef>,
+    /// `ItemInfo.Index` of gold.
+    pub gold_item: i32,
 }
 
 fn i32_of(c: &Collection, r: &Record, name: &str) -> i32 {
@@ -270,6 +384,9 @@ impl GameData {
                 max_mr: i32_of(c, r, "MaxMR"),
                 min_dc: i32_of(c, r, "MinDC"),
                 max_dc: i32_of(c, r, "MaxDC"),
+                bag_weight: i32_of(c, r, "BagWeight"),
+                wear_weight: i32_of(c, r, "WearWeight"),
+                hand_weight: i32_of(c, r, "HandWeight"),
             })
             .collect();
 
@@ -282,10 +399,174 @@ impl GameData {
                     region: i32_of(c, r, "Region"),
                     name: c.str_or(r, "NPCName", "").to_string(),
                     image: i32_of(c, r, "Image"),
+                    face_image: i32_of(c, r, "FaceImage"),
+                    entry_page: i32_of(c, r, "EntryPage"),
                 })
+                .filter(|n| n.region != 0)
                 .collect(),
             None => Vec::new(),
         };
+
+        let mut item_stats: HashMap<i32, HashMap<i32, i32>> = HashMap::new();
+        if let Some(c) = db.collection("ItemInfoStat") {
+            for r in &c.records {
+                item_stats
+                    .entry(i32_of(c, r, "Item"))
+                    .or_default()
+                    .insert(i32_of(c, r, "Stat"), i32_of(c, r, "Amount"));
+            }
+        }
+        let c = get("ItemInfo")?;
+        let items: HashMap<i32, ItemDef> = c
+            .records
+            .iter()
+            .map(|r| {
+                let index = c.index(r);
+                let d = ItemDef {
+                    index,
+                    name: c.str_or(r, "ItemName", "").to_string(),
+                    item_type: i32_of(c, r, "ItemType") as u8,
+                    required_class: i32_of(c, r, "RequiredClass") as u8,
+                    required_gender: i32_of(c, r, "RequiredGender") as u8,
+                    required_type: i32_of(c, r, "RequiredType") as u8,
+                    required_amount: i32_of(c, r, "RequiredAmount"),
+                    shape: i32_of(c, r, "Shape"),
+                    image: i32_of(c, r, "Image"),
+                    durability: i32_of(c, r, "Durability"),
+                    price: i32_of(c, r, "Price"),
+                    weight: i32_of(c, r, "Weight"),
+                    stack_size: i32_of(c, r, "StackSize").max(1),
+                    start_item: c.bool_or(r, "StartItem", false),
+                    sell_rate: c.float_or(r, "SellRate", 0.0),
+                    can_sell: c.bool_or(r, "CanSell", true),
+                    can_drop: c.bool_or(r, "CanDrop", true),
+                    description: c.str_or(r, "Description", "").to_string(),
+                    stats: item_stats.remove(&index).unwrap_or_default(),
+                };
+                (index, d)
+            })
+            .collect();
+
+        let drops = match db.collection("DropInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| DropDef {
+                    monster: i32_of(c, r, "Monster"),
+                    item: i32_of(c, r, "Item"),
+                    chance: i32_of(c, r, "Chance"),
+                    amount: i32_of(c, r, "Amount"),
+                    drop_set: i32_of(c, r, "DropSet"),
+                    part_only: c.bool_or(r, "PartOnly", false),
+                })
+                .filter(|d| d.monster != 0 && d.item != 0)
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let mut npc_pages: HashMap<i32, NpcPageDef> = match db.collection("NPCPage") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| {
+                    let index = c.index(r);
+                    let p = NpcPageDef {
+                        index,
+                        description: c.str_or(r, "Description", "").to_string(),
+                        dialog_type: i32_of(c, r, "DialogType"),
+                        say: c.str_or(r, "Say", "").to_string(),
+                        success_page: i32_of(c, r, "SuccessPage"),
+                        arguments: c.str_or(r, "Arguments", "").to_string(),
+                        buttons: Vec::new(),
+                        goods: Vec::new(),
+                        checks: Vec::new(),
+                        actions: Vec::new(),
+                        types: Vec::new(),
+                    };
+                    (index, p)
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+        if let Some(c) = db.collection("NPCButton") {
+            for r in &c.records {
+                if let Some(p) = npc_pages.get_mut(&i32_of(c, r, "Page")) {
+                    p.buttons
+                        .push((i32_of(c, r, "ButtonID"), i32_of(c, r, "DestinationPage")));
+                }
+            }
+        }
+        if let Some(c) = db.collection("NPCGood") {
+            for r in &c.records {
+                if let Some(p) = npc_pages.get_mut(&i32_of(c, r, "Page")) {
+                    p.goods
+                        .push((i32_of(c, r, "Item"), c.float_or(r, "Rate", 1.0)));
+                }
+            }
+        }
+        if let Some(c) = db.collection("NPCType") {
+            for r in &c.records {
+                if let Some(p) = npc_pages.get_mut(&i32_of(c, r, "Page")) {
+                    p.types.push(i32_of(c, r, "ItemType") as u8);
+                }
+            }
+        }
+        if let Some(c) = db.collection("NPCCheck") {
+            for r in &c.records {
+                if let Some(p) = npc_pages.get_mut(&i32_of(c, r, "Page")) {
+                    p.checks.push(NpcCheckDef {
+                        check_type: i32_of(c, r, "CheckType"),
+                        operator: i32_of(c, r, "Operator"),
+                        string1: c.str_or(r, "StringParameter1", "").to_string(),
+                        int1: i32_of(c, r, "IntParameter1"),
+                        int2: i32_of(c, r, "IntParameter2"),
+                        item1: i32_of(c, r, "ItemParameter1"),
+                        stat1: i32_of(c, r, "StatParameter1"),
+                        fail_page: i32_of(c, r, "FailPage"),
+                    });
+                }
+            }
+        }
+        if let Some(c) = db.collection("NPCAction") {
+            for r in &c.records {
+                if let Some(p) = npc_pages.get_mut(&i32_of(c, r, "Page")) {
+                    p.actions.push(NpcActionDef {
+                        action_type: i32_of(c, r, "ActionType"),
+                        string1: c.str_or(r, "StringParameter1", "").to_string(),
+                        int1: i32_of(c, r, "IntParameter1"),
+                        int2: i32_of(c, r, "IntParameter2"),
+                        item1: i32_of(c, r, "ItemParameter1"),
+                        map1: i32_of(c, r, "MapParameter1"),
+                        stat1: i32_of(c, r, "StatParameter1"),
+                    });
+                }
+            }
+        }
+
+        let movements = match db.collection("MovementInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| MovementDef {
+                    index: c.index(r),
+                    source_region: i32_of(c, r, "SourceRegion"),
+                    destination_region: i32_of(c, r, "DestinationRegion"),
+                    icon: i32_of(c, r, "Icon"),
+                    need_item: i32_of(c, r, "NeedItem"),
+                    need_spawn: i32_of(c, r, "NeedSpawn"),
+                    effect: i32_of(c, r, "Effect"),
+                    required_class: i32_of(c, r, "RequiredClass") as u8,
+                })
+                .filter(|m| m.source_region != 0 && m.destination_region != 0)
+                .collect(),
+            None => Vec::new(),
+        };
+
+        let gold_item = items
+            .values()
+            .find(|i: &&ItemDef| i.item_type == 34 && i.name.eq_ignore_ascii_case("Gold"))
+            .map(|i| i.index)
+            .unwrap_or(0);
 
         Ok(GameData {
             maps,
@@ -295,6 +576,11 @@ impl GameData {
             safe_zones,
             base_stats,
             npcs,
+            items,
+            drops,
+            npc_pages,
+            movements,
+            gold_item,
         })
     }
 

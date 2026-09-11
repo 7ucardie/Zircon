@@ -164,10 +164,10 @@ pub enum Appearance {
         name: String,
         gender: Gender,
         class: Class,
-        /// Armour sprite set index (0 = naked/basic clothes).
+        /// Equipped armour `ItemInfo.Shape` (0 = basic clothes).
         armour: u16,
-        /// Weapon sprite set index (0 = none).
-        weapon: u16,
+        /// Equipped weapon `ItemInfo.Shape`, if any.
+        weapon: Option<u16>,
         hair: u8,
     },
     Monster {
@@ -175,6 +175,112 @@ pub enum Appearance {
         /// Zircon `MonsterImage` value; the client maps it to a library + base index.
         image: u16,
     },
+    Npc {
+        name: String,
+        /// `NPCInfo.Image`; sprite index = image * 100 + frame in NPC.Zl.
+        image: u16,
+    },
+    /// An item lying on the ground.
+    Item {
+        /// `ItemInfo.Index`.
+        info: i32,
+        count: u32,
+    },
+}
+
+/// An item instance as the client sees it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemInstance {
+    pub id: u32,
+    /// `ItemInfo.Index`.
+    pub info: i32,
+    pub count: u32,
+    pub durability: i32,
+    pub max_durability: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Grid {
+    Inventory,
+    Equipment,
+}
+
+pub const INVENTORY_SIZE: usize = 48;
+pub const EQUIPMENT_SIZE: usize = 22;
+
+/// Zircon `EquipmentSlot`.
+pub mod slot {
+    pub const WEAPON: usize = 0;
+    pub const ARMOUR: usize = 1;
+    pub const HELMET: usize = 2;
+    pub const TORCH: usize = 3;
+    pub const NECKLACE: usize = 4;
+    pub const BRACELET_L: usize = 5;
+    pub const BRACELET_R: usize = 6;
+    pub const RING_L: usize = 7;
+    pub const RING_R: usize = 8;
+    pub const SHOES: usize = 9;
+    pub const POISON: usize = 10;
+    pub const AMULET: usize = 11;
+    pub const SHIELD: usize = 15;
+}
+
+/// Zircon `ItemType` values.
+pub mod item_type {
+    pub const NOTHING: u8 = 0;
+    pub const CONSUMABLE: u8 = 1;
+    pub const WEAPON: u8 = 2;
+    pub const ARMOUR: u8 = 3;
+    pub const TORCH: u8 = 4;
+    pub const HELMET: u8 = 5;
+    pub const NECKLACE: u8 = 6;
+    pub const BRACELET: u8 = 7;
+    pub const RING: u8 = 8;
+    pub const SHOES: u8 = 9;
+    pub const POISON: u8 = 10;
+    pub const AMULET: u8 = 11;
+    pub const MEAT: u8 = 12;
+    pub const ORE: u8 = 13;
+    pub const BOOK: u8 = 14;
+    pub const SCROLL: u8 = 15;
+    pub const DARK_STONE: u8 = 16;
+    pub const SHIELD: u8 = 27;
+    pub const CURRENCY: u8 = 34;
+
+    /// Equipment slots an item type may occupy (Zircon `Functions.CorrectSlot`).
+    pub fn slots(item_type: u8) -> &'static [usize] {
+        match item_type {
+            WEAPON => &[super::slot::WEAPON],
+            ARMOUR => &[super::slot::ARMOUR],
+            HELMET => &[super::slot::HELMET],
+            TORCH => &[super::slot::TORCH],
+            NECKLACE => &[super::slot::NECKLACE],
+            BRACELET => &[super::slot::BRACELET_L, super::slot::BRACELET_R],
+            RING => &[super::slot::RING_L, super::slot::RING_R],
+            SHOES => &[super::slot::SHOES],
+            POISON => &[super::slot::POISON],
+            AMULET | DARK_STONE => &[super::slot::AMULET],
+            SHIELD => &[super::slot::SHIELD],
+            _ => &[],
+        }
+    }
+}
+
+/// A shop entry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Good {
+    pub info: i32,
+    pub price: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Weights {
+    pub bag: i32,
+    pub max_bag: i32,
+    pub wear: i32,
+    pub max_wear: i32,
+    pub hand: i32,
+    pub max_hand: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,6 +321,12 @@ pub struct PlayerStats {
     pub max_mp: i32,
     pub experience: u64,
     pub max_experience: u64,
+    pub min_dc: i32,
+    pub max_dc: i32,
+    pub min_ac: i32,
+    pub max_ac: i32,
+    pub accuracy: i32,
+    pub agility: i32,
 }
 
 /// Summary of a character on the select screen.
@@ -320,6 +432,39 @@ pub enum ClientMessage {
     Attack {
         direction: Direction,
     },
+    /// Move an item between grid slots (equip/unequip/reorder).
+    ItemMove {
+        from: Grid,
+        from_slot: u8,
+        to: Grid,
+        to_slot: u8,
+    },
+    /// Use a consumable or equip an item from the inventory.
+    ItemUse {
+        slot: u8,
+    },
+    /// Drop an inventory item on the ground.
+    ItemDrop {
+        slot: u8,
+        count: u32,
+    },
+    /// Pick up whatever lies on or next to the player.
+    PickUp,
+    NpcCall {
+        id: ObjectId,
+    },
+    NpcButton {
+        button: i32,
+    },
+    NpcBuy {
+        info: i32,
+        count: u32,
+    },
+    /// Sell inventory slots to the open shop.
+    NpcSell {
+        slots: Vec<u8>,
+    },
+    NpcClose,
     Ping {
         nonce: u32,
     },
@@ -395,6 +540,45 @@ pub enum ServerMessage {
         hp: i32,
     },
     StatsChanged(PlayerStats),
+    /// Full inventory sync on entering the world.
+    Inventory {
+        inventory: Vec<(u8, ItemInstance)>,
+        equipment: Vec<(u8, ItemInstance)>,
+        gold: u64,
+        weights: Weights,
+    },
+    /// A slot's content changed (`None` = now empty).
+    ItemChanged {
+        grid: Grid,
+        slot: u8,
+        item: Option<ItemInstance>,
+    },
+    GoldChanged {
+        gold: u64,
+    },
+    WeightsChanged(Weights),
+    /// An object's look changed (equipment).
+    ObjectAppearance {
+        id: ObjectId,
+        appearance: Appearance,
+    },
+    /// The player was moved to another map; forget every object.
+    MapChanged {
+        map: MapDescriptor,
+        location: Point,
+        direction: Direction,
+    },
+    NpcResponse {
+        npc: ObjectId,
+        page: i32,
+        say: String,
+        /// Zircon `NPCDialogType` (1 = BuySell).
+        dialog_type: i32,
+        goods: Vec<Good>,
+        /// Item types this shop buys.
+        sell_types: Vec<u8>,
+    },
+    NpcClose,
     Chat {
         text: String,
     },
@@ -496,6 +680,96 @@ mod tests {
         assert_eq!(
             Direction::from_points(o, Point::new(15, 6)),
             Direction::Right
+        );
+    }
+}
+
+/// One piece of an NPC dialog page: plain text or a clickable button link.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DialogPart {
+    Text(String),
+    Button { label: String, id: i32 },
+    NewLine,
+}
+
+/// Parse Zircon NPC page text: `[Label:ID]` becomes a button, `\r\n` a line
+/// break, everything else plain text.
+pub fn parse_dialog(say: &str) -> Vec<DialogPart> {
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    // Normalise line endings so the loop only deals with `\n`.
+    let rest = say.replace("\r\n", "\n").replace('\r', "\n");
+    let mut chars = rest.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\n' => {
+                if !text.is_empty() {
+                    parts.push(DialogPart::Text(std::mem::take(&mut text)));
+                }
+                parts.push(DialogPart::NewLine);
+            }
+            '[' => {
+                let mut inner = String::new();
+                let mut closed = false;
+                for d in chars.by_ref() {
+                    if d == ']' {
+                        closed = true;
+                        break;
+                    }
+                    inner.push(d);
+                }
+                match (closed, inner.rsplit_once(':')) {
+                    (true, Some((label, id))) if id.trim().parse::<i32>().is_ok() => {
+                        if !text.is_empty() {
+                            parts.push(DialogPart::Text(std::mem::take(&mut text)));
+                        }
+                        parts.push(DialogPart::Button {
+                            label: label.to_string(),
+                            id: id.trim().parse().unwrap(),
+                        });
+                    }
+                    _ => {
+                        text.push('[');
+                        text.push_str(&inner);
+                        if closed {
+                            text.push(']');
+                        }
+                    }
+                }
+            }
+            other => text.push(other),
+        }
+    }
+    if !text.is_empty() {
+        parts.push(DialogPart::Text(text));
+    }
+    parts
+}
+
+#[cfg(test)]
+mod dialog_tests {
+    use super::*;
+
+    #[test]
+    fn parses_buttons_and_lines() {
+        let p = parse_dialog("Hi there,\r\n[Browse:1]\r\n\r\n[Exit:0] bye [x]");
+        assert_eq!(
+            p,
+            vec![
+                DialogPart::Text("Hi there,".into()),
+                DialogPart::NewLine,
+                DialogPart::Button {
+                    label: "Browse".into(),
+                    id: 1
+                },
+                DialogPart::NewLine,
+                DialogPart::NewLine,
+                DialogPart::Button {
+                    label: "Exit".into(),
+                    id: 0
+                },
+                DialogPart::Text(" bye [x]".into()),
+            ]
         );
     }
 }
