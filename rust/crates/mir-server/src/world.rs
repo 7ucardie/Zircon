@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use mir_formats::mirdb::stat;
 use mir_formats::MapFile;
 use mir_proto::{
-    element, item_type, magic_type, parse_dialog, slot, Appearance, Class, Direction, Gender, Good,
-    Grid, MapDescriptor, ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights,
-    CAST_TIME, MAGIC_DELAY, MAGIC_RANGE,
+    element, item_type, magic_type, parse_dialog, slot, Appearance, BeltLink, Class, Direction,
+    Gender, Good, Grid, MapDescriptor, ObjectId, ObjectState, PlayerStats, Point, ServerMessage,
+    Weights, CAST_TIME, MAGIC_DELAY, MAGIC_RANGE, MAX_BELT,
 };
 use rand::Rng;
 
@@ -32,8 +32,34 @@ pub const SEARCH_DELAY: u64 = 3000;
 pub const ROAM_DELAY: u64 = 2000;
 pub const DEAD_DURATION: u64 = 60_000;
 pub const REGEN_DELAY: u64 = 10_000;
-/// Prototype: revive after 10 s instead of Zircon's 10 minutes.
-pub const REVIVE_DELAY: u64 = 10_000;
+/// Zircon `Config.AutoReviveDelay`: forced town revive after 10 minutes;
+/// the player can return to town at any time while dead.
+pub const REVIVE_DELAY: u64 = 600_000;
+
+/// Belt links from the character record, one entry per slot, with stale
+/// item links pruned (Zircon `GetStartInformation`).
+fn load_belt(stored: &[BeltLink], bag: &Bag) -> Vec<BeltLink> {
+    (0..MAX_BELT as u8)
+        .map(|slot| {
+            let mut l = stored
+                .iter()
+                .find(|l| l.slot == slot)
+                .copied()
+                .unwrap_or(BeltLink::empty(slot));
+            l.slot = slot;
+            if let Some(item) = l.item {
+                let present = bag
+                    .inventory
+                    .iter()
+                    .any(|s| s.as_ref().map(|it| it.id == item).unwrap_or(false));
+                if !present {
+                    l.item = None;
+                }
+            }
+            l
+        })
+        .collect()
+}
 pub const CELL_GRACE: u64 = 300;
 /// Ground items vanish after this (Zircon `Config.DropDuration`, 60 min).
 pub const DROP_DURATION: u64 = 60 * 60_000;
@@ -133,6 +159,10 @@ pub struct PlayerData {
     pub slaying_charged: bool,
     pub thrusting_on: bool,
     pub half_moon_on: bool,
+    /// Belt links (Zircon `CharacterBeltLink`), one per slot.
+    pub belt: Vec<BeltLink>,
+    /// Zircon `UseItemTime`: no consumable can be used before this.
+    pub use_item_time: u64,
 }
 
 #[derive(Debug)]
@@ -557,6 +587,7 @@ impl World {
         };
         let id = self.alloc_id();
         let bag = Bag::from_stored(&rec.items, rec.gold);
+        let belt = load_belt(&rec.belt, &bag);
         let next_item_id = rec.next_item_id.max(bag.max_id());
         let obj = Object {
             id,
@@ -587,6 +618,8 @@ impl World {
                 slaying_charged: false,
                 thrusting_on: false,
                 half_moon_on: false,
+                belt,
+                use_item_time: 0,
             }),
             map,
             location,
@@ -606,6 +639,8 @@ impl World {
                 armour: 0,
                 weapon: None,
                 hair: rec.hair.max(1),
+                helmet: 0,
+                shield: None,
             },
             visible: HashSet::new(),
             poisons: Vec::new(),
@@ -641,6 +676,49 @@ impl World {
                 }
             }
         }
+        // Developer aid: ZIRCON_DEV_ITEMS="Bronze Helmet;Healing Potion*5" gives
+        // the named items on entry (once per name already in the bag).
+        if let Ok(list) = std::env::var("ZIRCON_DEV_ITEMS") {
+            for entry in list.split(';').map(str::trim).filter(|s| !s.is_empty()) {
+                let (name, count) = match entry.split_once('*') {
+                    Some((n, c)) => (n.trim(), c.trim().parse().unwrap_or(1)),
+                    None => (entry, 1),
+                };
+                let Some(info) = self
+                    .data
+                    .items
+                    .values()
+                    .find(|d| d.name.eq_ignore_ascii_case(name))
+                    .map(|d| d.index)
+                else {
+                    tracing::warn!("ZIRCON_DEV_ITEMS: no item named {name:?}");
+                    continue;
+                };
+                let has = self.objects[&id]
+                    .player()
+                    .map(|p| p.bag.count_of(info) > 0)
+                    .unwrap_or(true);
+                if has {
+                    continue;
+                }
+                if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                    let mut next = p.next_item_id;
+                    p.bag.gain(&self.data, info, count, &mut next);
+                    p.next_item_id = next;
+                }
+                // Wearables go straight on.
+                let wearable = !item_type::slots(self.data.items[&info].item_type).is_empty();
+                let slot = self.objects[&id].player().and_then(|p| {
+                    p.bag
+                        .inventory
+                        .iter()
+                        .position(|s| s.as_ref().map(|i| i.info == info).unwrap_or(false))
+                });
+                if let (true, Some(slot)) = (wearable, slot) {
+                    self.item_use(id, slot as u8);
+                }
+            }
+        }
         self.refresh_stats(id, false);
         self.refresh_appearance(id);
         let o = &self.objects[&id];
@@ -657,8 +735,36 @@ impl World {
             },
         ));
         self.send_inventory(id);
+        self.send_belt(id);
         self.send_magics(id);
         Ok(id)
+    }
+
+    fn send_belt(&mut self, id: ObjectId) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        let belt = p.belt.clone();
+        self.send_to(id, ServerMessage::BeltLinks(belt));
+    }
+
+    /// Zircon `BeltLinkChanged`: link a belt slot to an item type or a
+    /// specific inventory item, or clear it.
+    pub fn belt_link(&mut self, id: ObjectId, slot: u8, info: Option<i32>, item: Option<u32>) {
+        if slot as usize >= MAX_BELT || (info.is_some() && item.is_some()) {
+            return;
+        }
+        let info = info.filter(|i| self.data.items.contains_key(i));
+        let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+            return;
+        };
+        let item = item.filter(|i| {
+            p.bag
+                .inventory
+                .iter()
+                .any(|s| s.as_ref().map(|it| it.id == *i).unwrap_or(false))
+        });
+        p.belt[slot as usize] = BeltLink { slot, info, item };
     }
 
     /// Copy the live state of a player back into its character record.
@@ -678,6 +784,7 @@ impl World {
         rec.gold = p.bag.gold;
         rec.next_item_id = p.next_item_id;
         rec.magics = p.magics.iter().map(|m| m.stored()).collect();
+        rec.belt = p.belt.clone();
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;
@@ -742,6 +849,29 @@ impl World {
     #[cfg(test)]
     pub fn teleport(&mut self, id: ObjectId, to: Point) {
         self.move_object(id, to);
+    }
+
+    #[cfg(test)]
+    pub fn test_hp(&self, id: ObjectId) -> (i32, i32, bool) {
+        let o = &self.objects[&id];
+        (o.hp, o.max_hp, o.dead)
+    }
+
+    #[cfg(test)]
+    pub fn test_set_hp(&mut self, id: ObjectId, hp: i32) {
+        if let Some(o) = self.objects.get_mut(&id) {
+            o.hp = hp;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_kill(&mut self, id: ObjectId) {
+        self.player_die(id);
+    }
+
+    #[cfg(test)]
+    pub fn test_belt(&self, id: ObjectId) -> Vec<BeltLink> {
+        self.objects[&id].player().unwrap().belt.clone()
     }
 
     #[cfg(test)]
@@ -1426,22 +1556,31 @@ impl World {
         self.send_to(
             id,
             ServerMessage::Chat {
-                text: "You have died. Reviving shortly...".into(),
+                text: "You have died. Use the Revive button to return to town.".into(),
             },
         );
     }
 
+    /// Zircon `C.TownRevive`: return to the bind point immediately.
+    pub fn town_revive(&mut self, id: ObjectId) {
+        let dead = self.objects.get(&id).map(|o| o.dead).unwrap_or(false);
+        if !dead {
+            return;
+        }
+        if let Err(e) = self.revive_player(id) {
+            tracing::warn!("revive failed: {e}");
+        }
+    }
+
     fn revive_player(&mut self, id: ObjectId) -> anyhow::Result<()> {
-        let (map, bind_region) = {
-            let o = &self.objects[&id];
-            (o.map, o.player().unwrap().bind_region)
-        };
+        let bind_region = self.objects[&id].player().unwrap().bind_region;
         let location = if bind_region != 0 {
-            self.bind_point(map, bind_region)?
+            self.go_to_bind_point(id)?
         } else {
-            self.objects[&id].location
+            let location = self.objects[&id].location;
+            self.move_object(id, location);
+            location
         };
-        self.move_object(id, location);
         let (hp, dir) = {
             let o = self.objects.get_mut(&id).unwrap();
             o.dead = false;
@@ -1983,6 +2122,17 @@ impl World {
             .bag
             .equipped_shape(&self.data, slot::WEAPON)
             .map(|s| s.max(0) as u16);
+        // Zircon: `Helmet = Equipment[Helmet]?.Info.Shape ?? 0` (1-based),
+        // `Shield = Equipment[Shield]?.Info.Shape ?? -1`.
+        let helmet = p
+            .bag
+            .equipped_shape(&self.data, slot::HELMET)
+            .unwrap_or(0)
+            .max(0) as u16;
+        let shield = p
+            .bag
+            .equipped_shape(&self.data, slot::SHIELD)
+            .map(|s| s.max(0) as u16);
         let appearance = Appearance::Player {
             name: p.name.clone(),
             gender: p.gender,
@@ -1990,6 +2140,8 @@ impl World {
             armour,
             weapon,
             hair: p.hair,
+            helmet,
+            shield,
         };
         if o.appearance != appearance {
             let o = self.objects.get_mut(&id).unwrap();
@@ -2186,20 +2338,117 @@ impl World {
             return self.item_move_inner(id, Grid::Inventory, slot, Grid::Equipment, target as u8);
         }
         match def.item_type {
-            item_type::CONSUMABLE if def.shape == 0 => {
+            item_type::CONSUMABLE => {
                 can_use(&def, p.class, p.gender, p.level)?;
-                let heal_hp = def.stat(stat::HEALTH);
-                let heal_mp = def.stat(stat::MANA);
-                let o = self.objects.get_mut(&id).unwrap();
-                o.hp = (o.hp + heal_hp).min(o.max_hp);
-                let p = o.player_mut().unwrap();
-                p.mp = (p.mp + heal_mp).min(p.max_mp);
-                let change = p.bag.take(Grid::Inventory, slot, 1);
-                Ok(change.into_iter().collect())
+                if o.dead {
+                    return Err("You cannot use that while dead".into());
+                }
+                // Zircon: `if (SEnvir.Now < UseItemTime) return;` (silent).
+                if self.now < p.use_item_time {
+                    return Ok(Vec::new());
+                }
+                self.use_consumable(id, slot, &def)
             }
             item_type::BOOK => self.learn_book(id, slot, &def),
             _ => Err(format!("{} cannot be used", def.name)),
         }
+    }
+
+    /// Zircon `ItemUse` for `ItemType.Consumable`: potions heal instantly
+    /// (boosted by Potion Mastery), town/random teleport scrolls move the
+    /// player, and every use starts a `Durability` ms cooldown.
+    fn use_consumable(
+        &mut self,
+        id: ObjectId,
+        slot: u8,
+        def: &crate::data::ItemDef,
+    ) -> Result<Changed, String> {
+        match def.shape {
+            0 => {
+                let mut health = def.stat(stat::HEALTH);
+                let mut mana = def.stat(stat::MANA);
+                // Potion Mastery: `health += health * GetPower() / 100`, rolled
+                // separately per stat; levels while something was missing.
+                let mastery = self.objects[&id]
+                    .player()
+                    .and_then(|p| {
+                        p.magics
+                            .iter()
+                            .find(|m| m.magic == magic_type::POTION_MASTERY)
+                    })
+                    .and_then(|m| self.data.magics.get(&m.magic).map(|d| m.power_range(d)));
+                if let Some((pmin, pmax)) = mastery {
+                    let mut roll = || {
+                        if pmin >= pmax {
+                            pmin
+                        } else {
+                            self.rng.random_range(pmin..=pmax)
+                        }
+                    };
+                    let (hb, mb) = (roll(), roll());
+                    health += health * hb / 100;
+                    mana += mana * mb / 100;
+                    let missing = {
+                        let o = &self.objects[&id];
+                        let p = o.player().unwrap();
+                        o.hp < o.max_hp || p.mp < p.max_mp
+                    };
+                    if missing {
+                        self.level_magic(id, magic_type::POTION_MASTERY);
+                    }
+                }
+                let o = self.objects.get_mut(&id).unwrap();
+                o.hp = (o.hp + health).min(o.max_hp);
+                let p = o.player_mut().unwrap();
+                p.mp = (p.mp + mana).min(p.max_mp);
+                let exp = def.stat(stat::EXPERIENCE);
+                if exp > 0 {
+                    self.gain_experience(id, exp as u64);
+                }
+            }
+            2 => {
+                // Town teleport: a random cell of the bind point.
+                let bind_region = self.objects[&id].player().unwrap().bind_region;
+                if bind_region == 0 {
+                    return Err("You have no town to return to".into());
+                }
+                self.go_to_bind_point(id).map_err(|e| e.to_string())?;
+            }
+            3 => {
+                let map = self.objects[&id].map;
+                let to = self.random_walkable(map).ok_or("Nowhere to teleport to")?;
+                self.move_object(id, to);
+            }
+            _ => return Err(format!("{} cannot be used", def.name)),
+        }
+        let o = self.objects.get_mut(&id).unwrap();
+        let p = o.player_mut().unwrap();
+        p.use_item_time = self.now + def.durability.max(0) as u64;
+        let change = p.bag.take(Grid::Inventory, slot, 1);
+        Ok(change.into_iter().collect())
+    }
+
+    /// Move a player to a random cell of its bind point, changing map if
+    /// the bind region lies elsewhere.
+    fn go_to_bind_point(&mut self, id: ObjectId) -> anyhow::Result<Point> {
+        let (map, bind_region) = {
+            let o = &self.objects[&id];
+            (o.map, o.player().unwrap().bind_region)
+        };
+        let target_map = self
+            .data
+            .regions
+            .get(&bind_region)
+            .map(|r| r.map)
+            .ok_or_else(|| anyhow::anyhow!("unknown bind region {bind_region}"))?;
+        self.ensure_map(target_map)?;
+        let location = self.bind_point(target_map, bind_region)?;
+        if target_map == map {
+            self.move_object(id, location);
+        } else {
+            self.change_map(id, target_map, location);
+        }
+        Ok(location)
     }
 
     pub fn item_drop(&mut self, id: ObjectId, slot: u8, count: u32) {
@@ -2611,23 +2860,61 @@ impl World {
             5 => a >= b,
             _ => true,
         };
+        // Zircon `Config.RedPoint`.
+        const RED_POINT: i64 = 200;
+        let weapon = p.bag.equipment.get(slot::WEAPON).and_then(|w| w.as_ref());
+        let equal = c.operator == 0;
         match c.check_type {
             0 => cmp(c.operator, p.level as i64, c.int1 as i64),
             1 => cmp(c.operator, p.class.mir_class() as i64, c.int1 as i64),
+            // Gender has no server case in Zircon: always passes.
+            2 => true,
             3 => cmp(c.operator, p.bag.gold as i64, c.int1 as i64),
-            4 => cmp(c.operator, p.bag.count_of(c.item1) as i64, c.int1 as i64),
-            13 => {
-                let ok = p
-                    .bag
-                    .can_gain(&self.data, c.item1, c.int1.max(1) as u32, p.max_bag);
-                cmp(c.operator, ok as i64, 1)
+            4 => c.item1 == 0 || cmp(c.operator, p.bag.count_of(c.item1) as i64, c.int1 as i64),
+            // PK points: nobody is red in the prototype.
+            5 => {
+                let threshold = if c.int1 == 0 {
+                    RED_POINT
+                } else {
+                    c.int1 as i64
+                };
+                cmp(c.operator, 0, threshold)
             }
+            6 => weapon.is_some() == equal,
+            // Weapon level / element / added stats: no refining yet, so the
+            // weapon counts as level 0 with no element (Zircon would throw
+            // without a weapon; treat that as failing).
+            7 => weapon.is_some() && cmp(c.operator, 0, c.int1 as i64),
+            8 => weapon.is_some() && cmp(c.operator, 0, c.int2 as i64),
+            9 => weapon.is_some() && !equal,
+            16 => weapon.is_some() && cmp(c.operator, 0, c.int1 as i64),
+            // Horse: none owned.
+            10 => cmp(c.operator, 0, c.int1 as i64),
+            // Marriage and wedding ring: not married.
+            11 | 12 => !equal,
+            13 => {
+                c.item1 == 0
+                    || p.bag
+                        .can_gain(&self.data, c.item1, c.int1.max(1) as u32, p.max_bag)
+            }
+            // Weapon reset cooldown: never on cooldown.
+            14 => weapon.is_some() && equal,
             15 => {
                 let roll = self.rng.random_range(0..c.int1.max(1)) as i64;
                 cmp(c.operator, roll, c.int2 as i64)
             }
-            // Unimplemented checks (horses, marriage, refining...) pass so
-            // dialogs stay navigable.
+            // Currency by name: only gold exists.
+            17 => {
+                if c.string1.eq_ignore_ascii_case("gold") {
+                    cmp(c.operator, p.bag.gold as i64, c.int1 as i64)
+                } else {
+                    true
+                }
+            }
+            // Roll results, data lists and fame do not exist yet: fail like
+            // Zircon does when the data is missing.
+            18 | 19 | 21 => false,
+            20 => cmp(c.operator, 0, c.int2 as i64),
             _ => true,
         }
     }

@@ -9,13 +9,15 @@ use std::collections::HashMap;
 use mir_formats::zl::SurfaceKind;
 use mir_formats::MapFile;
 use mir_proto::{
-    Action, Appearance, CharacterSummary, Class, ClientMessage, Direction, Gender, ItemInstance,
-    ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights, EQUIPMENT_SIZE,
-    INVENTORY_SIZE,
+    Action, Appearance, BeltLink, CharacterSummary, Class, ClientMessage, Direction, Gender,
+    ItemInstance, ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights,
+    EQUIPMENT_SIZE, INVENTORY_SIZE, MAX_BELT,
 };
 
 use crate::anim::{ClientObject, Queued};
-use crate::assets::{armour_library, kr_library, lib, weapon_library, Assets};
+use crate::assets::{
+    armour_library, helmet_library, kr_library, lib, shield_library, weapon_library, Assets,
+};
 use crate::effects::{self, Anchor, Effect, Projectile};
 use crate::gfx::{Blend, Gpu, SpriteKey, SpriteRegion, SpriteRenderer, Surface};
 use crate::items::ItemCatalog;
@@ -81,6 +83,10 @@ pub struct Game {
     projectiles: Vec<Projectile>,
     /// Spell payloads waiting for the cast animation: (time, magic, caster cell, targets, cells).
     pending_payloads: Vec<PendingPayload>,
+    /// Belt links, one per slot (Zircon `BeltDialog.Links`).
+    belt: Vec<BeltLink>,
+    /// Zircon `GameScene.UseItemTime`: no consumable before this.
+    use_item_time: u64,
 }
 
 struct View {
@@ -173,6 +179,8 @@ impl Game {
             effects: Vec::new(),
             projectiles: Vec::new(),
             pending_payloads: Vec::new(),
+            belt: (0..MAX_BELT as u8).map(BeltLink::empty).collect(),
+            use_item_time: 0,
             character: None,
             status: String::new(),
             map: None,
@@ -254,6 +262,8 @@ impl Game {
                         armour: 0,
                         weapon: None,
                         hair,
+                        helmet: 0,
+                        shield: None,
                     },
                     location,
                     direction,
@@ -406,6 +416,13 @@ impl Game {
                 }
             }
             ServerMessage::Magics(list) => self.magics = list,
+            ServerMessage::BeltLinks(links) => {
+                for l in links {
+                    if let Some(slot) = self.belt.get_mut(l.slot as usize) {
+                        *slot = l;
+                    }
+                }
+            }
             ServerMessage::NewMagic(m) => {
                 self.magics.retain(|x| x.magic != m.magic);
                 self.magics.push(m);
@@ -542,6 +559,21 @@ impl Game {
                 if let Some(c) = grid.get_mut(slot as usize) {
                     *c = item;
                 }
+                // Zircon clears item links whose item left the bag.
+                for l in self.belt.iter_mut() {
+                    let Some(item_id) = l.item else {
+                        continue;
+                    };
+                    let present = self.inventory.iter().flatten().any(|it| it.id == item_id);
+                    if !present {
+                        l.item = None;
+                        self.pending_messages.push(ClientMessage::BeltLink {
+                            slot: l.slot,
+                            info: None,
+                            item: None,
+                        });
+                    }
+                }
             }
             ServerMessage::GoldChanged { gold } => self.gold = gold,
             ServerMessage::WeightsChanged(w) => self.weights = w,
@@ -668,6 +700,48 @@ impl Game {
                 }
             }
         }
+        // Developer automation: ZIRCON_AUTO_BELT=1 links every consumable type
+        // in the bag to the belt; ZIRCON_AUTO_USE=<slot> presses that belt key.
+        if std::env::var_os("ZIRCON_AUTO_BELT").is_some() && !self.inventory.is_empty() {
+            let mut free: Vec<u8> = self
+                .belt
+                .iter()
+                .filter(|l| l.info.is_none() && l.item.is_none())
+                .map(|l| l.slot)
+                .collect();
+            free.reverse();
+            let mut linked: Vec<i32> = self.belt.iter().filter_map(|l| l.info).collect();
+            for (i, it) in self.inventory.clone().iter().enumerate() {
+                let Some(it) = it else { continue };
+                let consumable = self
+                    .catalog
+                    .get(it.info)
+                    .map(|d| d.item_type == mir_proto::item_type::CONSUMABLE)
+                    .unwrap_or(false);
+                if !consumable || linked.contains(&it.info) {
+                    continue;
+                }
+                let Some(slot) = free.pop() else { break };
+                let link = crate::windows::link_for(&self.catalog, &self.inventory, i as u8, slot);
+                linked.push(it.info);
+                self.apply_belt_link(link);
+                if let Some(c) = conn {
+                    c.send(ClientMessage::BeltLink {
+                        slot: link.slot,
+                        info: link.info,
+                        item: link.item,
+                    });
+                }
+            }
+        }
+        if let Some(slot) = std::env::var("ZIRCON_AUTO_USE")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+        {
+            if now > 3000 && self.use_item_time == 0 {
+                self.belt_key(slot, now, conn);
+            }
+        }
         self.handle_input(now, width, height, conn);
         if let Some(u) = self.user() {
             self.status = format!("{} ({}, {})", self.map_name, u.location.x, u.location.y);
@@ -770,8 +844,12 @@ impl Game {
                 'w' | 'i' => self.windows.inventory_open = !self.windows.inventory_open,
                 'q' | 'c' => self.windows.character_open = !self.windows.character_open,
                 'e' | 's' => self.windows.skills_open = !self.windows.skills_open,
+                'z' => self.windows.belt_open = !self.windows.belt_open,
                 _ => {}
             }
+        }
+        if let Some(slot) = self.input.digit {
+            self.belt_key(slot, now, conn);
         }
         if self.input.tab {
             if let Some(c) = conn {
@@ -904,6 +982,62 @@ impl Game {
     }
 
     /// F1..F11: bind in the skill window, toggle a stance, or cast.
+    /// Digit key: link the carried/hovered bag item to the belt slot, else
+    /// use what the slot links to (Zircon `UseBelt01..10`).
+    fn belt_key(&mut self, slot: u8, now: u64, conn: Option<&Connection>) {
+        let source = match self.windows.carrying {
+            Some((mir_proto::Grid::Inventory, s)) => Some(s),
+            _ => self.windows.hover_inventory,
+        };
+        if let Some(s) = source {
+            if self.inventory.get(s as usize).map(|i| i.is_some()) == Some(true) {
+                let link = crate::windows::link_for(&self.catalog, &self.inventory, s, slot);
+                self.windows.carrying = None;
+                self.apply_belt_link(link);
+                if let Some(c) = conn {
+                    c.send(ClientMessage::BeltLink {
+                        slot: link.slot,
+                        info: link.info,
+                        item: link.item,
+                    });
+                }
+                return;
+            }
+        }
+        let Some(link) = self.belt.get(slot as usize).copied() else {
+            return;
+        };
+        if let Some(inv) = crate::windows::belt_inventory_slot(&self.inventory, &link) {
+            self.try_use_item(inv, now, conn);
+        }
+    }
+
+    fn apply_belt_link(&mut self, link: BeltLink) {
+        if let Some(l) = self.belt.get_mut(link.slot as usize) {
+            *l = link;
+        }
+    }
+
+    /// Zircon `DXItemCell.UseItem` for consumables: the client-side lock is
+    /// `max(250, Durability)` ms; the server enforces its own.
+    fn try_use_item(&mut self, slot: u8, now: u64, conn: Option<&Connection>) {
+        let Some(item) = self.inventory.get(slot as usize).cloned().flatten() else {
+            return;
+        };
+        let Some(def) = self.catalog.get(item.info) else {
+            return;
+        };
+        if def.item_type == mir_proto::item_type::CONSUMABLE {
+            if now < self.use_item_time {
+                return;
+            }
+            self.use_item_time = now + (def.durability.max(250)) as u64;
+        }
+        if let Some(c) = conn {
+            c.send(ClientMessage::ItemUse { slot });
+        }
+    }
+
     fn function_key(
         &mut self,
         f: u8,
@@ -1512,13 +1646,45 @@ impl Game {
             direction,
             Direction::Up | Direction::DownLeft | Direction::Left | Direction::UpLeft
         );
+        // Helmet replaces hair; shields sit behind the body when facing
+        // right (Zircon `DrawBody`).
+        let (helmet, shield) = match &o.appearance {
+            Appearance::Player {
+                helmet,
+                shield,
+                gender,
+                class,
+                ..
+            } => {
+                let female = *gender == Gender::Female;
+                let assassin = *class == Class::Assassin;
+                let stride = if assassin { 3000 } else { 5000 };
+                let h = if *helmet > 0 {
+                    helmet_library(*helmet, female, assassin)
+                        .map(|l| (l, o.draw_frame() + ((*helmet as u32 - 1) % 10) * stride))
+                } else {
+                    None
+                };
+                let s = shield.and_then(|sh| {
+                    shield_library(sh, female)
+                        .map(|l| (l, o.draw_frame() + (sh as u32 % 10) * stride))
+                });
+                (h, s)
+            }
+            _ => (None, None),
+        };
+        let has_helmet = matches!(&o.appearance, Appearance::Player { helmet, .. } if *helmet > 0);
+        let shield_behind = matches!(
+            direction,
+            Direction::UpRight | Direction::Right | Direction::DownRight
+        );
         let hair = match &o.appearance {
             Appearance::Player {
                 hair,
                 gender,
                 class,
                 ..
-            } if *hair > 0 => {
+            } if *hair > 0 && !has_helmet => {
                 let hair_lib = match (*class == Class::Assassin, *gender == Gender::Female) {
                     (false, false) => lib::M_HAIR,
                     (false, true) => lib::WM_HAIR,
@@ -1531,6 +1697,9 @@ impl Game {
         };
         if let (Some((wl, wi)), true) = (weapon, weapon_behind) {
             self.draw_layer(wl, wi, dx, dy, gpu, renderer);
+        }
+        if let (Some((sl, si)), true) = (shield, shield_behind) {
+            self.draw_layer(sl, si, dx, dy, gpu, renderer);
         }
         let Some(info) = self.assets.info(library, index) else {
             return;
@@ -1601,11 +1770,17 @@ impl Game {
                 Blend::Alpha,
             );
         }
+        if let Some((hl, hi)) = helmet {
+            self.draw_layer(hl, hi, dx, dy, gpu, renderer);
+        }
         if let Some((hair_lib, hair_index)) = hair {
             self.draw_layer(hair_lib, hair_index, dx, dy, gpu, renderer);
         }
         if let (Some((wl, wi)), false) = (weapon, weapon_behind) {
             self.draw_layer(wl, wi, dx, dy, gpu, renderer);
+        }
+        if let (Some((sl, si)), false) = (shield, shield_behind) {
+            self.draw_layer(sl, si, dx, dy, gpu, renderer);
         }
     }
 
@@ -1666,8 +1841,16 @@ impl Game {
                 magics,
                 toggles,
                 cooldowns,
+                belt,
+                use_item_time,
+                objects,
+                user,
                 ..
             } = self;
+            let dead = user
+                .and_then(|u| objects.get(&u))
+                .map(|o| o.dead)
+                .unwrap_or(false);
             let mut c = Ctx {
                 input,
                 assets,
@@ -1700,9 +1883,41 @@ impl Game {
                 magics,
                 toggles,
                 cooldowns,
+                belt,
+                use_item_time: *use_item_time,
+                dead,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
+        // Belt links and item uses decided inside the windows go through the
+        // same local bookkeeping as the keyboard paths.
+        let mut kept = Vec::with_capacity(out.len());
+        for m in out {
+            match m {
+                ClientMessage::BeltLink { slot, info, item } => {
+                    self.apply_belt_link(BeltLink { slot, info, item });
+                    kept.push(ClientMessage::BeltLink { slot, info, item });
+                }
+                ClientMessage::ItemUse { slot } => {
+                    let consumable = self
+                        .inventory
+                        .get(slot as usize)
+                        .cloned()
+                        .flatten()
+                        .and_then(|i| self.catalog.get(i.info).cloned())
+                        .filter(|d| d.item_type == mir_proto::item_type::CONSUMABLE);
+                    if let Some(def) = consumable {
+                        if now < self.use_item_time {
+                            continue;
+                        }
+                        self.use_item_time = now + def.durability.max(250) as u64;
+                    }
+                    kept.push(ClientMessage::ItemUse { slot });
+                }
+                other => kept.push(other),
+            }
+        }
+        let out = kept;
         self.windows_open_last_frame = self.windows.inventory_open
             || self.windows.character_open
             || self.windows.skills_open
@@ -1828,7 +2043,7 @@ impl Game {
         if self.debug {
             let (pages, sprites) = renderer.stats();
             let dbg = format!(
-                "{} | {:.0} fps | {} objects | {} sprites / {} pages | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, F1 hide",
+                "{} | {:.0} fps | {} objects | {} sprites / {} pages | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, Z belt, ` hide",
                 self.status,
                 fps,
                 self.objects.len(),

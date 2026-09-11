@@ -12,7 +12,7 @@ use argon2::password_hash::{
     rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
 };
 use argon2::Argon2;
-use mir_proto::{rules, CharacterSummary, Class, Direction, Gender, Point};
+use mir_proto::{rules, BeltLink, CharacterSummary, Class, Direction, Gender, Point};
 use serde::{Deserialize, Serialize};
 
 use crate::items::StoredItem;
@@ -45,6 +45,8 @@ pub struct CharacterRecord {
     pub next_item_id: u32,
     #[serde(default)]
     pub magics: Vec<StoredMagic>,
+    #[serde(default)]
+    pub belt: Vec<BeltLink>,
 }
 
 impl CharacterRecord {
@@ -272,6 +274,7 @@ impl Accounts {
             gold: 0,
             next_item_id: 0,
             magics: Vec::new(),
+            belt: Vec::new(),
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;

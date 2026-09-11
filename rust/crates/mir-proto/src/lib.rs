@@ -169,6 +169,10 @@ pub enum Appearance {
         /// Equipped weapon `ItemInfo.Shape`, if any.
         weapon: Option<u16>,
         hair: u8,
+        /// Equipped helmet `ItemInfo.Shape` (1-based; 0 = none, hair shows).
+        helmet: u16,
+        /// Equipped shield `ItemInfo.Shape`, if any.
+        shield: Option<u16>,
     },
     Monster {
         name: String,
@@ -275,6 +279,28 @@ pub struct MagicSummary {
     pub experience: u64,
     /// Hotkey 1..=12 (F1..F12), 0 = none.
     pub key: u8,
+}
+
+/// Zircon `Globals.MaxBeltCount`: belt slots 0..=9 (keys 1..9, 0).
+pub const MAX_BELT: usize = 10;
+
+/// One belt slot (Zircon `ClientBeltLink`): links a stackable/consumable by
+/// `ItemInfo` index, or a specific item by its id. Never both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeltLink {
+    pub slot: u8,
+    pub info: Option<i32>,
+    pub item: Option<u32>,
+}
+
+impl BeltLink {
+    pub fn empty(slot: u8) -> BeltLink {
+        BeltLink {
+            slot,
+            info: None,
+            item: None,
+        }
+    }
 }
 
 pub const MAGIC_RANGE: i32 = 10;
@@ -544,6 +570,12 @@ pub enum ClientMessage {
     ItemUse {
         slot: u8,
     },
+    /// Link (or clear, with both `None`) a belt slot.
+    BeltLink {
+        slot: u8,
+        info: Option<i32>,
+        item: Option<u32>,
+    },
     /// Drop an inventory item on the ground.
     ItemDrop {
         slot: u8,
@@ -551,6 +583,8 @@ pub enum ClientMessage {
     },
     /// Pick up whatever lies on or next to the player.
     PickUp,
+    /// Return to town while dead (Zircon `C.TownRevive`).
+    TownRevive,
     NpcCall {
         id: ObjectId,
     },
@@ -635,6 +669,8 @@ pub enum ServerMessage {
     },
     /// The player's full skill list (on entry).
     Magics(Vec<MagicSummary>),
+    /// Belt links on entry (after `Inventory`).
+    BeltLinks(Vec<BeltLink>),
     NewMagic(MagicSummary),
     MagicLeveled {
         magic: u16,

@@ -276,6 +276,22 @@ impl ApplicationHandler for App {
                             if f.is_some() {
                                 c.input.fkey = f;
                             }
+                            let digit = match code {
+                                KeyCode::Digit1 => Some(0),
+                                KeyCode::Digit2 => Some(1),
+                                KeyCode::Digit3 => Some(2),
+                                KeyCode::Digit4 => Some(3),
+                                KeyCode::Digit5 => Some(4),
+                                KeyCode::Digit6 => Some(5),
+                                KeyCode::Digit7 => Some(6),
+                                KeyCode::Digit8 => Some(7),
+                                KeyCode::Digit9 => Some(8),
+                                KeyCode::Digit0 => Some(9),
+                                _ => None,
+                            };
+                            if digit.is_some() {
+                                c.input.digit = digit;
+                            }
                         }
                         match &event.logical_key {
                             Key::Named(NamedKey::Backspace) => c.input.backspace = true,

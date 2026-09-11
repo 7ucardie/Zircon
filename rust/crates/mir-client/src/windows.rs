@@ -4,8 +4,8 @@
 //! chrome because this asset set lacks their dedicated panel images.
 
 use mir_proto::{
-    item_type, parse_dialog, ClientMessage, DialogPart, Good, Grid, ItemInstance, EQUIPMENT_SIZE,
-    INVENTORY_SIZE,
+    item_type, parse_dialog, BeltLink, ClientMessage, DialogPart, Good, Grid, ItemInstance,
+    EQUIPMENT_SIZE, INVENTORY_SIZE, MAX_BELT,
 };
 
 use crate::assets::lib;
@@ -26,6 +26,8 @@ pub struct NpcDialog {
     pub sell_types: Vec<u8>,
     pub selected_good: Option<usize>,
     pub last_button: u64,
+    /// First visible goods row (Zircon scrolls by pixels; we scroll by rows).
+    pub goods_scroll: usize,
 }
 
 impl NpcDialog {
@@ -46,15 +48,84 @@ impl NpcDialog {
             sell_types,
             selected_good: None,
             last_button: 0,
+            goods_scroll: 0,
         }
     }
 }
 
-#[derive(Default)]
+/// Zircon `ItemInfo.ShouldLinkInfo`: stackables, consumables and scrolls
+/// link by item type; everything else links the specific item.
+pub fn link_for(
+    catalog: &ItemCatalog,
+    inventory: &[Option<ItemInstance>],
+    inv_slot: u8,
+    belt_slot: u8,
+) -> BeltLink {
+    let Some(item) = inventory.get(inv_slot as usize).and_then(|i| i.as_ref()) else {
+        return BeltLink::empty(belt_slot);
+    };
+    let by_info = catalog
+        .get(item.info)
+        .map(|d| {
+            d.stack_size > 1
+                || d.item_type == item_type::CONSUMABLE
+                || d.item_type == item_type::SCROLL
+        })
+        .unwrap_or(false);
+    BeltLink {
+        slot: belt_slot,
+        info: if by_info { Some(item.info) } else { None },
+        item: if by_info { None } else { Some(item.id) },
+    }
+}
+
+/// The bag slot a belt link resolves to (first item of the type, or the
+/// specific item), as Zircon's belt `UseItem` does.
+pub fn belt_inventory_slot(inventory: &[Option<ItemInstance>], link: &BeltLink) -> Option<u8> {
+    if let Some(info) = link.info {
+        return inventory
+            .iter()
+            .position(|i| i.as_ref().map(|i| i.info == info).unwrap_or(false))
+            .map(|p| p as u8);
+    }
+    let id = link.item?;
+    inventory
+        .iter()
+        .position(|i| i.as_ref().map(|i| i.id == id).unwrap_or(false))
+        .map(|p| p as u8)
+}
+
+/// What a belt cell shows: an item link shows that item, an info link shows
+/// the type with the total count in the bag.
+fn belt_cell_item(inventory: &[Option<ItemInstance>], link: &BeltLink) -> Option<ItemInstance> {
+    if let Some(info) = link.info {
+        let count: u32 = inventory
+            .iter()
+            .flatten()
+            .filter(|i| i.info == info)
+            .map(|i| i.count)
+            .sum();
+        return Some(ItemInstance {
+            id: 0,
+            info,
+            count,
+            durability: 0,
+            max_durability: 0,
+        });
+    }
+    let id = link.item?;
+    inventory.iter().flatten().find(|i| i.id == id).cloned()
+}
+
 pub struct WindowState {
     pub inventory_open: bool,
     pub character_open: bool,
     pub skills_open: bool,
+    /// The belt is shown by default (Zircon `BeltDialog`, toggled with Z).
+    pub belt_open: bool,
+    /// Bag slot under the mouse this frame (for belt binding with digit keys).
+    pub hover_inventory: Option<u8>,
+    revive_button: Option<Button>,
     pub skill_scroll: f32,
     /// Magic whose icon is under the mouse in the skill window (for key binding).
     pub hover_magic: Option<u16>,
@@ -68,6 +139,28 @@ pub struct WindowState {
     magic_tip: Option<(u16, f32, f32)>,
 }
 
+impl Default for WindowState {
+    fn default() -> WindowState {
+        WindowState {
+            inventory_open: false,
+            character_open: false,
+            skills_open: false,
+            belt_open: true,
+            hover_inventory: None,
+            revive_button: None,
+            skill_scroll: 0.0,
+            hover_magic: None,
+            npc: None,
+            carrying: None,
+            tooltip: None,
+            buy_button: None,
+            close_all_hint: false,
+            auto_button_done: false,
+            magic_tip: None,
+        }
+    }
+}
+
 pub struct Bag<'a> {
     pub inventory: &'a [Option<ItemInstance>],
     pub equipment: &'a [Option<ItemInstance>],
@@ -78,6 +171,9 @@ pub struct Bag<'a> {
     pub magics: &'a [mir_proto::MagicSummary],
     pub toggles: &'a std::collections::HashSet<u16>,
     pub cooldowns: &'a std::collections::HashMap<u16, u64>,
+    pub belt: &'a [BeltLink],
+    pub use_item_time: u64,
+    pub dead: bool,
 }
 
 /// The few player facts windows need.
@@ -243,6 +339,7 @@ impl WindowState {
         let mouse = c.input.mouse;
         let mut over = false;
         self.tooltip = None;
+        self.hover_inventory = None;
         let _ = height;
 
         // ---- NPC dialog (top-left, Zircon chrome 380/381/382) ----
@@ -332,12 +429,36 @@ impl WindowState {
             if d.dialog_type == 1 && !d.goods.is_empty() {
                 let rows = d.goods.len().min(7);
                 let win = Rect::new(0.0, npc_height, 245.0, 37.0 + rows as f32 * 43.0 + 50.0);
+                let max_scroll = d.goods.len().saturating_sub(7);
                 if win.contains(mouse.0, mouse.1) {
                     over = true;
+                    if c.input.wheel != 0.0 && max_scroll > 0 {
+                        let next = d.goods_scroll as f32 - c.input.wheel;
+                        d.goods_scroll = next.round().clamp(0.0, max_scroll as f32) as usize;
+                    }
                 }
                 let closed = c.window(win, "Goods", true);
-                for (i, g) in d.goods.iter().take(7).enumerate() {
-                    let row = Rect::new(win.x + 10.0, win.y + 37.0 + i as f32 * 43.0, 219.0, 40.0);
+                if max_scroll > 0 {
+                    // Scrollbar on the right of the list (Zircon `DXVScrollBar`).
+                    let track =
+                        Rect::new(win.x + 231.0, win.y + 37.0, 8.0, rows as f32 * 43.0 - 3.0);
+                    c.fill(track, [0.0, 0.0, 0.0, 0.5]);
+                    let thumb_h = (track.h * rows as f32 / d.goods.len() as f32).max(12.0);
+                    let thumb_y =
+                        track.y + (track.h - thumb_h) * d.goods_scroll as f32 / max_scroll as f32;
+                    c.fill(
+                        Rect::new(track.x, thumb_y, track.w, thumb_h),
+                        [198.0 / 255.0, 166.0 / 255.0, 99.0 / 255.0, 1.0],
+                    );
+                }
+                let first = d.goods_scroll.min(max_scroll);
+                for (i, g) in d.goods.iter().enumerate().skip(first).take(7) {
+                    let row = Rect::new(
+                        win.x + 10.0,
+                        win.y + 37.0 + (i - first) as f32 * 43.0,
+                        219.0,
+                        40.0,
+                    );
                     let hover = row.contains(mouse.0, mouse.1);
                     let selected = d.selected_good == Some(i);
                     c.fill(
@@ -450,6 +571,7 @@ impl WindowState {
                 if hover {
                     if let Some(it) = item {
                         self.tooltip = Some((it.info, mouse.0, mouse.1));
+                        self.hover_inventory = Some(i as u8);
                     }
                     if c.input.lmb_pressed {
                         self.click_slot(Grid::Inventory, i as u8, item.is_some(), out);
@@ -859,6 +981,89 @@ impl WindowState {
                     r.y + 24.0,
                     [255, 255, 255, 200],
                 );
+            }
+        }
+
+        // ---- Belt (bottom-right, above the HUD): 10 cells keyed 1..9, 0 ----
+        if self.belt_open {
+            let cells = MAX_BELT as f32;
+            let inner = Rect::new(
+                width as f32 - 10.0 - (cells * (CELL - 1.0) + 1.0),
+                height as f32 - 96.0 - 44.0,
+                cells * (CELL - 1.0) + 1.0,
+                CELL,
+            );
+            let win = Rect::new(inner.x - 6.0, inner.y - 6.0, inner.w + 12.0, inner.h + 12.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.panel(win, [20, 20, 20, 200]);
+            for (i, link) in bag.belt.iter().enumerate().take(MAX_BELT) {
+                let r = Rect::new(inner.x + i as f32 * (CELL - 1.0), inner.y, CELL, CELL);
+                let hover = r.contains(mouse.0, mouse.1);
+                let item = belt_cell_item(bag.inventory, link);
+                draw_item_cell(c, bag.catalog, r, item.as_ref(), hover, false);
+                if item.is_some() && bag.use_item_time > c.now {
+                    c.fill(r, [120.0 / 255.0, 120.0 / 255.0, 120.0 / 255.0, 0.6]);
+                    let secs = (bag.use_item_time - c.now).div_ceil(1000);
+                    c.text
+                        .draw_centered(&secs.to_string(), 13, r.x + 18.0, r.y + 10.0, GOLD);
+                }
+                c.text.draw(
+                    &((i + 1) % 10).to_string(),
+                    9,
+                    r.x + 2.0,
+                    r.y + 1.0,
+                    [255, 255, 255, 220],
+                );
+                if !hover {
+                    continue;
+                }
+                if let Some(it) = &item {
+                    self.tooltip = Some((it.info, mouse.0, mouse.1));
+                }
+                if c.input.lmb_pressed {
+                    match self.carrying.take() {
+                        Some((Grid::Inventory, s)) => {
+                            let l = link_for(bag.catalog, bag.inventory, s, i as u8);
+                            out.push(ClientMessage::BeltLink {
+                                slot: l.slot,
+                                info: l.info,
+                                item: l.item,
+                            });
+                        }
+                        Some(other) => self.carrying = Some(other),
+                        None if item.is_some() => out.push(ClientMessage::BeltLink {
+                            slot: i as u8,
+                            info: None,
+                            item: None,
+                        }),
+                        None => {}
+                    }
+                }
+                if c.input.rmb_pressed {
+                    if let Some(slot) = belt_inventory_slot(bag.inventory, link) {
+                        out.push(ClientMessage::ItemUse { slot });
+                    }
+                }
+            }
+        }
+
+        // ---- Death: revive button in the middle of the screen ----
+        if bag.dead {
+            let msg = "You have died.";
+            let w = c.text.width(msg, 16);
+            let cx = width as f32 / 2.0;
+            let cy = height as f32 / 2.0;
+            c.text
+                .draw(msg, 16, cx - w / 2.0, cy - 60.0, [255, 80, 80, 255]);
+            let b = self
+                .revive_button
+                .get_or_insert_with(|| Button::default_style(0.0, 0.0, 110.0, "Revive"));
+            b.pos = (cx - 55.0, cy - 30.0);
+            b.enabled = true;
+            if b.update(c) {
+                out.push(ClientMessage::TownRevive);
             }
         }
 

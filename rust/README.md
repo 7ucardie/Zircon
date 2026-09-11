@@ -45,7 +45,15 @@ ground item to walk to it and pick it up, `Tab` picks up what is under you,
 `W` opens the bag, `Q` the character window, `Esc` closes windows and then
 returns to the character list. In the bag, right-click uses or equips an item
 (or sells it while a shop is open); in the character window right-click
-unequips. `F1` toggles the debug line, `F12` saves a screenshot.
+unequips. Helmets and shields show on the character. The belt above the HUD
+(toggle with `Z`) has ten slots on keys `1`-`9` and `0`: pick up a bag item
+and click a slot (or hover the item and press the key) to link it, press the
+key or right-click the slot to use it, left-click a linked slot to clear it.
+Potions heal at once and every consumable starts the item cooldown shown on
+the belt (Zircon's `Durability` in ms, 250 ms floor). Shop lists scroll with
+the wheel. When you die a Revive button returns you to town at once; the
+server forces it after ten minutes. The backquote key toggles the debug line,
+`F12` saves a screenshot.
 
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
@@ -70,9 +78,12 @@ warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
 `ZIRCON_AUTOCLASS=wizard|taoist|assassin` picks the auto-created class;
 `ZIRCON_OPEN_SKILLS=1` opens the skill window; `ZIRCON_AUTO_CAST=<F key>`
-casts that key's spell at the nearest monster. Server side, `ZIRCON_DEV_LEVEL=n`
-starts new characters at level n and `ZIRCON_DEV_SKILLS=1` grants every class
-skill the level allows.
+casts that key's spell at the nearest monster; `ZIRCON_AUTO_BELT=1` links every
+consumable type in the bag to the belt and `ZIRCON_AUTO_USE=<slot>` presses
+that belt key once. Server side, `ZIRCON_DEV_LEVEL=n` starts new characters at
+level n, `ZIRCON_DEV_SKILLS=1` grants every class skill the level allows, and
+`ZIRCON_DEV_ITEMS="Bronze Helmet;Healing Potion*5"` hands out (and wears)
+the named items on entry.
 
 `cargo run -p mir-server -- --inspect` prints the start map, player stats and
 spawn table without opening a port. `--map <file>` forces a start map.

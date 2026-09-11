@@ -45,6 +45,8 @@ pub struct Input {
     pub delete: bool,
     /// F1..F12 pressed this frame (1..=12).
     pub fkey: Option<u8>,
+    /// Belt key pressed this frame: 1..9 -> slot 0..8, 0 -> slot 9.
+    pub digit: Option<u8>,
     pub wheel: f32,
 }
 
@@ -61,6 +63,7 @@ impl Input {
         self.escape = false;
         self.delete = false;
         self.fkey = None;
+        self.digit = None;
         self.wheel = 0.0;
     }
 }

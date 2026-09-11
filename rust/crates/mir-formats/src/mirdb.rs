@@ -365,6 +365,8 @@ pub mod stat {
     pub const ACCURACY: i32 = 14;
     pub const AGILITY: i32 = 15;
     pub const ATTACK_SPEED: i32 = 16;
+    /// Experience granted by a consumable.
+    pub const EXPERIENCE: i32 = 116;
 }
 
 /// `RegionType` values.

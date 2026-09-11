@@ -444,6 +444,10 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::ItemUse { slot }) => {
             world.item_use(object, slot)
         }
+        (Stage::InGame { object, .. }, ClientMessage::BeltLink { slot, info, item }) => {
+            world.belt_link(object, slot, info, item)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::TownRevive) => world.town_revive(object),
         (Stage::InGame { object, .. }, ClientMessage::ItemDrop { slot, count }) => {
             world.item_drop(object, slot, count)
         }
@@ -487,6 +491,7 @@ fn test_character(name: &str) -> CharacterRecord {
         gold: 0,
         next_item_id: 0,
         magics: Vec::new(),
+        belt: Vec::new(),
     }
 }
 
@@ -634,6 +639,86 @@ mod tests {
         let exp = world.objects[&me].player().unwrap().experience;
         let level = world.objects[&me].player().unwrap().level;
         assert!(exp > 0 || level > 1, "experience should be granted");
+    }
+
+    #[test]
+    fn potions_heal_instantly_with_a_durability_cooldown() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let me = world.add_player(1, 1, &test_character("Tester")).unwrap();
+        world.tick(1000);
+        drain(&mut world);
+        // Healing Potion: Shape 0, Durability 2000 ms cooldown.
+        let potion = world
+            .data
+            .items
+            .values()
+            .find(|d| d.name == "Healing Potion")
+            .map(|d| d.index)
+            .expect("Healing Potion");
+        world.test_give_item(me, potion, 3);
+        let slot = world.test_slot_of(me, potion).unwrap();
+        let (_, max_hp, _) = world.test_hp(me);
+        world.test_set_hp(me, 1);
+        world.item_use(me, slot);
+        let (hp, _, _) = world.test_hp(me);
+        assert!(
+            hp > 1 && hp <= max_hp,
+            "potion should heal at once: {hp}/{max_hp}"
+        );
+        let count = |w: &World| {
+            w.test_bag(me)
+                .1
+                .iter()
+                .find(|(i, _)| *i == potion)
+                .map(|(_, c)| *c)
+                .unwrap_or(0)
+        };
+        assert_eq!(count(&world), 2);
+        // Still on cooldown: nothing consumed.
+        world.tick(2000);
+        world.item_use(me, slot);
+        assert_eq!(
+            count(&world),
+            2,
+            "second use inside the cooldown must be ignored"
+        );
+        world.tick(3100);
+        world.item_use(me, slot);
+        assert_eq!(count(&world), 1, "use after the cooldown consumes a potion");
+
+        // Belt: link the potion type to slot 0, persist it, and reject a link
+        // to an item that is not in the bag.
+        world.belt_link(me, 0, Some(potion), None);
+        world.belt_link(me, 1, None, Some(999_999));
+        let belt = world.test_belt(me);
+        assert_eq!(belt[0].info, Some(potion));
+        assert_eq!(belt[1].item, None);
+        let mut rec = test_character("Tester");
+        world.snapshot(me, &mut rec);
+        assert_eq!(rec.belt[0].info, Some(potion));
+    }
+
+    #[test]
+    fn dead_player_returns_to_town_on_request() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let me = world.add_player(1, 1, &test_character("Tester")).unwrap();
+        world.tick(1000);
+        drain(&mut world);
+        world.test_kill(me);
+        assert!(world.test_hp(me).2, "player should be dead");
+        // Well before the 10 minute forced revive.
+        world.tick(5000);
+        assert!(world.test_hp(me).2, "no automatic revive after 4 s");
+        world.town_revive(me);
+        let (hp, max_hp, dead) = world.test_hp(me);
+        assert!(!dead);
+        assert_eq!(hp, max_hp);
+        let (map, loc) = (world.objects[&me].map, world.objects[&me].location);
+        assert!(world.maps[&map].file.is_walkable(loc.x, loc.y));
     }
 
     #[test]

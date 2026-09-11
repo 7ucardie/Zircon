@@ -49,6 +49,51 @@ pub fn armour_library(shape: u16, female: bool, assassin: bool) -> Option<u16> {
     }
 }
 
+/// Zircon `PlayerObject.HelmetList`: `(shape - 1) / 10` -> helmet library.
+/// Helmet shapes are 1-based; 0 means no helmet (hair shows).
+pub fn helmet_library(shape: u16, female: bool, assassin: bool) -> Option<u16> {
+    if shape == 0 {
+        return None;
+    }
+    let key = (shape - 1) / 10;
+    match (assassin, female) {
+        (false, false) => match key {
+            0..=4 => Some(139 + key),
+            10..=13 => Some(144 + key - 10),
+            20 => Some(148),
+            _ => None,
+        },
+        (false, true) => match key {
+            0..=4 => Some(149 + key),
+            10..=13 => Some(154 + key - 10),
+            20 => Some(158),
+            _ => None,
+        },
+        (true, false) => match key {
+            0..=3 => Some(159 + key),
+            20 => Some(163),
+            _ => None,
+        },
+        (true, true) => match key {
+            0..=3 => Some(164 + key),
+            20 => Some(168),
+            _ => None,
+        },
+    }
+}
+
+/// Zircon `PlayerObject.ShieldList`: shape / 10 -> shield library. Assassins
+/// share the normal set.
+pub fn shield_library(shape: u16, female: bool) -> Option<u16> {
+    match (female, shape / 10) {
+        (false, 0) => Some(135),
+        (false, 1) => Some(136),
+        (true, 0) => Some(137),
+        (true, 1) => Some(138),
+        _ => None,
+    }
+}
+
 /// Zircon `PlayerObject.WeaponList`: weapon shape / 10 -> weapon library.
 pub fn weapon_library(shape: u16, female: bool) -> Option<u16> {
     let key = shape / 10;
