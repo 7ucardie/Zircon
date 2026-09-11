@@ -60,6 +60,7 @@ pub struct WindowState {
     pub tooltip: Option<(i32, f32, f32)>,
     buy_button: Option<Button>,
     close_all_hint: bool,
+    auto_button_done: bool,
 }
 
 pub struct Bag<'a> {
@@ -278,6 +279,16 @@ impl WindowState {
                 y += 18.0;
             }
             let mut close_now = (close_hover && c.input.lmb_released) || c.input.escape;
+            // Developer automation: press a dialog button once.
+            if clicked_button.is_none() && !self.auto_button_done {
+                if let Some(b) = std::env::var("ZIRCON_AUTO_NPC_BUTTON")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                {
+                    self.auto_button_done = true;
+                    clicked_button = Some(b);
+                }
+            }
             if let Some(id) = clicked_button {
                 d.last_button = c.now;
                 if id == 0 {
