@@ -9,6 +9,7 @@
 mod anim;
 mod assets;
 mod client;
+mod effects;
 mod game;
 mod gfx;
 mod items;
@@ -249,7 +250,7 @@ impl ApplicationHandler for App {
                             let name = format!("zircon-{}.png", chrono_stamp());
                             self.screenshot = Some(PathBuf::from(name));
                         }
-                        PhysicalKey::Code(KeyCode::F1) => {
+                        PhysicalKey::Code(KeyCode::Backquote) => {
                             if let Some(c) = self.client.as_mut() {
                                 c.debug = !c.debug;
                             }
@@ -257,6 +258,25 @@ impl ApplicationHandler for App {
                         _ => {}
                     }
                     if let Some(c) = self.client.as_mut() {
+                        if let PhysicalKey::Code(code) = event.physical_key {
+                            let f = match code {
+                                KeyCode::F1 => Some(1),
+                                KeyCode::F2 => Some(2),
+                                KeyCode::F3 => Some(3),
+                                KeyCode::F4 => Some(4),
+                                KeyCode::F5 => Some(5),
+                                KeyCode::F6 => Some(6),
+                                KeyCode::F7 => Some(7),
+                                KeyCode::F8 => Some(8),
+                                KeyCode::F9 => Some(9),
+                                KeyCode::F10 => Some(10),
+                                KeyCode::F11 => Some(11),
+                                _ => None,
+                            };
+                            if f.is_some() {
+                                c.input.fkey = f;
+                            }
+                        }
                         match &event.logical_key {
                             Key::Named(NamedKey::Backspace) => c.input.backspace = true,
                             Key::Named(NamedKey::Enter) => c.input.enter = true,
@@ -271,6 +291,14 @@ impl ApplicationHandler for App {
                             }
                         }
                     }
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                if let Some(c) = self.client.as_mut() {
+                    c.input.wheel += match delta {
+                        winit::event::MouseScrollDelta::LineDelta(_, y) => y,
+                        winit::event::MouseScrollDelta::PixelDelta(p) => p.y as f32 / 40.0,
+                    };
                 }
             }
             WindowEvent::RedrawRequested => self.frame(),
@@ -319,10 +347,12 @@ fn main() -> anyhow::Result<()> {
         screenshot: None,
         auto_screenshot: std::env::var("ZIRCON_SCREENSHOT").ok().map(|v| {
             let (path, secs) = match v.rsplit_once(':') {
-                Some((p, s)) if s.parse::<u64>().is_ok() => (p.to_string(), s.parse().unwrap()),
-                _ => (v.clone(), 3),
+                Some((p, s)) if s.parse::<f64>().is_ok() => {
+                    (p.to_string(), s.parse::<f64>().unwrap())
+                }
+                _ => (v.clone(), 3.0),
             };
-            (PathBuf::from(path), secs * 1000)
+            (PathBuf::from(path), (secs * 1000.0) as u64)
         }),
     };
     event_loop.run_app(&mut app)?;

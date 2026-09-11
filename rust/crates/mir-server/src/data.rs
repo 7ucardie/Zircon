@@ -117,6 +117,10 @@ pub struct BaseStatDef {
     pub max_mr: i32,
     pub min_dc: i32,
     pub max_dc: i32,
+    pub min_mc: i32,
+    pub max_mc: i32,
+    pub min_sc: i32,
+    pub max_sc: i32,
     pub bag_weight: i32,
     pub wear_weight: i32,
     pub hand_weight: i32,
@@ -215,6 +219,29 @@ pub struct NpcActionDef {
 }
 
 #[derive(Debug, Clone)]
+pub struct MagicDef {
+    pub index: i32,
+    pub name: String,
+    /// Zircon `MagicType` value.
+    pub magic: u16,
+    /// `MirClass` value.
+    pub class: u8,
+    pub school: i32,
+    pub icon: i32,
+    pub min_base_power: i32,
+    pub max_base_power: i32,
+    pub min_level_power: i32,
+    pub max_level_power: i32,
+    pub base_cost: i32,
+    pub level_cost: i32,
+    pub need_level: [i32; 3],
+    pub experience: [i32; 3],
+    /// Cooldown in milliseconds.
+    pub delay: i32,
+    pub description: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct MovementDef {
     pub index: i32,
     pub source_region: i32,
@@ -249,6 +276,15 @@ pub struct GameData {
     pub movements: Vec<MovementDef>,
     /// `ItemInfo.Index` of gold.
     pub gold_item: i32,
+    /// Keyed by `MagicType` value.
+    pub magics: HashMap<u16, MagicDef>,
+}
+
+impl GameData {
+    /// Books carry `MagicInfo.Index` in their `Shape`.
+    pub fn magic_by_index(&self, index: i32) -> Option<&MagicDef> {
+        self.magics.values().find(|m| m.index == index)
+    }
 }
 
 fn i32_of(c: &Collection, r: &Record, name: &str) -> i32 {
@@ -384,6 +420,10 @@ impl GameData {
                 max_mr: i32_of(c, r, "MaxMR"),
                 min_dc: i32_of(c, r, "MinDC"),
                 max_dc: i32_of(c, r, "MaxDC"),
+                min_mc: i32_of(c, r, "MinMC"),
+                max_mc: i32_of(c, r, "MaxMC"),
+                min_sc: i32_of(c, r, "MinSC"),
+                max_sc: i32_of(c, r, "MaxSC"),
                 bag_weight: i32_of(c, r, "BagWeight"),
                 wear_weight: i32_of(c, r, "WearWeight"),
                 hand_weight: i32_of(c, r, "HandWeight"),
@@ -562,6 +602,43 @@ impl GameData {
             None => Vec::new(),
         };
 
+        let magics: HashMap<u16, MagicDef> = match db.collection("MagicInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| {
+                    let m = MagicDef {
+                        index: c.index(r),
+                        name: c.str_or(r, "Name", "").to_string(),
+                        magic: i32_of(c, r, "Magic") as u16,
+                        class: i32_of(c, r, "Class") as u8,
+                        school: i32_of(c, r, "School"),
+                        icon: i32_of(c, r, "Icon"),
+                        min_base_power: i32_of(c, r, "MinBasePower"),
+                        max_base_power: i32_of(c, r, "MaxBasePower"),
+                        min_level_power: i32_of(c, r, "MinLevelPower"),
+                        max_level_power: i32_of(c, r, "MaxLevelPower"),
+                        base_cost: i32_of(c, r, "BaseCost"),
+                        level_cost: i32_of(c, r, "LevelCost"),
+                        need_level: [
+                            i32_of(c, r, "NeedLevel1"),
+                            i32_of(c, r, "NeedLevel2"),
+                            i32_of(c, r, "NeedLevel3"),
+                        ],
+                        experience: [
+                            i32_of(c, r, "Experience1"),
+                            i32_of(c, r, "Experience2"),
+                            i32_of(c, r, "Experience3"),
+                        ],
+                        delay: i32_of(c, r, "Delay"),
+                        description: c.str_or(r, "Description", "").to_string(),
+                    };
+                    (m.magic, m)
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+
         let gold_item = items
             .values()
             .find(|i: &&ItemDef| i.item_type == 34 && i.name.eq_ignore_ascii_case("Gold"))
@@ -581,6 +658,7 @@ impl GameData {
             npc_pages,
             movements,
             gold_item,
+            magics,
         })
     }
 

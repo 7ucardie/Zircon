@@ -16,6 +16,7 @@ use mir_proto::{
 
 use crate::anim::{ClientObject, Queued};
 use crate::assets::{armour_library, kr_library, lib, weapon_library, Assets};
+use crate::effects::{self, Anchor, Effect, Projectile};
 use crate::gfx::{Blend, Gpu, SpriteKey, SpriteRegion, SpriteRenderer, Surface};
 use crate::items::ItemCatalog;
 use crate::monster_table::monster_sprite;
@@ -23,6 +24,8 @@ use crate::net::Connection;
 use crate::text::TextLayer;
 use crate::ui::{Ctx, Input};
 use crate::windows::{Bag, NpcDialog, WindowState};
+use mir_proto::{magic_type, MagicSummary};
+use std::collections::{HashMap as StdHashMap, HashSet};
 
 pub const CELL_W: i32 = 48;
 pub const CELL_H: i32 = 32;
@@ -31,6 +34,9 @@ const MOVE_TIME: u64 = 600;
 const TURN_TIME: u64 = 300;
 const ATTACK_TIME: u64 = 600;
 const ATTACK_DELAY: u64 = 1500;
+
+/// A spell payload waiting for the cast animation: (time, magic, caster cell, targets, cells).
+type PendingPayload = (u64, u16, Point, Vec<ObjectId>, Vec<Point>);
 
 pub struct Game {
     pub assets: Assets,
@@ -64,6 +70,17 @@ pub struct Game {
     goal: Option<ObjectId>,
     windows_open_last_frame: bool,
     pending_messages: Vec<ClientMessage>,
+    magics: Vec<MagicSummary>,
+    /// Stance skills currently on (Thrusting, Half Moon).
+    toggles: HashSet<u16>,
+    /// Slaying's power attack is charged.
+    slaying_ready: bool,
+    cooldowns: StdHashMap<u16, u64>,
+    magic_time: u64,
+    effects: Vec<Effect>,
+    projectiles: Vec<Projectile>,
+    /// Spell payloads waiting for the cast animation: (time, magic, caster cell, targets, cells).
+    pending_payloads: Vec<PendingPayload>,
 }
 
 struct View {
@@ -142,11 +159,20 @@ impl Game {
                 let mut w = WindowState::default();
                 w.inventory_open = std::env::var_os("ZIRCON_OPEN_WINDOWS").is_some();
                 w.character_open = w.inventory_open;
+                w.skills_open = std::env::var_os("ZIRCON_OPEN_SKILLS").is_some();
                 w
             },
             goal: None,
             windows_open_last_frame: false,
             pending_messages: Vec::new(),
+            magics: Vec::new(),
+            toggles: HashSet::new(),
+            slaying_ready: false,
+            cooldowns: StdHashMap::new(),
+            magic_time: 0,
+            effects: Vec::new(),
+            projectiles: Vec::new(),
+            pending_payloads: Vec::new(),
             character: None,
             status: String::new(),
             map: None,
@@ -324,18 +350,103 @@ impl Game {
                 self.move_time = 0;
                 self.action_time = 0;
             }
-            ServerMessage::ObjectAttack { id, direction } => {
+            ServerMessage::ObjectAttack {
+                id,
+                direction,
+                attack_magic,
+            } => {
                 if let Some(o) = self.objects.get_mut(&id) {
                     let location = o.queue.back().map(|q| q.location).unwrap_or(o.location);
                     o.enqueue(Queued {
-                        action: Action::Attack,
+                        action: if attack_magic == Some(magic_type::HALF_MOON) {
+                            Action::Attack2
+                        } else {
+                            Action::Attack
+                        },
                         direction,
                         location,
                         distance: 0,
                     });
                 }
+                if let Some(m) = attack_magic {
+                    if let Some(e) = effects::attack_effect(m, id, direction.index(), now) {
+                        self.effects.push(e);
+                    }
+                }
             }
-            ServerMessage::ObjectStruck { id, damage, .. } => {
+            ServerMessage::ObjectMagic {
+                id,
+                direction,
+                location,
+                magic,
+                targets,
+                locations,
+                cast,
+            } => {
+                if Some(id) != self.user {
+                    if let Some(o) = self.objects.get_mut(&id) {
+                        o.enqueue(Queued {
+                            action: if magic_type::is_projectile_cast(magic) {
+                                Action::Cast1
+                            } else {
+                                Action::Cast2
+                            },
+                            direction,
+                            location,
+                            distance: 0,
+                        });
+                    }
+                }
+                if let Some(e) = effects::cast_effect(magic, id, direction.index(), now) {
+                    self.effects.push(e);
+                }
+                if cast {
+                    self.pending_payloads
+                        .push((now + 600, magic, location, targets, locations));
+                }
+            }
+            ServerMessage::Magics(list) => self.magics = list,
+            ServerMessage::NewMagic(m) => {
+                self.magics.retain(|x| x.magic != m.magic);
+                self.magics.push(m);
+            }
+            ServerMessage::MagicLeveled {
+                magic,
+                level,
+                experience,
+            } => {
+                if let Some(m) = self.magics.iter_mut().find(|m| m.magic == magic) {
+                    m.level = level;
+                    m.experience = experience;
+                }
+            }
+            ServerMessage::MagicCooldown { magic, delay_ms } => {
+                self.cooldowns.insert(magic, now + delay_ms as u64);
+            }
+            ServerMessage::MagicToggle { magic, on } => {
+                if magic == magic_type::SLAYING {
+                    self.slaying_ready = on;
+                } else if on {
+                    self.toggles.insert(magic);
+                } else {
+                    self.toggles.remove(&magic);
+                }
+            }
+            ServerMessage::ObjectPoisoned { id, poisoned } => {
+                if let Some(o) = self.objects.get_mut(&id) {
+                    o.poisoned = poisoned;
+                }
+            }
+            ServerMessage::ObjectStruck {
+                id,
+                damage,
+                element,
+                magic,
+                ..
+            } => {
+                if magic {
+                    self.effects.push(effects::struck_effect(element, id, now));
+                }
                 if let Some(o) = self.objects.get_mut(&id) {
                     o.health_time = now + 5000;
                     o.damage.push((damage, now));
@@ -497,6 +608,12 @@ impl Game {
         self.hovered = None;
         self.windows = WindowState::default();
         self.goal = None;
+        self.effects.clear();
+        self.projectiles.clear();
+        self.pending_payloads.clear();
+        self.magics.clear();
+        self.toggles.clear();
+        self.slaying_ready = false;
     }
 
     /// True if a window consumed Escape this frame.
@@ -528,7 +645,29 @@ impl Game {
         for o in self.objects.values_mut() {
             o.process(now);
         }
+        self.advance_effects(now, width, height);
         self.hovered = self.hit_test(width, height);
+        // Developer automation: ZIRCON_AUTO_CAST=<F key> casts at the nearest monster.
+        if let Some(f) = std::env::var("ZIRCON_AUTO_CAST")
+            .ok()
+            .and_then(|v| v.parse::<u8>().ok())
+        {
+            if now >= self.magic_time {
+                let nearest = self.user().and_then(|u| {
+                    self.objects
+                        .values()
+                        .filter(|o| {
+                            o.is_monster() && !o.dead && o.location.distance(u.location) <= 6
+                        })
+                        .min_by_key(|o| o.location.distance(u.location))
+                        .map(|o| o.id)
+                });
+                if let Some(t) = nearest {
+                    self.hovered = Some(t);
+                    self.function_key(f, now, width, height, conn);
+                }
+            }
+        }
         self.handle_input(now, width, height, conn);
         if let Some(u) = self.user() {
             self.status = format!("{} ({}, {})", self.map_name, u.location.x, u.location.y);
@@ -630,6 +769,7 @@ impl Game {
             match ch.to_ascii_lowercase() {
                 'w' | 'i' => self.windows.inventory_open = !self.windows.inventory_open,
                 'q' | 'c' => self.windows.character_open = !self.windows.character_open,
+                'e' | 's' => self.windows.skills_open = !self.windows.skills_open,
                 _ => {}
             }
         }
@@ -638,9 +778,13 @@ impl Game {
                 c.send(ClientMessage::PickUp);
             }
         }
+        if let Some(f) = self.input.fkey {
+            self.function_key(f, now, width, height, conn);
+        }
         if self.input.escape && self.windows_open_last_frame {
             self.windows.inventory_open = false;
             self.windows.character_open = false;
+            self.windows.skills_open = false;
             if self.windows.npc.take().is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::NpcClose);
@@ -704,17 +848,45 @@ impl Game {
                         let direction = Direction::from_points(user_loc, target.location);
                         self.action_time = now + ATTACK_TIME;
                         self.attack_time = now + ATTACK_DELAY;
+                        // Zircon priority: Slaying, then Thrusting, then Half Moon (last wins).
+                        let mut attack_magic = None;
+                        if self.slaying_ready {
+                            attack_magic = Some(magic_type::SLAYING);
+                        }
+                        if self.toggles.contains(&magic_type::THRUSTING) {
+                            attack_magic = Some(magic_type::THRUSTING);
+                        }
+                        if self.toggles.contains(&magic_type::HALF_MOON) {
+                            attack_magic = Some(magic_type::HALF_MOON);
+                        }
+                        let action = if attack_magic == Some(magic_type::HALF_MOON) {
+                            Action::Attack2
+                        } else {
+                            Action::Attack
+                        };
                         if let Some(u) = self.user_mut() {
                             u.queue.clear();
                             u.enqueue(Queued {
-                                action: Action::Attack,
+                                action,
                                 direction,
                                 location: user_loc,
                                 distance: 0,
                             });
                         }
+                        if let Some(m) = attack_magic {
+                            if let Some(uid) = self.user {
+                                if let Some(e) =
+                                    effects::attack_effect(m, uid, direction.index(), now)
+                                {
+                                    self.effects.push(e);
+                                }
+                            }
+                        }
                         if let Some(c) = conn {
-                            c.send(ClientMessage::Attack { direction });
+                            c.send(ClientMessage::Attack {
+                                direction,
+                                attack_magic,
+                            });
                         }
                     }
                     return;
@@ -729,6 +901,251 @@ impl Game {
         let run = self.rmb && user_loc.distance(target) >= 2;
         let _ = user_dir;
         self.step_toward(now, user_loc, target, run, conn);
+    }
+
+    /// F1..F11: bind in the skill window, toggle a stance, or cast.
+    fn function_key(
+        &mut self,
+        f: u8,
+        now: u64,
+        width: i32,
+        height: i32,
+        conn: Option<&Connection>,
+    ) {
+        // Binding: hovering a learned skill's icon in the skill window.
+        if let Some(magic) = self.windows.hover_magic {
+            if self.magics.iter().any(|m| m.magic == magic) {
+                if let Some(m) = self.magics.iter_mut().find(|m| m.key == f) {
+                    m.key = 0;
+                }
+                if let Some(m) = self.magics.iter_mut().find(|m| m.magic == magic) {
+                    m.key = f;
+                }
+                if let Some(c) = conn {
+                    c.send(ClientMessage::MagicKey { magic, key: f });
+                }
+            }
+            return;
+        }
+        let Some(m) = self.magics.iter().find(|m| m.key == f).cloned() else {
+            return;
+        };
+        let Some(def) = self.catalog.magic(m.magic).cloned() else {
+            return;
+        };
+        let magic = m.magic;
+        if magic_type::is_passive(magic) {
+            self.say(format!("{} works on its own.", def.name), now);
+            return;
+        }
+        if magic_type::is_toggle(magic) {
+            let on = !self.toggles.contains(&magic);
+            if let Some(c) = conn {
+                c.send(ClientMessage::MagicToggle { magic, on });
+            }
+            return;
+        }
+        if !magic_type::is_castable(magic) {
+            self.say(format!("{} is not implemented yet.", def.name), now);
+            return;
+        }
+        let Some(user) = self.user() else {
+            return;
+        };
+        if user.dead {
+            return;
+        }
+        let user_loc = user.location;
+        if (self.stats.level as i32) < def.need_level[0] {
+            self.say(
+                format!("{} needs level {}.", def.name, def.need_level[0]),
+                now,
+            );
+            return;
+        }
+        if now < self.magic_time || now < self.action_time {
+            return;
+        }
+        if self
+            .cooldowns
+            .get(&magic)
+            .map(|t| now < *t)
+            .unwrap_or(false)
+        {
+            self.say(format!("{} is cooling down.", def.name), now);
+            return;
+        }
+        if def.cost(m.level) > self.stats.mp {
+            self.say("Not enough mana.".into(), now);
+            return;
+        }
+        let view = View::new(width, height, Some(user));
+        let mouse_cell = view.cell_at(self.mouse.0, self.mouse.1);
+        let hovered = self.hovered.and_then(|id| self.objects.get(&id));
+        let target = match magic {
+            magic_type::HEAL => hovered
+                .filter(|o| o.is_player())
+                .map(|o| o.id)
+                .or(self.user),
+            magic_type::REPULSION => None,
+            _ => hovered.filter(|o| o.is_monster() && !o.dead).map(|o| o.id),
+        };
+        let target_loc = target
+            .and_then(|t| self.objects.get(&t))
+            .map(|o| o.location)
+            .unwrap_or(mouse_cell);
+        if target_loc.distance(user_loc) > mir_proto::MAGIC_RANGE {
+            self.say("Too far away.".into(), now);
+            return;
+        }
+        let direction = if target_loc == user_loc {
+            user.direction
+        } else {
+            Direction::from_points(user_loc, target_loc)
+        };
+        self.magic_time = now + mir_proto::MAGIC_DELAY;
+        self.action_time = now + 600;
+        let action = if magic_type::is_projectile_cast(magic) {
+            Action::Cast1
+        } else {
+            Action::Cast2
+        };
+        if let Some(u) = self.user_mut() {
+            u.queue.clear();
+            u.enqueue(Queued {
+                action,
+                direction,
+                location: user_loc,
+                distance: 0,
+            });
+        }
+        if let Some(c) = conn {
+            c.send(ClientMessage::Magic {
+                magic,
+                direction,
+                target,
+                location: target_loc,
+            });
+        }
+    }
+
+    /// Expire finished effects, fly projectiles, release scheduled payloads.
+    fn advance_effects(&mut self, now: u64, width: i32, height: i32) {
+        let view = View::new(width, height, self.user());
+        // Scheduled payloads (after the cast animation).
+        let due: Vec<_> = self
+            .pending_payloads
+            .iter()
+            .filter(|p| p.0 <= now)
+            .cloned()
+            .collect();
+        self.pending_payloads.retain(|p| p.0 > now);
+        for (_, magic, caster_cell, targets, locations) in due {
+            let payload = effects::payload(magic, caster_cell, &targets, &locations, now);
+            self.effects.extend(payload.effects);
+            for (from, to, mut p) in payload.projectiles {
+                let (fx, fy) = view.cell_px(from.x, from.y);
+                let (tx, ty) = match to {
+                    Anchor::Object(id) => match self.objects.get(&id) {
+                        Some(o) => view.object_px(o),
+                        None => continue,
+                    },
+                    Anchor::Cell(c) => view.cell_px(c.x, c.y),
+                };
+                let dist = (((tx - fx) as f32).powi(2) + ((ty - fy) as f32).powi(2)).sqrt();
+                p.duration = dist.max(1.0) as u64;
+                p.dir16 = effects::direction16((fx as f32, fy as f32), (tx as f32, ty as f32));
+                self.projectiles.push(p);
+            }
+        }
+        self.effects.retain(|e| e.frame(now).is_some());
+        let mut arrived = Vec::new();
+        self.projectiles.retain(|p| {
+            if p.progress(now) >= 1.0 {
+                arrived.push(p.clone());
+                false
+            } else {
+                true
+            }
+        });
+        for p in arrived {
+            if let Some((library, start, count, delay, color)) = p.explode {
+                self.effects.push(Effect {
+                    library,
+                    start,
+                    count,
+                    delay_ms: delay,
+                    color,
+                    anchor: p.to,
+                    direction: None,
+                    started: now,
+                });
+            }
+        }
+    }
+
+    fn anchor_px(&self, view: &View, a: Anchor) -> Option<(i32, i32)> {
+        match a {
+            Anchor::Object(id) => self.objects.get(&id).map(|o| view.object_px(o)),
+            Anchor::Cell(c) => Some(view.cell_px(c.x, c.y)),
+        }
+    }
+
+    fn draw_effects(&mut self, view: &View, gpu: &Gpu, renderer: &mut SpriteRenderer, now: u64) {
+        let effects = self.effects.clone();
+        for e in effects {
+            let Some(frame) = e.frame(now) else { continue };
+            let Some((dx, dy)) = self.anchor_px(view, e.anchor) else {
+                continue;
+            };
+            if let Some(info) = self.assets.info(e.library, frame) {
+                if let Some(r) = Self::sprite(
+                    &mut self.assets,
+                    renderer,
+                    gpu,
+                    e.library,
+                    frame,
+                    Surface::Image,
+                ) {
+                    renderer.draw(
+                        r,
+                        (dx + info.offset_x as i32) as f32,
+                        (dy + info.offset_y as i32) as f32,
+                        e.color,
+                        Blend::Screen,
+                    );
+                }
+            }
+        }
+        let projectiles = self.projectiles.clone();
+        for p in projectiles {
+            let (fx, fy) = view.cell_px(p.from.x, p.from.y);
+            let Some((tx, ty)) = self.anchor_px(view, p.to) else {
+                continue;
+            };
+            let t = p.progress(now);
+            let x = fx as f32 + (tx - fx) as f32 * t;
+            let y = fy as f32 + (ty - fy) as f32 * t;
+            let frame = p.frame(now);
+            if let Some(info) = self.assets.info(p.library, frame) {
+                if let Some(r) = Self::sprite(
+                    &mut self.assets,
+                    renderer,
+                    gpu,
+                    p.library,
+                    frame,
+                    Surface::Image,
+                ) {
+                    renderer.draw(
+                        r,
+                        x + info.offset_x as f32,
+                        y + info.offset_y as f32,
+                        p.color,
+                        Blend::Screen,
+                    );
+                }
+            }
+        }
     }
 
     /// One walk/run step toward `target`, turning if blocked.
@@ -955,6 +1372,7 @@ impl Game {
                     }
                 }
             }
+            self.draw_effects(&view, gpu, renderer, now);
 
             // Overlay: names, health bars, damage numbers.
             let ids: Vec<ObjectId> = self.objects.keys().copied().collect();
@@ -1168,7 +1586,9 @@ impl Game {
             index,
             Surface::Image,
         ) {
-            let tint = if self.hovered == Some(id) {
+            let tint = if self.objects.get(&id).map(|o| o.poisoned).unwrap_or(false) {
+                [0.4, 1.0, 0.4, 1.0]
+            } else if self.hovered == Some(id) {
                 [1.0, 1.0, 1.0, 1.0]
             } else {
                 white
@@ -1242,6 +1662,10 @@ impl Game {
                 stats,
                 catalog,
                 input,
+                character,
+                magics,
+                toggles,
+                cooldowns,
                 ..
             } = self;
             let mut c = Ctx {
@@ -1252,18 +1676,36 @@ impl Game {
                 text,
                 now,
             };
+            let view = crate::windows::PlayerView {
+                level: stats.level,
+                class: character.as_ref().map(|c| c.class.mir_class()).unwrap_or(0),
+                hp: stats.hp,
+                max_hp: stats.max_hp,
+                mp: stats.mp,
+                max_mp: stats.max_mp,
+                min_dc: stats.min_dc,
+                max_dc: stats.max_dc,
+                min_ac: stats.min_ac,
+                max_ac: stats.max_ac,
+                accuracy: stats.accuracy,
+                agility: stats.agility,
+            };
             let bag = Bag {
                 inventory,
                 equipment,
                 gold: *gold,
                 weights,
-                stats,
+                stats: &view,
                 catalog,
+                magics,
+                toggles,
+                cooldowns,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
         self.windows_open_last_frame = self.windows.inventory_open
             || self.windows.character_open
+            || self.windows.skills_open
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);
         if over {
@@ -1394,7 +1836,7 @@ impl Game {
                 pages
             );
             let _ = y;
-            text.draw(&dbg, 12, 12.0, height as f32 - 110.0, [200, 200, 200, 255]);
+            text.draw(&dbg, 12, 12.0, height as f32 - 152.0, [200, 200, 200, 255]);
             if let Some(h) = self.hovered.and_then(|id| self.objects.get(&id)) {
                 text.draw(
                     &format!("{} {}/{}", h.name(), h.hp, h.max_hp),

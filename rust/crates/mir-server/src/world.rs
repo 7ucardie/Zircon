@@ -11,14 +11,16 @@ use std::path::{Path, PathBuf};
 use mir_formats::mirdb::stat;
 use mir_formats::MapFile;
 use mir_proto::{
-    item_type, parse_dialog, slot, Appearance, Class, Direction, Gender, Good, Grid, MapDescriptor,
-    ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights,
+    element, item_type, magic_type, parse_dialog, slot, Appearance, Class, Direction, Gender, Good,
+    Grid, MapDescriptor, ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights,
+    CAST_TIME, MAGIC_DELAY, MAGIC_RANGE,
 };
 use rand::Rng;
 
 use crate::accounts::CharacterRecord;
 use crate::data::{DropDef, GameData, MonsterDef, RespawnDef};
 use crate::items::{can_use, default_slot, sell_price, Bag, Changed, UserItem};
+use crate::magic::{UserMagic, SKILL_EXP};
 
 pub const MOVE_TIME: u64 = 600;
 pub const TURN_TIME: u64 = 300;
@@ -55,6 +57,48 @@ pub struct CombatStats {
     pub max_ac: i32,
     pub min_dc: i32,
     pub max_dc: i32,
+    pub min_mr: i32,
+    pub max_mr: i32,
+    pub min_mc: i32,
+    pub max_mc: i32,
+    pub min_sc: i32,
+    pub max_sc: i32,
+}
+
+impl CombatStats {
+    pub const ZERO: CombatStats = CombatStats {
+        accuracy: 0,
+        agility: 0,
+        min_ac: 0,
+        max_ac: 0,
+        min_dc: 0,
+        max_dc: 0,
+        min_mr: 0,
+        max_mr: 0,
+        min_mc: 0,
+        max_mc: 0,
+        min_sc: 0,
+        max_sc: 0,
+    };
+}
+
+/// A poison instance (Zircon `Poison`).
+#[derive(Debug, Clone)]
+pub struct Poison {
+    /// Zircon `PoisonType` bit: 1 Green, 2 Red.
+    pub kind: u16,
+    pub value: i32,
+    pub ticks_left: i32,
+    pub next_tick: u64,
+    pub owner: Option<ObjectId>,
+}
+
+/// Zircon `BuffType.Heal`: heals `cap` per second until the pool is empty.
+#[derive(Debug, Clone)]
+pub struct HealBuff {
+    pub pool: i32,
+    pub cap: i32,
+    pub next_tick: u64,
 }
 
 #[derive(Debug)]
@@ -83,6 +127,12 @@ pub struct PlayerData {
     pub max_hand: i32,
     /// Open NPC dialog: (npc object, page index).
     pub npc: Option<(ObjectId, i32)>,
+    pub magics: Vec<UserMagic>,
+    pub magic_time: u64,
+    /// Slaying's charged power attack (Zircon `CanPowerAttack`).
+    pub slaying_charged: bool,
+    pub thrusting_on: bool,
+    pub half_moon_on: bool,
 }
 
 #[derive(Debug)]
@@ -143,6 +193,8 @@ pub struct Object {
     pub appearance: Appearance,
     /// Objects this one currently sees (players only).
     pub visible: HashSet<ObjectId>,
+    pub poisons: Vec<Poison>,
+    pub heal: Option<HealBuff>,
 }
 
 impl Object {
@@ -234,6 +286,21 @@ struct PendingHit {
     target_cell: (i32, Point),
     power: i32,
     target: Option<ObjectId>,
+    /// Attack skills riding on this swing (Zircon `magics` list).
+    magics: Vec<u16>,
+    primary: bool,
+}
+
+/// A spell whose effect lands after its travel/cast delay (Zircon `DelayMagic`).
+#[derive(Debug)]
+struct PendingMagic {
+    time: u64,
+    caster: ObjectId,
+    magic: u16,
+    target: Option<ObjectId>,
+    location: Point,
+    /// Repulsion: direction to push.
+    direction: Option<Direction>,
 }
 
 /// Outgoing message with routing info.
@@ -251,6 +318,7 @@ pub struct World {
     pub now: u64,
     rng: rand::rngs::ThreadRng,
     pending_hits: Vec<PendingHit>,
+    pending_magics: Vec<PendingMagic>,
     /// Events raised this tick: (subject object, message).
     events: Vec<(ObjectId, ServerMessage)>,
     pub outgoing: Vec<Outgoing>,
@@ -278,6 +346,7 @@ impl World {
             now: 0,
             rng: rand::rng(),
             pending_hits: Vec::new(),
+            pending_magics: Vec::new(),
             events: Vec::new(),
             outgoing: Vec::new(),
             last_spawn_check: 0,
@@ -465,7 +534,12 @@ impl World {
         }
         let (start_map, start_loc, bind_region) = self.start_location(class)?;
         let (map, location) = placed.unwrap_or((start_map, start_loc));
-        let level = rec.level.max(1);
+        // Developer aid: ZIRCON_DEV_LEVEL starts fresh characters at that level.
+        let dev_level = std::env::var("ZIRCON_DEV_LEVEL")
+            .ok()
+            .and_then(|v| v.parse::<i32>().ok())
+            .filter(|_| rec.last_login == 0);
+        let level = dev_level.unwrap_or(rec.level).max(1);
         let base = self
             .data
             .base_stat(class.mir_class(), level)
@@ -508,6 +582,11 @@ impl World {
                 max_wear: base.wear_weight,
                 max_hand: base.hand_weight,
                 npc: None,
+                magics: rec.magics.iter().map(UserMagic::from_stored).collect(),
+                magic_time: 0,
+                slaying_charged: false,
+                thrusting_on: false,
+                half_moon_on: false,
             }),
             map,
             location,
@@ -515,14 +594,7 @@ impl World {
             hp,
             max_hp: base.health,
             dead: false,
-            stats: CombatStats {
-                accuracy: base.accuracy,
-                agility: base.agility,
-                min_ac: base.min_ac,
-                max_ac: base.max_ac,
-                min_dc: base.min_dc,
-                max_dc: base.max_dc,
-            },
+            stats: CombatStats::ZERO,
             action_time: 0,
             move_time: 0,
             attack_time: 0,
@@ -536,11 +608,38 @@ impl World {
                 hair: rec.hair.max(1),
             },
             visible: HashSet::new(),
+            poisons: Vec::new(),
+            heal: None,
         };
         self.insert_object(obj);
         // Never had items yet (new character, or one from before items existed).
         if rec.next_item_id == 0 && rec.items.is_empty() {
             self.give_start_items(id);
+        }
+        // Developer aid: ZIRCON_DEV_SKILLS grants every class skill the level allows.
+        if std::env::var_os("ZIRCON_DEV_SKILLS").is_some() && rec.magics.is_empty() {
+            let (class, level) = (rec.class.mir_class(), level);
+            let mut grant: Vec<u16> = self
+                .data
+                .magics
+                .values()
+                .filter(|m| {
+                    m.class == class && m.school != 0 && m.school != 20 && m.need_level[0] <= level
+                })
+                .map(|m| m.magic)
+                .collect();
+            grant.sort();
+            if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                for (i, m) in grant.into_iter().enumerate() {
+                    p.magics.push(UserMagic {
+                        magic: m,
+                        level: 0,
+                        experience: 0,
+                        key: if i < 11 { i as u8 + 1 } else { 0 },
+                        cooldown_until: 0,
+                    });
+                }
+            }
         }
         self.refresh_stats(id, false);
         self.refresh_appearance(id);
@@ -558,6 +657,7 @@ impl World {
             },
         ));
         self.send_inventory(id);
+        self.send_magics(id);
         Ok(id)
     }
 
@@ -577,6 +677,7 @@ impl World {
         rec.items = p.bag.to_stored();
         rec.gold = p.bag.gold;
         rec.next_item_id = p.next_item_id;
+        rec.magics = p.magics.iter().map(|m| m.stored()).collect();
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;
@@ -672,6 +773,43 @@ impl World {
     }
 
     #[cfg(test)]
+    pub fn test_give_item(&mut self, id: ObjectId, info: i32, count: u32) {
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            let mut next = p.next_item_id;
+            p.bag.gain(&self.data, info, count, &mut next);
+            p.next_item_id = next;
+        }
+    }
+
+    #[cfg(test)]
+    pub fn test_slot_of(&self, id: ObjectId, info: i32) -> Option<u8> {
+        self.objects[&id]
+            .player()?
+            .bag
+            .inventory
+            .iter()
+            .position(|s| s.as_ref().map(|i| i.info == info).unwrap_or(false))
+            .map(|i| i as u8)
+    }
+
+    #[cfg(test)]
+    pub fn test_magics(&self, id: ObjectId) -> Vec<u16> {
+        self.objects[&id]
+            .player()
+            .map(|p| p.magics.iter().map(|m| m.magic).collect())
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub fn test_magic_exp(&self, id: ObjectId, magic: u16) -> u64 {
+        self.objects[&id]
+            .player()
+            .and_then(|p| p.magics.iter().find(|m| m.magic == magic))
+            .map(|m| m.experience + m.level as u64 * 1000)
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
     pub fn test_movement_cells(&self, map: i32) -> Vec<Point> {
         self.maps[&map]
             .movements
@@ -732,6 +870,12 @@ impl World {
                 max_ac: def.stat(stat::MAX_AC),
                 min_dc: def.stat(stat::MIN_DC),
                 max_dc: def.stat(stat::MAX_DC),
+                min_mr: def.stat(stat::MIN_MR),
+                max_mr: def.stat(stat::MAX_MR),
+                min_mc: 0,
+                max_mc: 0,
+                min_sc: 0,
+                max_sc: 0,
             },
             action_time: 0,
             move_time: 0,
@@ -742,6 +886,8 @@ impl World {
                 image: def.image,
             },
             visible: HashSet::new(),
+            poisons: Vec::new(),
+            heal: None,
         };
         self.insert_object(obj);
         self.maps.get_mut(&map).unwrap().spawns[group].alive += 1;
@@ -883,7 +1029,8 @@ impl World {
         ));
     }
 
-    pub fn player_attack(&mut self, id: ObjectId, direction: Direction) {
+    /// Zircon `PlayerObject.Attack`: melee swing with optional attack skill.
+    pub fn player_attack(&mut self, id: ObjectId, direction: Direction, attack_magic: Option<u16>) {
         let Some(o) = self.objects.get_mut(&id) else {
             return;
         };
@@ -903,17 +1050,120 @@ impl World {
         let aspeed = o.player().map(|p| p.attack_speed).unwrap_or(0);
         o.attack_time = self.now + attack_delay(aspeed);
         let stats = o.stats;
-        let target_cell = (o.map, o.location.step(direction, 1));
+        let (map, loc) = (o.map, o.location);
+
+        // Which attack skills ride on this swing (Zircon `AttackCast`), in
+        // MagicType order; the last one that "casts" is the valid attack magic.
+        let mut magics: Vec<u16> = Vec::new();
+        let mut valid: Option<u16> = None;
+        let mut toggles = Vec::new();
+        {
+            let level = o.player().map(|p| p.level).unwrap_or(1);
+            let mut owned: Vec<(u16, i32, i32)> = o
+                .player()
+                .map(|p| {
+                    p.magics
+                        .iter()
+                        .filter_map(|m| {
+                            let def = self.data.magics.get(&m.magic)?;
+                            Some((m.magic, def.need_level[0], m.cost(def)))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            owned.sort_by_key(|(m, _, _)| *m);
+            let roll: bool = self.rng.random_range(0..5) == 0;
+            let p = o.player_mut().unwrap();
+            for (m, need, cost) in owned {
+                if level < need {
+                    continue;
+                }
+                match m {
+                    magic_type::SWORDSMANSHIP | magic_type::SPIRIT_SWORD => magics.push(m),
+                    magic_type::SLAYING => {
+                        if p.slaying_charged && attack_magic == Some(m) {
+                            p.slaying_charged = false;
+                            toggles.push((m, false));
+                            valid = Some(m);
+                            magics.push(m);
+                        }
+                        if !p.slaying_charged && roll {
+                            p.slaying_charged = true;
+                            toggles.push((m, true));
+                        }
+                    }
+                    magic_type::THRUSTING | magic_type::HALF_MOON => {
+                        let on = if m == magic_type::THRUSTING {
+                            p.thrusting_on
+                        } else {
+                            p.half_moon_on
+                        };
+                        if attack_magic == Some(m) && on && cost <= p.mp {
+                            p.mp -= cost;
+                            valid = Some(m);
+                            magics.push(m);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        for (m, on) in toggles {
+            self.send_to(id, ServerMessage::MagicToggle { magic: m, on });
+        }
+        if attack_magic != valid {
+            // Zircon logs and resyncs; the swing does not happen.
+            self.send_to(
+                id,
+                ServerMessage::MoveDenied {
+                    location: loc,
+                    direction,
+                },
+            );
+            return;
+        }
         let power = self.roll_dc(stats);
-        self.events
-            .push((id, ServerMessage::ObjectAttack { id, direction }));
+        self.events.push((
+            id,
+            ServerMessage::ObjectAttack {
+                id,
+                direction,
+                attack_magic: valid,
+            },
+        ));
         self.pending_hits.push(PendingHit {
             time: self.now + 300,
             attacker: id,
-            target_cell,
+            target_cell: (map, loc.step(direction, 1)),
             power,
             target: None,
+            magics: magics.clone(),
+            primary: true,
         });
+        // Secondary cells (Zircon `SecondaryAttackLocation`).
+        let extra: Vec<Point> = match valid {
+            Some(magic_type::THRUSTING) => vec![loc.step(direction, 2)],
+            Some(magic_type::HALF_MOON) => vec![
+                loc.step(direction.rotate(-1), 1),
+                loc.step(direction.rotate(1), 1),
+                loc.step(direction.rotate(2), 1),
+            ],
+            _ => Vec::new(),
+        };
+        for cell in extra {
+            self.pending_hits.push(PendingHit {
+                time: self.now + 300,
+                attacker: id,
+                target_cell: (map, cell),
+                power,
+                target: None,
+                magics: magics.clone(),
+                primary: false,
+            });
+        }
+        if valid.is_some() {
+            self.send_player_stats(id);
+        }
     }
 
     fn roll_dc(&mut self, s: CombatStats) -> i32 {
@@ -994,20 +1244,63 @@ impl World {
                 if roll > attacker_stats.accuracy {
                     continue;
                 }
-                let mut power = hit.power - self.roll_ac(tstats);
+                let mut power = hit.power;
+                // Attack skill modifiers (Zircon `ModifyPowerAdditionner`).
+                for m in &hit.magics {
+                    let Some(def) = self.data.magics.get(m) else {
+                        continue;
+                    };
+                    let Some(um) = self.objects[&hit.attacker]
+                        .player()
+                        .and_then(|p| p.magics.iter().find(|x| x.magic == *m))
+                    else {
+                        continue;
+                    };
+                    let (pmin, pmax) = um.power_range(def);
+                    let mp = if pmin >= pmax {
+                        pmin
+                    } else {
+                        self.rng.random_range(pmin..=pmax)
+                    };
+                    match *m {
+                        magic_type::SLAYING => power += mp,
+                        magic_type::THRUSTING | magic_type::HALF_MOON if !hit.primary => {
+                            power = power * mp / 100;
+                        }
+                        _ => {}
+                    }
+                }
+                power -= self.roll_ac(tstats);
                 if power <= 0 {
                     continue;
                 }
                 if attacker_is_player && self.rng.random_range(0..100) < 1 {
                     power *= 2; // CriticalChance 1, CriticalDamage 0
                 }
-                self.damage(tid, hit.attacker, power);
+                let dealt = self.damage(tid, hit.attacker, power, element::NONE, false);
+                if dealt > 0 && attacker_is_player {
+                    for m in hit.magics.clone() {
+                        self.level_magic(hit.attacker, m);
+                    }
+                }
             }
         }
     }
 
-    fn damage(&mut self, target: ObjectId, attacker: ObjectId, power: i32) {
+    fn damage(
+        &mut self,
+        target: ObjectId,
+        attacker: ObjectId,
+        power: i32,
+        elem: u8,
+        magic: bool,
+    ) -> i32 {
         let now = self.now;
+        let power = if self.objects[&target].poisons.iter().any(|p| p.kind == 2) {
+            power * 12 / 10 // Red poison: +20 % damage taken
+        } else {
+            power
+        };
         let (died, is_player, map, struck) = {
             let t = self.objects.get_mut(&target).unwrap();
             t.hp -= power;
@@ -1034,6 +1327,8 @@ impl World {
                     id: target,
                     attacker,
                     damage: power,
+                    element: elem,
+                    magic,
                 },
             ));
         }
@@ -1056,6 +1351,7 @@ impl World {
                 self.monster_die(target, attacker);
             }
         }
+        power
     }
 
     fn monster_die(&mut self, id: ObjectId, _killer: ObjectId) {
@@ -1410,14 +1706,22 @@ impl World {
             (dir, stats, o.map, o.location)
         };
         let power = self.roll_dc(power);
-        self.events
-            .push((id, ServerMessage::ObjectAttack { id, direction: dir }));
+        self.events.push((
+            id,
+            ServerMessage::ObjectAttack {
+                id,
+                direction: dir,
+                attack_magic: None,
+            },
+        ));
         self.pending_hits.push(PendingHit {
             time: self.now + 400,
             attacker: id,
             target_cell: (map, loc.step(dir, 1)),
             power,
             target: Some(target),
+            magics: Vec::new(),
+            primary: true,
         });
     }
 
@@ -1449,7 +1753,15 @@ impl World {
             }
             if regen_due {
                 let o = self.objects.get_mut(id).unwrap();
-                o.player_mut().unwrap().regen_time = now + REGEN_DELAY;
+                let p = o.player_mut().unwrap();
+                p.regen_time = now + REGEN_DELAY;
+                let rate = if p.class == Class::Wizard { 0.03 } else { 0.02 };
+                if p.mp < p.max_mp {
+                    p.mp = (p.mp + (p.max_mp as f32 * rate).max(1.0) as i32).min(p.max_mp);
+                    let stats = self.player_stats(&self.objects[id]);
+                    self.send_to(*id, ServerMessage::StatsChanged(stats));
+                }
+                let o = self.objects.get_mut(id).unwrap();
                 if o.hp < o.max_hp {
                     o.hp = (o.hp + (o.max_hp as f32 * 0.02).max(1.0) as i32).min(o.max_hp);
                     let (hp, max_hp) = (o.hp, o.max_hp);
@@ -1498,6 +1810,9 @@ impl World {
         }
 
         self.resolve_hits();
+        self.resolve_magics();
+        self.process_poisons();
+        self.process_heals();
 
         if now >= self.last_spawn_check + 1000 {
             self.last_spawn_check = now;
@@ -1526,15 +1841,44 @@ impl World {
         };
         let eq = p.bag.equipment_stats(&self.data);
         let g = |k: i32| eq.get(&k).copied().unwrap_or(0);
+        // Passive skills (Zircon `GetPassiveStats`).
+        let mut pas_acc = 0;
+        let mut pas_agi = 0;
+        let mut pas_dc = 0;
+        for m in &p.magics {
+            let Some(def) = self.data.magics.get(&m.magic) else {
+                continue;
+            };
+            if p.level < def.need_level[0] {
+                continue;
+            }
+            match m.magic {
+                magic_type::SWORDSMANSHIP | magic_type::SPIRIT_SWORD => {
+                    pas_acc += m.power_range(def).0
+                }
+                magic_type::WILLOW_DANCE => pas_agi += m.power_range(def).0,
+                magic_type::SLAYING => {
+                    pas_acc += m.level as i32 * 2;
+                    pas_dc += m.level as i32 * 2;
+                }
+                _ => {}
+            }
+        }
         let o = self.objects.get_mut(&id).unwrap();
         o.max_hp = base.health + g(stat::HEALTH);
         o.stats = CombatStats {
-            accuracy: base.accuracy + g(stat::ACCURACY),
-            agility: base.agility + g(stat::AGILITY),
+            accuracy: base.accuracy + g(stat::ACCURACY) + pas_acc,
+            agility: base.agility + g(stat::AGILITY) + pas_agi,
             min_ac: base.min_ac + g(stat::MIN_AC),
             max_ac: base.max_ac + g(stat::MAX_AC),
-            min_dc: base.min_dc + g(stat::MIN_DC),
-            max_dc: base.max_dc + g(stat::MAX_DC),
+            min_dc: base.min_dc + g(stat::MIN_DC) + pas_dc,
+            max_dc: base.max_dc + g(stat::MAX_DC) + pas_dc,
+            min_mr: base.min_mr + g(stat::MIN_MR),
+            max_mr: base.max_mr + g(stat::MAX_MR),
+            min_mc: base.min_mc + g(stat::MIN_MC),
+            max_mc: base.max_mc + g(stat::MAX_MC),
+            min_sc: base.min_sc + g(stat::MIN_SC),
+            max_sc: base.max_sc + g(stat::MAX_SC),
         };
         if restore {
             o.hp = o.max_hp;
@@ -1853,7 +2197,7 @@ impl World {
                 let change = p.bag.take(Grid::Inventory, slot, 1);
                 Ok(change.into_iter().collect())
             }
-            item_type::BOOK => Err("Skills are not learnable yet".into()),
+            item_type::BOOK => self.learn_book(id, slot, &def),
             _ => Err(format!("{} cannot be used", def.name)),
         }
     }
@@ -2028,20 +2372,15 @@ impl World {
             hp: 0,
             max_hp: 0,
             dead: false,
-            stats: CombatStats {
-                accuracy: 0,
-                agility: 0,
-                min_ac: 0,
-                max_ac: 0,
-                min_dc: 0,
-                max_dc: 0,
-            },
+            stats: CombatStats::ZERO,
             action_time: 0,
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
             appearance,
             visible: HashSet::new(),
+            poisons: Vec::new(),
+            heal: None,
         };
         self.insert_object(obj);
     }
@@ -2128,14 +2467,7 @@ impl World {
                 hp: 1,
                 max_hp: 1,
                 dead: false,
-                stats: CombatStats {
-                    accuracy: 0,
-                    agility: 0,
-                    min_ac: 0,
-                    max_ac: 0,
-                    min_dc: 0,
-                    max_dc: 0,
-                },
+                stats: CombatStats::ZERO,
                 action_time: 0,
                 move_time: 0,
                 attack_time: 0,
@@ -2145,6 +2477,8 @@ impl World {
                     image: image.max(0) as u16,
                 },
                 visible: HashSet::new(),
+                poisons: Vec::new(),
+                heal: None,
             };
             self.insert_object(obj);
         }
@@ -2574,6 +2908,716 @@ impl World {
         // Landing on another movement cell chains (Zircon recurses).
         if old_map != map || old_loc != to {
             let _ = self.try_travel(id);
+        }
+    }
+
+    // ---- magic ----------------------------------------------------------------------
+
+    fn send_magics(&mut self, id: ObjectId) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        let list = p.magics.iter().map(|m| m.summary()).collect();
+        self.send_to(id, ServerMessage::Magics(list));
+    }
+
+    /// Zircon book use: learn the magic the book's `Shape` points at.
+    fn learn_book(
+        &mut self,
+        id: ObjectId,
+        slot: u8,
+        def: &crate::data::ItemDef,
+    ) -> Result<Changed, String> {
+        let magic = self
+            .data
+            .magic_by_index(def.shape)
+            .cloned()
+            .ok_or("This book teaches nothing")?;
+        if magic.school == 0 {
+            return Err("This skill is disabled".into());
+        }
+        let o = self.objects.get_mut(&id).ok_or("no player")?;
+        let p = o.player_mut().ok_or("no player")?;
+        if p.class.mir_class() != magic.class {
+            return Err("Your class cannot learn this".into());
+        }
+        if let Some(known) = p.magics.iter().find(|m| m.magic == magic.magic) {
+            if known.level < 3 {
+                return Err(format!("You already know {}", magic.name));
+            }
+            return Err("Level 4 skills are not supported yet".into());
+        }
+        let book = p
+            .bag
+            .inventory
+            .get(slot as usize)
+            .cloned()
+            .flatten()
+            .ok_or("Nothing there")?;
+        let change = p.bag.take(Grid::Inventory, slot, 1);
+        // Success chance = the book's current durability (100 when new).
+        if self.rng.random_range(0..100) >= book.durability.max(0) {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: format!("You failed to learn {}.", magic.name),
+                },
+            );
+            return Ok(change.into_iter().collect());
+        }
+        let um = UserMagic {
+            magic: magic.magic,
+            level: 0,
+            experience: 0,
+            key: 0,
+            cooldown_until: 0,
+        };
+        let summary = um.summary();
+        self.objects
+            .get_mut(&id)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .magics
+            .push(um);
+        self.send_to(id, ServerMessage::NewMagic(summary));
+        self.send_to(
+            id,
+            ServerMessage::Chat {
+                text: format!("You learned {}.", magic.name),
+            },
+        );
+        Ok(change.into_iter().collect())
+    }
+
+    pub fn magic_key(&mut self, id: ObjectId, magic: u16, key: u8) {
+        let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+            return;
+        };
+        if key != 0 {
+            for m in p.magics.iter_mut() {
+                if m.key == key {
+                    m.key = 0;
+                }
+            }
+        }
+        if let Some(m) = p.magics.iter_mut().find(|m| m.magic == magic) {
+            m.key = key.min(12);
+        }
+    }
+
+    pub fn magic_toggle(&mut self, id: ObjectId, magic: u16, on: bool) {
+        let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+            return;
+        };
+        if !p.magics.iter().any(|m| m.magic == magic) {
+            return;
+        }
+        match magic {
+            magic_type::THRUSTING => p.thrusting_on = on,
+            magic_type::HALF_MOON => p.half_moon_on = on,
+            _ => return,
+        }
+        self.send_to(id, ServerMessage::MagicToggle { magic, on });
+    }
+
+    /// Zircon `LevelMagic`: 1..=3 experience per success while the player
+    /// level allows it; levels up at the thresholds.
+    fn level_magic(&mut self, id: ObjectId, magic: u16) {
+        let Some(def) = self.data.magics.get(&magic).cloned() else {
+            return;
+        };
+        let exp = self.rng.random_range(1..=SKILL_EXP) as u64;
+        let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+            return;
+        };
+        let level = p.level;
+        let Some(m) = p.magics.iter_mut().find(|m| m.magic == magic) else {
+            return;
+        };
+        let Some(need) = m.need_level(&def) else {
+            return;
+        };
+        let Some(max) = m.next_experience(&def) else {
+            return;
+        };
+        if level < need || m.level >= 3 {
+            return;
+        }
+        m.experience += exp;
+        let mut leveled = false;
+        if m.experience as i64 >= max && max > 0 {
+            m.experience -= max as u64;
+            m.level += 1;
+            leveled = true;
+        }
+        let (lvl, xp) = (m.level, m.experience);
+        self.send_to(
+            id,
+            ServerMessage::MagicLeveled {
+                magic,
+                level: lvl,
+                experience: xp,
+            },
+        );
+        if leveled {
+            self.refresh_stats(id, false);
+            self.send_player_stats(id);
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: format!("{} is now level {}.", def.name, lvl),
+                },
+            );
+        }
+    }
+
+    /// Zircon `PlayerObject.Magic`: validate, pay, schedule the effect,
+    /// broadcast the cast.
+    pub fn cast(
+        &mut self,
+        id: ObjectId,
+        magic: u16,
+        direction: Direction,
+        target: Option<ObjectId>,
+        location: Point,
+    ) {
+        let Some(def) = self.data.magics.get(&magic).cloned() else {
+            return;
+        };
+        let Some(o) = self.objects.get(&id) else {
+            return;
+        };
+        let Some(p) = o.player() else {
+            return;
+        };
+        let (map, loc) = (o.map, o.location);
+        let Some(um) = p.magics.iter().find(|m| m.magic == magic).cloned() else {
+            return;
+        };
+        let deny = |w: &mut World, why: &str| {
+            w.send_to(id, ServerMessage::Chat { text: why.into() });
+            w.send_to(
+                id,
+                ServerMessage::MoveDenied {
+                    location: loc,
+                    direction,
+                },
+            );
+        };
+        if !magic_type::is_castable(magic) {
+            deny(self, "That skill cannot be cast.");
+            return;
+        }
+        if p.level < def.need_level[0] {
+            deny(
+                self,
+                &format!("{} needs level {}.", def.name, def.need_level[0]),
+            );
+            return;
+        }
+        if o.dead || self.now < o.action_time || self.now < p.magic_time {
+            deny(self, "");
+            return;
+        }
+        if self.now < um.cooldown_until {
+            deny(self, &format!("{} is still cooling down.", def.name));
+            return;
+        }
+        let cost = um.cost(&def);
+        if cost > p.mp {
+            deny(self, "Not enough mana.");
+            return;
+        }
+        // Target must be visible and within magic range.
+        let target = target.filter(|t| {
+            self.objects
+                .get(t)
+                .map(|to| to.map == map && !to.dead && to.location.distance(loc) <= MAGIC_RANGE)
+                .unwrap_or(false)
+        });
+        let mut targets: Vec<ObjectId> = Vec::new();
+        let mut locations: Vec<Point> = Vec::new();
+        let mut pending: Vec<PendingMagic> = Vec::new();
+        let dist = |w: &World, t: ObjectId| w.objects[&t].location.distance(loc) as u64;
+        match magic {
+            magic_type::FIRE_BALL
+            | magic_type::ICE_BOLT
+            | magic_type::FLAMING_DAGGERS
+            | magic_type::SHREDDING => {
+                let base = if matches!(magic, magic_type::FIRE_BALL | magic_type::ICE_BOLT) {
+                    500
+                } else {
+                    1000
+                };
+                match target.filter(|t| self.objects[t].is_monster()) {
+                    Some(t) => {
+                        targets.push(t);
+                        pending.push(PendingMagic {
+                            time: self.now + base + dist(self, t) * 48,
+                            caster: id,
+                            magic,
+                            target: Some(t),
+                            location,
+                            direction: None,
+                        });
+                    }
+                    None => locations.push(location),
+                }
+            }
+            magic_type::THUNDER_BOLT => match target.filter(|t| self.objects[t].is_monster()) {
+                Some(t) => {
+                    targets.push(t);
+                    pending.push(PendingMagic {
+                        time: self.now + 600,
+                        caster: id,
+                        magic,
+                        target: Some(t),
+                        location,
+                        direction: None,
+                    });
+                }
+                None => locations.push(location),
+            },
+            magic_type::REPULSION => {
+                for d in Direction::ALL {
+                    pending.push(PendingMagic {
+                        time: self.now + 500,
+                        caster: id,
+                        magic,
+                        target: None,
+                        location: loc.step(d, 1),
+                        direction: Some(d),
+                    });
+                }
+            }
+            magic_type::HEAL => {
+                let t = target.filter(|t| self.objects[t].is_player()).unwrap_or(id);
+                targets.push(t);
+                pending.push(PendingMagic {
+                    time: self.now + 500,
+                    caster: id,
+                    magic,
+                    target: Some(t),
+                    location,
+                    direction: None,
+                });
+            }
+            magic_type::POISON_DUST => match target.filter(|t| self.objects[t].is_monster()) {
+                Some(t) => {
+                    targets.push(t);
+                    pending.push(PendingMagic {
+                        time: self.now + 500,
+                        caster: id,
+                        magic,
+                        target: Some(t),
+                        location,
+                        direction: None,
+                    });
+                }
+                None => locations.push(location),
+            },
+            _ => {}
+        }
+        // Pay, set timers (Zircon: consume even when the spell fizzles).
+        let face = match target {
+            Some(t) if t != id => Direction::from_points(loc, self.objects[&t].location),
+            _ => direction,
+        };
+        {
+            let o = self.objects.get_mut(&id).unwrap();
+            o.action_time = self.now + CAST_TIME;
+            o.direction = face;
+            let p = o.player_mut().unwrap();
+            p.mp -= cost;
+            p.magic_time = self.now + MAGIC_DELAY;
+            if let Some(m) = p.magics.iter_mut().find(|m| m.magic == magic) {
+                m.cooldown_until = self.now + def.delay.max(0) as u64;
+            }
+        }
+        let dir = self.objects[&id].direction;
+        if def.delay > 0 {
+            self.send_to(
+                id,
+                ServerMessage::MagicCooldown {
+                    magic,
+                    delay_ms: def.delay as u32,
+                },
+            );
+        }
+        self.send_player_stats(id);
+        self.events.push((
+            id,
+            ServerMessage::ObjectMagic {
+                id,
+                direction: dir,
+                location: loc,
+                magic,
+                targets,
+                locations,
+                cast: true,
+            },
+        ));
+        self.pending_magics.extend(pending);
+    }
+
+    fn roll_range(&mut self, min: i32, max: i32) -> i32 {
+        if min >= max {
+            max
+        } else {
+            self.rng.random_range(min..=max)
+        }
+    }
+
+    /// Spell damage (Zircon `MagicAttack`): magic power plus the class stat,
+    /// minus the target's MR and element resistance.
+    fn magic_attack(&mut self, caster: ObjectId, target: ObjectId, magic: u16, elem: u8) -> i32 {
+        let Some(def) = self.data.magics.get(&magic).cloned() else {
+            return 0;
+        };
+        let Some(c) = self.objects.get(&caster) else {
+            return 0;
+        };
+        let Some(p) = c.player() else {
+            return 0;
+        };
+        let Some(um) = p.magics.iter().find(|m| m.magic == magic).cloned() else {
+            return 0;
+        };
+        let (pmin, pmax) = um.power_range(&def);
+        let cs = c.stats;
+        let class = p.class;
+        let Some(t) = self.objects.get(&target) else {
+            return 0;
+        };
+        if t.dead || !t.is_monster() {
+            return 0;
+        }
+        let ts = t.stats;
+        let resist = match &t.kind {
+            Kind::Monster(m) => {
+                let d = &self.data.monsters[&m.def];
+                match elem {
+                    element::FIRE => d.stat(21),
+                    element::ICE => d.stat(23),
+                    element::LIGHTNING => d.stat(25),
+                    element::WIND => d.stat(27),
+                    element::HOLY => d.stat(29),
+                    element::DARK => d.stat(31),
+                    element::PHANTOM => d.stat(33),
+                    _ => 0,
+                }
+            }
+            _ => 0,
+        };
+        let mut power = if pmin >= pmax {
+            pmin
+        } else {
+            self.rng.random_range(pmin..=pmax)
+        };
+        power += match class {
+            Class::Wizard => self.roll_range(cs.min_mc, cs.max_mc),
+            Class::Taoist => self.roll_range(cs.min_sc, cs.max_sc),
+            Class::Assassin => self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc)),
+            Class::Warrior => 0,
+        };
+        power -= self.roll_range(ts.min_mr, ts.max_mr);
+        if resist != 0 {
+            power -= power * resist / 10;
+        }
+        if power <= 0 {
+            return 0;
+        }
+        if self.rng.random_range(0..100) < 1 {
+            power = power * 12 / 10;
+        }
+        let dealt = self.damage(target, caster, power, elem, true);
+        if dealt > 0 {
+            self.level_magic(caster, magic);
+        }
+        dealt
+    }
+
+    fn resolve_magics(&mut self) {
+        let due: Vec<PendingMagic> = {
+            let (due, later): (Vec<_>, Vec<_>) = self
+                .pending_magics
+                .drain(..)
+                .partition(|m| m.time <= self.now);
+            self.pending_magics = later;
+            due
+        };
+        for pm in due {
+            let Some(c) = self.objects.get(&pm.caster) else {
+                continue;
+            };
+            if c.dead {
+                continue;
+            }
+            let (cmap, cloc, clevel) =
+                (c.map, c.location, c.player().map(|p| p.level).unwrap_or(1));
+            match pm.magic {
+                magic_type::FIRE_BALL | magic_type::FLAMING_DAGGERS | magic_type::SHREDDING => {
+                    if let Some(t) = pm.target {
+                        self.magic_attack(pm.caster, t, pm.magic, element::FIRE);
+                    }
+                }
+                magic_type::ICE_BOLT => {
+                    if let Some(t) = pm.target {
+                        self.magic_attack(pm.caster, t, pm.magic, element::ICE);
+                    }
+                }
+                magic_type::THUNDER_BOLT => {
+                    if let Some(t) = pm.target {
+                        self.magic_attack(pm.caster, t, pm.magic, element::LIGHTNING);
+                    }
+                }
+                magic_type::REPULSION => {
+                    let Some(dir) = pm.direction else { continue };
+                    let Some(m) = self.maps.get(&cmap) else {
+                        continue;
+                    };
+                    let victims: Vec<ObjectId> = m.objects_at(pm.location).to_vec();
+                    let (lvl, power) = {
+                        let p = self.objects[&pm.caster].player().unwrap();
+                        let um = p.magics.iter().find(|m| m.magic == pm.magic).unwrap();
+                        let def = &self.data.magics[&pm.magic];
+                        (um.level as i32, um.power_range(def))
+                    };
+                    for v in victims {
+                        let (start_loc, mlevel, is_boss) = match self.objects.get(&v) {
+                            Some(o) if o.is_monster() && !o.dead => match &o.kind {
+                                Kind::Monster(m) => (
+                                    o.location,
+                                    self.data.monsters[&m.def].level,
+                                    self.data.monsters[&m.def].is_boss,
+                                ),
+                                _ => continue,
+                            },
+                            _ => continue,
+                        };
+                        if is_boss || mlevel >= clevel {
+                            continue;
+                        }
+                        if self.rng.random_range(0..16) >= 6 + lvl * 3 + clevel - mlevel {
+                            continue;
+                        }
+                        let distance = self.roll_range(power.0, power.1);
+                        let mut from = start_loc;
+                        let mut moved = 0;
+                        for _ in 0..distance {
+                            let next = from.step(dir, 1);
+                            if self.cell_blocked(cmap, next, false) {
+                                break;
+                            }
+                            from = next;
+                            moved += 1;
+                        }
+                        if moved > 0 {
+                            let start = self.objects[&v].location;
+                            self.move_object(v, from);
+                            self.events.push((
+                                v,
+                                ServerMessage::ObjectMove {
+                                    id: v,
+                                    from: start,
+                                    to: from,
+                                    direction: dir,
+                                    run: moved > 1,
+                                },
+                            ));
+                            self.level_magic(pm.caster, pm.magic);
+                        }
+                    }
+                }
+                magic_type::HEAL => {
+                    let Some(t) = pm.target else { continue };
+                    let Some(to) = self.objects.get(&t) else {
+                        continue;
+                    };
+                    if to.dead || to.hp >= to.max_hp || to.heal.is_some() {
+                        continue;
+                    }
+                    let (pmin, pmax, sc) = {
+                        let c = &self.objects[&pm.caster];
+                        let p = c.player().unwrap();
+                        let um = p.magics.iter().find(|m| m.magic == pm.magic).unwrap();
+                        let def = &self.data.magics[&pm.magic];
+                        let (pmin, pmax) = um.power_range(def);
+                        (pmin, pmax, (c.stats.min_sc, c.stats.max_sc))
+                    };
+                    let healing = self.roll_range(pmin, pmax) + self.roll_range(sc.0, sc.1);
+                    if healing <= 0 {
+                        continue;
+                    }
+                    self.objects.get_mut(&t).unwrap().heal = Some(HealBuff {
+                        pool: healing,
+                        cap: 30,
+                        next_tick: self.now,
+                    });
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::POISON_DUST => {
+                    let Some(t) = pm.target else { continue };
+                    let Some(to) = self.objects.get(&t) else {
+                        continue;
+                    };
+                    if to.dead || !to.is_monster() {
+                        continue;
+                    }
+                    let (lvl, duration, kind, poison_slot) = {
+                        let c = &self.objects[&pm.caster];
+                        let p = c.player().unwrap();
+                        let um = p.magics.iter().find(|m| m.magic == pm.magic).unwrap();
+                        let def = &self.data.magics[&pm.magic];
+                        let (pmin, pmax) = um.power_range(def);
+                        // Zircon consumes one equipped poison; its shape picks Green/Red.
+                        let poison_item =
+                            p.bag.equipment.get(slot::POISON).and_then(|s| s.as_ref());
+                        let kind = match poison_item.and_then(|i| self.data.items.get(&i.info)) {
+                            Some(d) if d.shape != 0 => 2,
+                            _ => 1,
+                        };
+                        (
+                            um.level as i32,
+                            (pmin, pmax, c.stats.min_sc, c.stats.max_sc),
+                            kind,
+                            poison_item.map(|_| slot::POISON as u8),
+                        )
+                    };
+                    if let Some(ps) = poison_slot {
+                        let o = self.objects.get_mut(&pm.caster).unwrap();
+                        let change = o.player_mut().unwrap().bag.take(Grid::Equipment, ps, 1);
+                        self.send_changes(pm.caster, change.into_iter().collect());
+                    }
+                    let dur = self.roll_range(duration.0, duration.1)
+                        + self.roll_range(duration.2, duration.3);
+                    let value = lvl + 1 + clevel / 14;
+                    let poison = Poison {
+                        kind,
+                        value,
+                        ticks_left: (dur / 2).max(1),
+                        next_tick: self.now + 2000,
+                        owner: Some(pm.caster),
+                    };
+                    self.apply_poison(t, poison);
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                _ => {}
+            }
+            let _ = cloc;
+        }
+    }
+
+    /// Zircon `ApplyPoison`: a stronger instance of the same type wins.
+    fn apply_poison(&mut self, target: ObjectId, poison: Poison) {
+        let Some(o) = self.objects.get_mut(&target) else {
+            return;
+        };
+        if let Some(existing) = o.poisons.iter().position(|p| p.kind == poison.kind) {
+            if o.poisons[existing].value > poison.value {
+                return;
+            }
+            o.poisons.remove(existing);
+        }
+        let was = !o.poisons.is_empty();
+        o.poisons.push(poison);
+        if !was {
+            self.events.push((
+                target,
+                ServerMessage::ObjectPoisoned {
+                    id: target,
+                    poisoned: true,
+                },
+            ));
+        }
+    }
+
+    fn process_poisons(&mut self) {
+        let now = self.now;
+        let ids: Vec<ObjectId> = self
+            .objects
+            .values()
+            .filter(|o| !o.poisons.is_empty())
+            .map(|o| o.id)
+            .collect();
+        for id in ids {
+            let (damage, owner, cleared) = {
+                let o = self.objects.get_mut(&id).unwrap();
+                let mut damage = 0;
+                let mut owner = None;
+                for p in o.poisons.iter_mut() {
+                    if now < p.next_tick {
+                        continue;
+                    }
+                    p.next_tick = now + 2000;
+                    p.ticks_left -= 1;
+                    if p.kind == 1 {
+                        damage += p.value;
+                        owner = p.owner;
+                    }
+                }
+                o.poisons.retain(|p| p.ticks_left >= 0);
+                let cleared = o.poisons.is_empty();
+                if o.dead {
+                    damage = 0;
+                }
+                // Poison never kills (Zircon `CanKill = false`).
+                damage = damage.min(o.hp - 1).max(0);
+                (damage, owner, cleared)
+            };
+            if damage > 0 {
+                let attacker = owner.unwrap_or(id);
+                let o = self.objects.get_mut(&id).unwrap();
+                o.hp -= damage;
+                let (hp, max_hp) = (o.hp, o.max_hp);
+                self.events
+                    .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+                if let Some(m) = self.objects.get_mut(&id).and_then(|o| o.monster_mut()) {
+                    if m.target.is_none() && attacker != id {
+                        m.target = Some(attacker);
+                    }
+                }
+            }
+            if cleared {
+                self.events.push((
+                    id,
+                    ServerMessage::ObjectPoisoned {
+                        id,
+                        poisoned: false,
+                    },
+                ));
+            }
+        }
+    }
+
+    fn process_heals(&mut self) {
+        let now = self.now;
+        let ids: Vec<ObjectId> = self
+            .objects
+            .values()
+            .filter(|o| o.heal.is_some())
+            .map(|o| o.id)
+            .collect();
+        for id in ids {
+            let o = self.objects.get_mut(&id).unwrap();
+            let Some(h) = o.heal.as_mut() else { continue };
+            if now < h.next_tick {
+                continue;
+            }
+            h.next_tick = now + 1000;
+            let amount = h.pool.min(h.cap);
+            h.pool -= amount;
+            o.hp = (o.hp + amount).min(o.max_hp);
+            if o.hp >= o.max_hp || h.pool <= 0 || o.dead {
+                o.heal = None;
+            }
+            let (hp, max_hp) = (o.hp, o.max_hp);
+            self.events
+                .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+            if self.objects[&id].is_player() {
+                self.send_player_stats(id);
+            }
         }
     }
 

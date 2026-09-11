@@ -52,13 +52,27 @@ row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's
 prices, and every map exit from `MovementInfo` (with level requirements).
 
+Skills: learn them from books (right-click in the bag), open the skill window
+with `E`, hover a skill and press `F1`-`F11` to bind it, then press the key to
+cast. Implemented: Swordsmanship, Spirit Sword and Willow Dance (passives),
+Slaying (charged power attack), Thrusting and Half Moon (stances hitting extra
+cells), Fire Ball, Ice Bolt, Thunder Bolt, Repulsion, Heal (heal over time),
+Poison Dust (green/red poison), Flaming Daggers and Shredding, with Zircon's
+power, cost, cooldown and skill-experience rules and the original effect
+sprites. Other skills show in the window but cannot be cast yet.
+
 Developer automation (also used for visual checks):
 `ZIRCON_SCREENSHOT=out.png:5` saves a frame after 5 s and exits;
 `ZIRCON_AUTOLOGIN=email:password` logs in, creating the account if missing;
 `ZIRCON_AUTOSTART=name` enters the world with that character, creating a
 warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
-`ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog.
+`ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
+`ZIRCON_AUTOCLASS=wizard|taoist|assassin` picks the auto-created class;
+`ZIRCON_OPEN_SKILLS=1` opens the skill window; `ZIRCON_AUTO_CAST=<F key>`
+casts that key's spell at the nearest monster. Server side, `ZIRCON_DEV_LEVEL=n`
+starts new characters at level n and `ZIRCON_DEV_SKILLS=1` grants every class
+skill the level allows.
 
 `cargo run -p mir-server -- --inspect` prints the start map, player stats and
 spawn table without opening a port. `--map <file>` forces a start map.

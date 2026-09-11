@@ -12,6 +12,8 @@ use crate::monster_table::library_path;
 pub mod lib {
     pub const INTERFACE: u16 = 3;
     pub const GAME_INTER: u16 = 4;
+    pub const GAME_INTER2: u16 = 5;
+    pub const MAGIC_ICON: u16 = 20;
     pub const STORE_ITEMS: u16 = 14;
     pub const GROUND: u16 = 16;
     pub const NPC: u16 = 17;

@@ -266,6 +266,21 @@ pub mod item_type {
     }
 }
 
+/// A learned skill as the client sees it (`MagicInfo` comes from System.db).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MagicSummary {
+    /// Zircon `MagicType` value.
+    pub magic: u16,
+    pub level: u8,
+    pub experience: u64,
+    /// Hotkey 1..=12 (F1..F12), 0 = none.
+    pub key: u8,
+}
+
+pub const MAGIC_RANGE: i32 = 10;
+pub const MAGIC_DELAY: u64 = 2000;
+pub const CAST_TIME: u64 = 600;
+
 /// A shop entry.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Good {
@@ -289,9 +304,76 @@ pub enum Action {
     Walking,
     Running,
     Attack,
+    /// Zircon `Combat4` (Half Moon and other backhand swings).
+    Attack2,
+    /// Zircon `Combat1`: projectile spell cast.
+    Cast1,
+    /// Zircon `Combat2`: targeted spell cast.
+    Cast2,
     Struck,
     Die,
     Dead,
+}
+
+/// Zircon `Element`.
+pub mod element {
+    pub const NONE: u8 = 0;
+    pub const FIRE: u8 = 1;
+    pub const ICE: u8 = 2;
+    pub const LIGHTNING: u8 = 3;
+    pub const WIND: u8 = 4;
+    pub const HOLY: u8 = 5;
+    pub const DARK: u8 = 6;
+    pub const PHANTOM: u8 = 7;
+}
+
+/// Zircon `MagicType` values used by the prototype.
+pub mod magic_type {
+    pub const SWORDSMANSHIP: u16 = 100;
+    pub const POTION_MASTERY: u16 = 101;
+    pub const SLAYING: u16 = 102;
+    pub const THRUSTING: u16 = 103;
+    pub const HALF_MOON: u16 = 104;
+    pub const FIRE_BALL: u16 = 201;
+    pub const ICE_BOLT: u16 = 203;
+    pub const REPULSION: u16 = 205;
+    pub const THUNDER_BOLT: u16 = 209;
+    pub const HEAL: u16 = 300;
+    pub const SPIRIT_SWORD: u16 = 301;
+    pub const POISON_DUST: u16 = 302;
+    pub const WILLOW_DANCE: u16 = 401;
+    pub const FLAMING_DAGGERS: u16 = 454;
+    pub const SHREDDING: u16 = 455;
+
+    /// Skills that are never cast: they act on every melee swing or as stats.
+    pub fn is_passive(m: u16) -> bool {
+        matches!(
+            m,
+            SWORDSMANSHIP | POTION_MASTERY | SLAYING | SPIRIT_SWORD | WILLOW_DANCE
+        )
+    }
+    /// Stance skills switched with a hotkey and applied on melee swings.
+    pub fn is_toggle(m: u16) -> bool {
+        matches!(m, THRUSTING | HALF_MOON)
+    }
+    /// Spells with the projectile cast animation (Zircon `Combat1`).
+    pub fn is_projectile_cast(m: u16) -> bool {
+        matches!(m, FIRE_BALL | ICE_BOLT | FLAMING_DAGGERS | SHREDDING)
+    }
+    /// Spells the prototype can cast.
+    pub fn is_castable(m: u16) -> bool {
+        matches!(
+            m,
+            FIRE_BALL
+                | ICE_BOLT
+                | REPULSION
+                | THUNDER_BOLT
+                | HEAL
+                | POISON_DUST
+                | FLAMING_DAGGERS
+                | SHREDDING
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -431,6 +513,25 @@ pub enum ClientMessage {
     },
     Attack {
         direction: Direction,
+        /// Melee-augment skill in effect (Slaying, Thrusting, Half Moon...).
+        attack_magic: Option<u16>,
+    },
+    /// Cast a spell (`MirAction.Spell`).
+    Magic {
+        magic: u16,
+        direction: Direction,
+        target: Option<ObjectId>,
+        location: Point,
+    },
+    /// Assign a hotkey (0 clears).
+    MagicKey {
+        magic: u16,
+        key: u8,
+    },
+    /// Toggle a stance skill (Thrusting, Half Moon, Slaying auto).
+    MagicToggle {
+        magic: u16,
+        on: bool,
     },
     /// Move an item between grid slots (equip/unequip/reorder).
     ItemMove {
@@ -519,11 +620,48 @@ pub enum ServerMessage {
     ObjectAttack {
         id: ObjectId,
         direction: Direction,
+        attack_magic: Option<u16>,
+    },
+    /// Someone cast a spell: play the cast animation and, when `cast`, the
+    /// payload effects on `targets` / `locations` afterwards.
+    ObjectMagic {
+        id: ObjectId,
+        direction: Direction,
+        location: Point,
+        magic: u16,
+        targets: Vec<ObjectId>,
+        locations: Vec<Point>,
+        cast: bool,
+    },
+    /// The player's full skill list (on entry).
+    Magics(Vec<MagicSummary>),
+    NewMagic(MagicSummary),
+    MagicLeveled {
+        magic: u16,
+        level: u8,
+        experience: u64,
+    },
+    MagicCooldown {
+        magic: u16,
+        delay_ms: u32,
+    },
+    MagicToggle {
+        magic: u16,
+        on: bool,
+    },
+    /// Poison applied/cleared on an object (client tint only).
+    ObjectPoisoned {
+        id: ObjectId,
+        poisoned: bool,
     },
     ObjectStruck {
         id: ObjectId,
         attacker: ObjectId,
         damage: i32,
+        /// `element::*` of the hit; `None` for plain melee.
+        element: u8,
+        /// True when a spell (not a swing) caused the hit.
+        magic: bool,
     },
     HealthChanged {
         id: ObjectId,

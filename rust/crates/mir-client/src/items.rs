@@ -24,8 +24,32 @@ pub struct ItemDef {
     pub stats: Vec<(i32, i32)>,
 }
 
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct MagicDef {
+    pub index: i32,
+    pub name: String,
+    pub magic: u16,
+    pub class: u8,
+    pub school: i32,
+    pub icon: i32,
+    pub base_cost: i32,
+    pub level_cost: i32,
+    pub need_level: [i32; 3],
+    pub experience: [i32; 3],
+    pub delay: i32,
+    pub description: String,
+}
+
+impl MagicDef {
+    pub fn cost(&self, level: u8) -> i32 {
+        self.base_cost + level as i32 * self.level_cost / 3
+    }
+}
+
 pub struct ItemCatalog {
     items: HashMap<i32, ItemDef>,
+    magics: HashMap<u16, MagicDef>,
 }
 
 pub fn stat_name(id: i32) -> Option<&'static str> {
@@ -82,7 +106,23 @@ impl ItemCatalog {
     pub fn empty() -> ItemCatalog {
         ItemCatalog {
             items: HashMap::new(),
+            magics: HashMap::new(),
         }
+    }
+
+    pub fn magic(&self, magic: u16) -> Option<&MagicDef> {
+        self.magics.get(&magic)
+    }
+
+    /// All magics of a class, sorted by the level of their first rank.
+    pub fn class_magics(&self, class: u8) -> Vec<&MagicDef> {
+        let mut v: Vec<&MagicDef> = self
+            .magics
+            .values()
+            .filter(|m| m.class == class && m.school != 0 && m.school != 20)
+            .collect();
+        v.sort_by_key(|m| (m.need_level[0], m.magic));
+        v
     }
 
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<ItemCatalog> {
@@ -127,7 +167,39 @@ impl ItemCatalog {
                 (index, d)
             })
             .collect();
-        Ok(ItemCatalog { items })
+        let magics = match db.collection("MagicInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| {
+                    let m = MagicDef {
+                        index: c.index(r),
+                        name: c.str_or(r, "Name", "").to_string(),
+                        magic: c.int_or(r, "Magic", 0) as u16,
+                        class: c.int_or(r, "Class", 0) as u8,
+                        school: c.int_or(r, "School", 0) as i32,
+                        icon: c.int_or(r, "Icon", 0) as i32,
+                        base_cost: c.int_or(r, "BaseCost", 0) as i32,
+                        level_cost: c.int_or(r, "LevelCost", 0) as i32,
+                        need_level: [
+                            c.int_or(r, "NeedLevel1", 0) as i32,
+                            c.int_or(r, "NeedLevel2", 0) as i32,
+                            c.int_or(r, "NeedLevel3", 0) as i32,
+                        ],
+                        experience: [
+                            c.int_or(r, "Experience1", 0) as i32,
+                            c.int_or(r, "Experience2", 0) as i32,
+                            c.int_or(r, "Experience3", 0) as i32,
+                        ],
+                        delay: c.int_or(r, "Delay", 0) as i32,
+                        description: c.str_or(r, "Description", "").to_string(),
+                    };
+                    (m.magic, m)
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+        Ok(ItemCatalog { items, magics })
     }
 
     pub fn get(&self, index: i32) -> Option<&ItemDef> {

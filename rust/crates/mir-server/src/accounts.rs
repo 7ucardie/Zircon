@@ -16,6 +16,7 @@ use mir_proto::{rules, CharacterSummary, Class, Direction, Gender, Point};
 use serde::{Deserialize, Serialize};
 
 use crate::items::StoredItem;
+use crate::magic::StoredMagic;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharacterRecord {
@@ -42,6 +43,8 @@ pub struct CharacterRecord {
     /// Highest item id handed out for this character.
     #[serde(default)]
     pub next_item_id: u32,
+    #[serde(default)]
+    pub magics: Vec<StoredMagic>,
 }
 
 impl CharacterRecord {
@@ -268,6 +271,7 @@ impl Accounts {
             items: Vec::new(),
             gold: 0,
             next_item_id: 0,
+            magics: Vec::new(),
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;

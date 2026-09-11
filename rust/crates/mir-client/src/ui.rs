@@ -43,6 +43,9 @@ pub struct Input {
     pub tab: bool,
     pub escape: bool,
     pub delete: bool,
+    /// F1..F12 pressed this frame (1..=12).
+    pub fkey: Option<u8>,
+    pub wheel: f32,
 }
 
 impl Input {
@@ -57,6 +60,8 @@ impl Input {
         self.tab = false;
         self.escape = false;
         self.delete = false;
+        self.fkey = None;
+        self.wheel = 0.0;
     }
 }
 

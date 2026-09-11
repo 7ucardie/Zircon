@@ -170,9 +170,16 @@ impl Client {
                             }
                             None if !self.auto_tried_create => {
                                 self.auto_tried_create = true;
+                                let class = match std::env::var("ZIRCON_AUTOCLASS").ok().as_deref()
+                                {
+                                    Some("wizard") => mir_proto::Class::Wizard,
+                                    Some("taoist") => mir_proto::Class::Taoist,
+                                    Some("assassin") => mir_proto::Class::Assassin,
+                                    _ => mir_proto::Class::Warrior,
+                                };
                                 self.send(ClientMessage::NewCharacter {
                                     name,
-                                    class: mir_proto::Class::Warrior,
+                                    class,
                                     gender: mir_proto::Gender::Male,
                                     hair: 1,
                                 });

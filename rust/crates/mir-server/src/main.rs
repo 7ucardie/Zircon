@@ -9,6 +9,7 @@
 mod accounts;
 mod data;
 mod items;
+mod magic;
 mod net;
 mod world;
 
@@ -409,8 +410,27 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::Move { direction, run }) => {
             world.player_move(object, direction, run)
         }
-        (Stage::InGame { object, .. }, ClientMessage::Attack { direction }) => {
-            world.player_attack(object, direction)
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::Attack {
+                direction,
+                attack_magic,
+            },
+        ) => world.player_attack(object, direction, attack_magic),
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::Magic {
+                magic,
+                direction,
+                target,
+                location,
+            },
+        ) => world.cast(object, magic, direction, target, location),
+        (Stage::InGame { object, .. }, ClientMessage::MagicKey { magic, key }) => {
+            world.magic_key(object, magic, key)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::MagicToggle { magic, on }) => {
+            world.magic_toggle(object, magic, on)
         }
         (
             Stage::InGame { object, .. },
@@ -466,6 +486,7 @@ fn test_character(name: &str) -> CharacterRecord {
         items: Vec::new(),
         gold: 0,
         next_item_id: 0,
+        magics: Vec::new(),
     }
 }
 
@@ -590,7 +611,7 @@ mod tests {
         let mut now = 100;
         let mut kills = 0;
         for _ in 0..400 {
-            world.player_attack(me, dir);
+            world.player_attack(me, dir, None);
             now += 100;
             world.tick(now);
             now += 100;
@@ -640,7 +661,7 @@ mod tests {
         let dir = Direction::from_points(loc, cell);
         let mut now = 100;
         for _ in 0..400 {
-            world.player_attack(me, dir);
+            world.player_attack(me, dir, None);
             now += 1600;
             world.tick(now);
             if world.objects.get(&victim).map(|v| v.dead).unwrap_or(true) {
@@ -737,6 +758,165 @@ mod tests {
         assert!(
             done,
             "no exit led anywhere (level requirement or unloaded map)"
+        );
+    }
+
+    /// Give the player a book for `magic_name`'s MagicInfo and learn it.
+    fn learn(world: &mut World, me: ObjectId, magic_name: &str) -> u16 {
+        let def = world
+            .data
+            .magics
+            .values()
+            .find(|m| m.name == magic_name)
+            .cloned()
+            .expect("magic");
+        let book = world
+            .data
+            .items
+            .values()
+            .find(|i| i.item_type == 14 && i.shape == def.index)
+            .map(|i| i.index)
+            .expect("book item");
+        world.test_give_item(me, book, 1);
+        let slot = world.test_slot_of(me, book).expect("book in bag");
+        world.item_use(me, slot);
+        let known = world.test_magics(me);
+        assert!(
+            known.contains(&def.magic),
+            "should know {magic_name}: {known:?}"
+        );
+        def.magic
+    }
+
+    fn nearest_chicken(world: &World, me: ObjectId) -> ObjectId {
+        let loc = world.objects[&me].location;
+        world
+            .objects
+            .values()
+            .filter(|o| !o.dead && matches!(&o.appearance, Appearance::Monster { name, .. } if name == "Chicken"))
+            .min_by_key(|o| o.location.distance(loc))
+            .map(|o| o.id)
+            .expect("a chicken")
+    }
+
+    #[test]
+    fn wizard_learns_fire_ball_and_burns_a_chicken() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Wiz");
+        rec.class = mir_proto::Class::Wizard;
+        rec.level = 16;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let fire_ball = learn(&mut world, me, "Fire Ball");
+        let victim = nearest_chicken(&world, me);
+        let loc = world.objects[&me].location;
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 2))
+            .find(|p| {
+                world.maps[&world.objects[&me].map]
+                    .file
+                    .is_walkable(p.x, p.y)
+            })
+            .unwrap();
+        world.teleport(victim, cell);
+        let hp_before = world.objects[&victim].hp;
+        let mut now = 1000;
+        let mut hit = false;
+        for _ in 0..40 {
+            world.cast(
+                me,
+                fire_ball,
+                Direction::from_points(loc, cell),
+                Some(victim),
+                cell,
+            );
+            for _ in 0..30 {
+                now += 100;
+                world.tick(now);
+            }
+            let msgs = drain(&mut world);
+            if msgs.iter().any(
+                |m| matches!(m, ServerMessage::ObjectMagic { magic, .. } if *magic == fire_ball),
+            ) {
+                hit = true;
+            }
+            if world
+                .objects
+                .get(&victim)
+                .map(|v| v.dead || v.hp < hp_before)
+                .unwrap_or(true)
+            {
+                break;
+            }
+        }
+        assert!(hit, "ObjectMagic should be broadcast");
+        let dead_or_hurt = world
+            .objects
+            .get(&victim)
+            .map(|v| v.dead || v.hp < hp_before)
+            .unwrap_or(true);
+        assert!(dead_or_hurt, "fire ball should damage the chicken");
+        let mp = world.objects[&me].player().unwrap().mp;
+        assert!(
+            mp < world.objects[&me].player().unwrap().max_mp,
+            "casting costs mana"
+        );
+        let msgs = world.test_magic_exp(me, fire_ball);
+        assert!(msgs > 0, "fire ball should gain experience");
+    }
+
+    #[test]
+    fn warrior_thrusting_reaches_the_second_cell() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Thruster");
+        rec.level = 19;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let thrusting = learn(&mut world, me, "Thrusting");
+        world.magic_toggle(me, thrusting, true);
+        let victim = nearest_chicken(&world, me);
+        let map = world.objects[&me].map;
+        let loc = world.objects[&me].location;
+        let dir = Direction::ALL
+            .iter()
+            .copied()
+            .find(|d| {
+                let a = loc.step(*d, 1);
+                let b = loc.step(*d, 2);
+                world.maps[&map].file.is_walkable(a.x, a.y)
+                    && world.maps[&map].file.is_walkable(b.x, b.y)
+            })
+            .unwrap();
+        world.teleport(victim, loc.step(dir, 2));
+        let hp_before = world.objects[&victim].hp;
+        let mut now = 1000;
+        for _ in 0..200 {
+            world.player_attack(me, dir, Some(thrusting));
+            now += 1600;
+            world.tick(now);
+            if world
+                .objects
+                .get(&victim)
+                .map(|v| v.dead || v.hp < hp_before)
+                .unwrap_or(true)
+            {
+                break;
+            }
+        }
+        assert!(
+            world
+                .objects
+                .get(&victim)
+                .map(|v| v.dead || v.hp < hp_before)
+                .unwrap_or(true),
+            "thrusting should hit two cells ahead"
         );
     }
 

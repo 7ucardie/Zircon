@@ -54,6 +54,10 @@ impl NpcDialog {
 pub struct WindowState {
     pub inventory_open: bool,
     pub character_open: bool,
+    pub skills_open: bool,
+    pub skill_scroll: f32,
+    /// Magic whose icon is under the mouse in the skill window (for key binding).
+    pub hover_magic: Option<u16>,
     pub npc: Option<NpcDialog>,
     /// Slot picked up with the mouse, waiting for a destination.
     pub carrying: Option<(Grid, u8)>,
@@ -61,6 +65,7 @@ pub struct WindowState {
     buy_button: Option<Button>,
     close_all_hint: bool,
     auto_button_done: bool,
+    magic_tip: Option<(u16, f32, f32)>,
 }
 
 pub struct Bag<'a> {
@@ -68,8 +73,27 @@ pub struct Bag<'a> {
     pub equipment: &'a [Option<ItemInstance>],
     pub gold: u64,
     pub weights: &'a mir_proto::Weights,
-    pub stats: &'a mir_proto::PlayerStats,
+    pub stats: &'a PlayerView,
     pub catalog: &'a ItemCatalog,
+    pub magics: &'a [mir_proto::MagicSummary],
+    pub toggles: &'a std::collections::HashSet<u16>,
+    pub cooldowns: &'a std::collections::HashMap<u16, u64>,
+}
+
+/// The few player facts windows need.
+pub struct PlayerView {
+    pub level: u8,
+    pub class: u8,
+    pub hp: i32,
+    pub max_hp: i32,
+    pub mp: i32,
+    pub max_mp: i32,
+    pub min_dc: i32,
+    pub max_dc: i32,
+    pub min_ac: i32,
+    pub max_ac: i32,
+    pub accuracy: i32,
+    pub agility: i32,
 }
 
 /// Draw the item icon (StoreItems) centred in a cell, plus the count.
@@ -569,6 +593,272 @@ impl WindowState {
             if closed {
                 self.character_open = false;
                 self.carrying = None;
+            }
+        }
+
+        // ---- Skill window (Zircon MagicDialog 419x511, standard chrome here) ----
+        self.hover_magic = None;
+        if self.skills_open {
+            let win = Rect::new((width as f32 - 419.0) / 2.0, 30.0, 419.0, 511.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+                self.skill_scroll = (self.skill_scroll - c.input.wheel * 59.0).max(0.0);
+            }
+            let closed = c.window(win, "Skills", false);
+            let class = bag.stats.class;
+            let list = bag.catalog.class_magics(class);
+            let max_scroll = ((list.len() as f32) * 59.0 - 460.0).max(0.0);
+            self.skill_scroll = self.skill_scroll.min(max_scroll);
+            let top = win.y + 40.0;
+            let first = (self.skill_scroll / 59.0) as usize;
+            for (i, def) in list.iter().enumerate().skip(first).take(8) {
+                let y = top + (i as f32 * 59.0 - self.skill_scroll);
+                if y + 54.0 > win.y + win.h - 6.0 {
+                    break;
+                }
+                let cell = Rect::new(win.x + 25.0, y, 369.0, 54.0);
+                c.panel(cell, [16, 8, 8, 255]);
+                let known = bag.magics.iter().find(|m| m.magic == def.magic);
+                let usable = bag.stats.level as i32 >= def.need_level[0];
+                if known.is_some() {
+                    let border = match def.school {
+                        1 => 860,
+                        2 => 861,
+                        3 => 862,
+                        4 => 870,
+                        5 => 871,
+                        6 => 872,
+                        7 => 873,
+                        10 => 874,
+                        8 => 880,
+                        9 => 881,
+                        11 => 883,
+                        12 => 890,
+                        13 => 891,
+                        14 => 892,
+                        _ => 0,
+                    };
+                    if border > 0 {
+                        c.draw(lib::GAME_INTER2, border, cell.x + 4.0, cell.y + 4.0);
+                    }
+                }
+                let icon = Rect::new(cell.x + 9.0, cell.y + 9.0, 36.0, 36.0);
+                let alpha = if known.is_some() {
+                    1.0
+                } else if usable {
+                    0.6
+                } else {
+                    0.3
+                };
+                c.draw_tinted(
+                    lib::MAGIC_ICON,
+                    def.icon as u32,
+                    icon.x,
+                    icon.y,
+                    [1.0, 1.0, 1.0, alpha],
+                    Blend::Alpha,
+                );
+                if let Some(m) = known {
+                    if m.key > 0 {
+                        c.text.draw(
+                            &format!("F{}", m.key),
+                            11,
+                            icon.x + 18.0,
+                            icon.y + 22.0,
+                            [127, 255, 212, 255],
+                        );
+                    }
+                    if bag.toggles.contains(&def.magic) {
+                        c.border(icon, [0, 255, 0, 255]);
+                    }
+                }
+                c.text.draw(
+                    &def.name,
+                    13,
+                    cell.x + 55.0,
+                    cell.y + 1.0,
+                    [255, 255, 255, 255],
+                );
+                match known {
+                    Some(m) => {
+                        c.text.draw(
+                            &format!("Level: {}", m.level),
+                            12,
+                            cell.x + 57.0,
+                            cell.y + 30.0,
+                            GOLD,
+                        );
+                        let max = def.experience.get(m.level as usize).copied().unwrap_or(0);
+                        let (label, pct) = if m.level >= 3 {
+                            ("Experience: Max".to_string(), 1.0)
+                        } else if max > 0 {
+                            (
+                                format!("Experience: {}/{}", m.experience, max),
+                                (m.experience as f32 / max as f32).min(1.0),
+                            )
+                        } else {
+                            (String::new(), 0.0)
+                        };
+                        let lw = c.text.width(&label, 11);
+                        c.text.draw(
+                            &label,
+                            11,
+                            cell.x + cell.w - lw - 6.0,
+                            cell.y + 17.0,
+                            [200, 200, 200, 255],
+                        );
+                        if let Some(bar) = c.sprite(lib::GAME_INTER2, 812) {
+                            c.renderer.draw_cropped(
+                                bar,
+                                cell.x + 110.0,
+                                cell.y + 36.0,
+                                pct,
+                                [1.0, 1.0, 1.0, 1.0],
+                            );
+                        }
+                        let need = def.need_level.get(m.level as usize).copied().unwrap_or(0);
+                        if m.level < 3 && (bag.stats.level as i32) < need {
+                            c.text.draw(
+                                &format!("Required Level: {need}"),
+                                11,
+                                cell.x + 57.0,
+                                cell.y + 17.0,
+                                [255, 80, 80, 255],
+                            );
+                        }
+                    }
+                    None => {
+                        c.text.draw(
+                            "Not Learned",
+                            12,
+                            cell.x + 57.0,
+                            cell.y + 17.0,
+                            [255, 80, 80, 255],
+                        );
+                        let col = if usable {
+                            [120, 255, 120, 255]
+                        } else {
+                            [255, 80, 80, 255]
+                        };
+                        c.text.draw(
+                            &format!("Required Level: {}", def.need_level[0]),
+                            11,
+                            cell.x + 57.0,
+                            cell.y + 33.0,
+                            col,
+                        );
+                    }
+                }
+                if icon.contains(mouse.0, mouse.1) {
+                    self.hover_magic = Some(def.magic);
+                    self.magic_tip = Some((def.magic, mouse.0, mouse.1));
+                    if known.is_some() && c.input.lmb_pressed {
+                        out.push(ClientMessage::MagicKey {
+                            magic: def.magic,
+                            key: 0,
+                        });
+                    }
+                }
+            }
+            c.text.draw(
+                "Hover a skill and press F1-F11 to bind it; click to unbind",
+                11,
+                win.x + 25.0,
+                win.y + win.h - 22.0,
+                [160, 160, 160, 255],
+            );
+            if closed {
+                self.skills_open = false;
+            }
+        }
+        if let Some((magic, x, y)) = self.magic_tip.take() {
+            if let Some(def) = bag.catalog.magic(magic) {
+                let known = bag.magics.iter().find(|m| m.magic == magic);
+                let mut lines: Vec<(String, [u8; 4])> =
+                    vec![(def.name.clone(), [255, 255, 0, 255])];
+                match known {
+                    Some(m) => lines.push((
+                        format!("Current Level: {}  Cost: {} MP", m.level, def.cost(m.level)),
+                        [120, 255, 120, 255],
+                    )),
+                    None => lines.push(("Not learned".into(), [255, 80, 80, 255])),
+                }
+                for (i, (need, exp)) in def.need_level.iter().zip(def.experience.iter()).enumerate()
+                {
+                    let col = if (bag.stats.level as i32) < *need {
+                        [255, 80, 80, 255]
+                    } else {
+                        [200, 200, 200, 255]
+                    };
+                    lines.push((
+                        format!("Rank {}: Level {need}, Experience {exp}", i + 1),
+                        col,
+                    ));
+                }
+                if !def.description.is_empty() {
+                    lines.push((def.description.clone(), [245, 222, 179, 255]));
+                }
+                let w = lines
+                    .iter()
+                    .map(|(l, _)| c.text.width(l, 12))
+                    .fold(0.0, f32::max)
+                    + 16.0;
+                let h = lines.len() as f32 * 16.0 + 8.0;
+                let r = Rect::new((x + 16.0).min(width as f32 - w - 4.0), y + 8.0, w, h);
+                c.fill(r, [0.0, 24.0 / 255.0, 48.0 / 255.0, 0.8]);
+                c.border(r, [255, 255, 0, 255]);
+                for (i, (l, col)) in lines.iter().enumerate() {
+                    c.text
+                        .draw(l, 12, r.x + 8.0, r.y + 4.0 + i as f32 * 16.0, *col);
+                }
+            }
+        }
+
+        // ---- Spell bar (bottom-left, above the HUD) ----
+        {
+            let base_y = height as f32 - 96.0 - 44.0;
+            for key in 1..=11u8 {
+                let r = Rect::new(10.0 + (key as f32 - 1.0) * 37.0, base_y, 36.0, 36.0);
+                c.fill(r, [20.0 / 255.0, 20.0 / 255.0, 20.0 / 255.0, 0.6]);
+                c.border(r, GOLD);
+                if let Some(m) = bag.magics.iter().find(|m| m.key == key) {
+                    if let Some(def) = bag.catalog.magic(m.magic) {
+                        c.draw_tinted(
+                            lib::MAGIC_ICON,
+                            def.icon as u32,
+                            r.x,
+                            r.y,
+                            [1.0, 1.0, 1.0, 0.8],
+                            Blend::Alpha,
+                        );
+                        if bag.toggles.contains(&m.magic) {
+                            c.border(r, [0, 255, 0, 255]);
+                        }
+                        if let Some(until) = bag.cooldowns.get(&m.magic) {
+                            if *until > c.now {
+                                c.fill(r, [50.0 / 255.0, 50.0 / 255.0, 50.0 / 255.0, 0.5]);
+                                let secs = (until - c.now).div_ceil(1000);
+                                c.text.draw_centered(
+                                    &secs.to_string(),
+                                    13,
+                                    r.x + 18.0,
+                                    r.y + 10.0,
+                                    GOLD,
+                                );
+                            }
+                        }
+                        if r.contains(mouse.0, mouse.1) {
+                            self.magic_tip = Some((m.magic, mouse.0, mouse.1));
+                        }
+                    }
+                }
+                c.text.draw(
+                    &format!("F{key}"),
+                    9,
+                    r.x + 2.0,
+                    r.y + 24.0,
+                    [255, 255, 255, 200],
+                );
             }
         }
 
