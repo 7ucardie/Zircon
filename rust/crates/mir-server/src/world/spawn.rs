@@ -247,7 +247,14 @@ impl World {
     }
 
     /// Zircon `MonsterObject.Drop`: every DropInfo row rolls `1 in Chance`.
-    pub(super) fn drop_loot(&mut self, monster: ObjectId, killer: Option<ObjectId>) {
+    /// Roll the monster's drops for `killer`; `players` is the number of
+    /// group members rolling (chance and gold are divided by it).
+    pub(super) fn drop_loot(
+        &mut self,
+        monster: ObjectId,
+        killer: Option<ObjectId>,
+        players: usize,
+    ) {
         let (map, loc, def_index) = {
             let o = &self.objects[&monster];
             (o.map, o.location, o.monster_ref().def)
@@ -268,9 +275,12 @@ impl World {
             let Some(item) = self.data.items.get(&d.item).cloned() else {
                 continue;
             };
-            let amount = (d.amount / 2 + self.rng.random_range(0..d.amount.max(1))).max(1);
-            if self.rng.random_range(0..d.chance) != 0 {
+            let mut amount = (d.amount / 2 + self.rng.random_range(0..d.amount.max(1))).max(1);
+            if self.rng.random_range(0..d.chance * players.max(1) as i32) != 0 {
                 continue;
+            }
+            if item.index == self.data.gold_item {
+                amount = (amount / players.max(1) as i32).max(1);
             }
             let mut remaining = amount as u32;
             let stack = item.stack_size.max(1) as u32;

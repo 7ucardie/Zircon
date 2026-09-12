@@ -11,7 +11,8 @@ use mir_proto::{
 use crate::assets::lib;
 use crate::gfx::Blend;
 use crate::items::{stat_name, type_name, ItemCatalog, ItemDef};
-use crate::ui::{Button, Ctx, Rect, GOLD};
+use crate::ui::{Button, Ctx, Rect, TextBox, GOLD};
+use mir_proto::ObjectId;
 
 const CELL: f32 = 36.0;
 const PITCH: f32 = 37.0;
@@ -126,6 +127,12 @@ pub struct WindowState {
     pub skills_open: bool,
     pub quests_open: bool,
     pub quest_scroll: f32,
+    /// Group window (P): members, invite box, allow toggle.
+    pub group_open: bool,
+    group_name: Option<TextBox>,
+    group_buttons: Vec<Button>,
+    group_kick: Vec<Button>,
+    invite_buttons: Vec<Button>,
     /// The belt is shown by default (Zircon `BeltDialog`, toggled with Z).
     pub belt_open: bool,
     /// Bag slot under the mouse this frame (for belt binding with digit keys).
@@ -144,6 +151,13 @@ pub struct WindowState {
     magic_tip: Option<(u16, f32, f32)>,
 }
 
+impl WindowState {
+    /// True while a window text box has keyboard focus.
+    pub fn typing(&self) -> bool {
+        self.group_open && self.group_name.as_ref().is_some_and(|b| b.focused)
+    }
+}
+
 impl Default for WindowState {
     fn default() -> WindowState {
         WindowState {
@@ -151,6 +165,11 @@ impl Default for WindowState {
             character_open: false,
             skills_open: false,
             quests_open: false,
+            group_open: false,
+            group_name: None,
+            group_buttons: Vec::new(),
+            group_kick: Vec::new(),
+            invite_buttons: Vec::new(),
             quest_scroll: 0.0,
             belt_open: true,
             hover_inventory: None,
@@ -183,6 +202,10 @@ pub struct Bag<'a> {
     pub dead: bool,
     pub quests: &'a [mir_proto::UserQuestSummary],
     pub player_name: &'a str,
+    pub group: &'a [(ObjectId, String)],
+    pub allow_group: bool,
+    pub group_invite: Option<&'a str>,
+    pub user: Option<ObjectId>,
 }
 
 /// The few player facts windows need.
@@ -457,6 +480,133 @@ impl WindowState {
             }
             if closed {
                 self.quests_open = false;
+            }
+        }
+
+        // ---- Group (P) ----
+        if self.group_open {
+            let win = Rect::new(width as f32 - 300.0 - 10.0, 30.0, 300.0, 330.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            let closed = c.window(win, "Group", true);
+            let leader = bag.group.first().map(|(id, _)| *id);
+            let i_lead = leader.is_some() && leader == bag.user;
+            if bag.group.is_empty() {
+                c.text.draw(
+                    "Not in a group.",
+                    12,
+                    win.x + 16.0,
+                    win.y + 40.0,
+                    [200, 200, 200, 255],
+                );
+            }
+            if self.group_kick.len() != bag.group.len() {
+                self.group_kick = bag
+                    .group
+                    .iter()
+                    .map(|_| Button::default_style(0.0, 0.0, 60.0, "Kick"))
+                    .collect();
+            }
+            for (i, (id, name)) in bag.group.iter().enumerate() {
+                let y = win.y + 40.0 + i as f32 * 22.0;
+                let label = if Some(*id) == leader {
+                    format!("{name} (leader)")
+                } else {
+                    name.clone()
+                };
+                let col = if Some(*id) == bag.user {
+                    [255, 255, 0, 255]
+                } else {
+                    [255, 255, 255, 255]
+                };
+                c.text.draw(&label, 12, win.x + 16.0, y, col);
+                if i_lead && Some(*id) != bag.user {
+                    let b = &mut self.group_kick[i];
+                    b.pos = (win.x + win.w - 76.0, y - 2.0);
+                    if b.update(c) {
+                        out.push(ClientMessage::GroupRemove { name: name.clone() });
+                    }
+                }
+            }
+            // Invite box + buttons in the footer.
+            let fy = win.y + win.h - 3.0 - 42.0 + 8.0;
+            let name_box = self
+                .group_name
+                .get_or_insert_with(|| TextBox::new(Rect::new(0.0, 0.0, 130.0, 22.0), 20));
+            name_box.rect = Rect::new(win.x + 12.0, fy + 2.0, 130.0, 22.0);
+            let submitted = name_box.update(c);
+            if self.group_buttons.is_empty() {
+                self.group_buttons = vec![
+                    Button::default_style(0.0, 0.0, 60.0, "Invite"),
+                    Button::default_style(0.0, 0.0, 60.0, "Leave"),
+                    Button::default_style(0.0, 0.0, 120.0, "Allow: off"),
+                ];
+            }
+            let name = name_box.text.trim().to_string();
+            let b = &mut self.group_buttons[0];
+            b.pos = (win.x + 148.0, fy);
+            b.enabled = !name.is_empty() && (bag.group.is_empty() || i_lead);
+            if (b.update(c) || submitted) && b.enabled {
+                out.push(ClientMessage::GroupInvite { name: name.clone() });
+                if let Some(nb) = &mut self.group_name {
+                    nb.text.clear();
+                }
+            }
+            let b = &mut self.group_buttons[1];
+            b.pos = (win.x + 214.0, fy);
+            b.enabled = !bag.group.is_empty();
+            if b.update(c) {
+                out.push(ClientMessage::GroupRemove {
+                    name: bag.player_name.to_string(),
+                });
+            }
+            let b = &mut self.group_buttons[2];
+            b.pos = (win.x + 12.0, win.y + win.h - 3.0 - 42.0 - 30.0);
+            b.label = Some(if bag.allow_group {
+                "Allow group: on".into()
+            } else {
+                "Allow group: off".into()
+            });
+            if b.update(c) {
+                out.push(ClientMessage::GroupSwitch {
+                    allow: !bag.allow_group,
+                });
+            }
+            if closed {
+                self.group_open = false;
+            }
+        }
+
+        // ---- Group invite prompt ----
+        if let Some(from) = bag.group_invite {
+            let win = Rect::new(width as f32 / 2.0 - 150.0, 120.0, 300.0, 100.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, "Group invite", false);
+            c.text.draw(
+                &format!("{from} wants to group with you."),
+                12,
+                win.x + 16.0,
+                win.y + 40.0,
+                [255, 255, 255, 255],
+            );
+            if self.invite_buttons.is_empty() {
+                self.invite_buttons = vec![
+                    Button::default_style(0.0, 0.0, 80.0, "Accept"),
+                    Button::default_style(0.0, 0.0, 80.0, "Decline"),
+                ];
+            }
+            let b = &mut self.invite_buttons[0];
+            b.pos = (win.x + 60.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::GroupResponse { accept: true });
+            }
+            let b = &mut self.invite_buttons[1];
+            b.pos = (win.x + 160.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::GroupResponse { accept: false });
             }
         }
 

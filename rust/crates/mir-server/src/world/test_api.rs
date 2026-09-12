@@ -241,4 +241,10 @@ impl World {
     pub fn test_damage(&mut self, target: ObjectId, attacker: ObjectId, power: i32) -> i32 {
         self.damage(target, attacker, power, mir_proto::element::NONE, false)
     }
+
+    /// Test helper: a monster's experience value.
+    #[cfg(test)]
+    pub fn test_monster_experience(&self, id: ObjectId) -> i64 {
+        self.objects[&id].monster_ref().experience as i64
+    }
 }

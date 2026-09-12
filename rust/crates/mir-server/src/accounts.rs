@@ -54,6 +54,9 @@ pub struct CharacterRecord {
     pub rebirth: i32,
     #[serde(default)]
     pub quests: Vec<StoredQuest>,
+    /// Zircon `AllowGroup` (per character here, per account in Zircon).
+    #[serde(default)]
+    pub allow_group: bool,
 }
 
 /// Zircon `UserQuest` as persisted.
@@ -299,6 +302,7 @@ impl Accounts {
             currencies: Vec::new(),
             rebirth: 0,
             quests: Vec::new(),
+            allow_group: false,
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;
@@ -361,6 +365,7 @@ pub fn test_character(name: &str) -> CharacterRecord {
         currencies: Vec::new(),
         rebirth: 0,
         quests: Vec::new(),
+        allow_group: false,
     }
 }
 

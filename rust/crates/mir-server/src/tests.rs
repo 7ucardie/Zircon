@@ -1658,3 +1658,101 @@ fn chat_routes_local_shout_and_whisper() {
     world.chat(bob, "!!team".into());
     assert!(said(&mut world).is_empty());
 }
+
+#[test]
+fn groups_invite_join_share_experience_and_dissolve() {
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let bob = world.add_player(2, 2, &test_character("Bob")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let conn_of = |world: &World, id: ObjectId| world.objects[&id].player().unwrap().conn;
+    let (ca, cb) = (conn_of(&world, alice), conn_of(&world, bob));
+    let to = |world: &mut World| -> Vec<(world::ConnId, ServerMessage)> {
+        world
+            .outgoing
+            .drain(..)
+            .map(|o| match o {
+                Outgoing::To(c, m) => (c, m),
+            })
+            .collect()
+    };
+
+    // Bob has not allowed groups: the invite is refused with a system line.
+    world.group_invite(alice, "bob".into());
+    let out = to(&mut world);
+    assert!(out.iter().any(|(c, m)| *c == ca
+        && matches!(m, ServerMessage::Say { text, .. } if text.contains("not allowing"))));
+    assert!(!out
+        .iter()
+        .any(|(_, m)| matches!(m, ServerMessage::GroupInvite { .. })));
+
+    world.group_switch(bob, true);
+    world.group_invite(alice, "BOB".into());
+    let out = to(&mut world);
+    assert!(out
+        .iter()
+        .any(|(c, m)| *c == cb
+            && matches!(m, ServerMessage::GroupInvite { from } if from == "Alice")));
+
+    world.group_response(bob, true);
+    let out = to(&mut world);
+    // Alice (inviter, now leader) learns of herself and Bob; Bob gets Alice
+    // then himself.
+    let members = |c: world::ConnId, out: &[(world::ConnId, ServerMessage)]| -> Vec<ObjectId> {
+        out.iter()
+            .filter_map(|(cc, m)| match m {
+                ServerMessage::GroupMember { id, .. } if *cc == c => Some(*id),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(members(ca, &out), vec![alice, bob]);
+    assert_eq!(members(cb, &out), vec![alice, bob]);
+    assert!(out
+        .iter()
+        .any(|(c, m)| *c == ca && matches!(m, ServerMessage::GroupSwitch { allow: true })));
+
+    // Group chat now reaches both.
+    world.chat(bob, "!!hi".into());
+    let out = to(&mut world);
+    assert_eq!(
+        out.iter()
+            .filter(|(_, m)| matches!(m, ServerMessage::Say { text, .. } if text == "Bob: hi"))
+            .count(),
+        2
+    );
+
+    // A kill by Alice shares experience with Bob standing nearby.
+    let before_a = world.test_experience(alice);
+    let before_b = world.test_experience(bob);
+    let chicken = nearest_chicken(&world, alice);
+    let exp = world.test_monster_experience(chicken);
+    world.test_set_target(chicken, alice);
+    world.test_damage(chicken, alice, 1000);
+    let gained_a = world.test_experience(alice) - before_a;
+    let gained_b = world.test_experience(bob) - before_b;
+    assert!(gained_a > 0 && gained_b > 0, "{gained_a} {gained_b}");
+    // Two level-1 members: 1.12 * exp split in half each.
+    let expect = ((exp as f64 * 1.12) * 0.5) as u64;
+    assert!(gained_a.abs_diff(expect) <= 1, "{gained_a} vs {expect}");
+
+    // Only the leader may kick; a group of one dissolves.
+    world.group_remove(bob, "Alice".into());
+    let out = to(&mut world);
+    assert!(out.iter().any(|(c, m)| *c == cb
+        && matches!(m, ServerMessage::Say { text, .. } if text.contains("not the leader"))));
+    world.group_remove(alice, "bob".into());
+    let out = to(&mut world);
+    assert!(out
+        .iter()
+        .any(|(c, m)| *c == cb && matches!(m, ServerMessage::GroupRemove { id } if *id == bob)));
+    assert!(out
+        .iter()
+        .any(|(c, m)| *c == ca && matches!(m, ServerMessage::GroupRemove { id } if *id == alice)));
+    assert!(world.objects[&alice].player().unwrap().group.is_none());
+    assert!(world.objects[&bob].player().unwrap().group.is_none());
+}

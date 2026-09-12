@@ -84,6 +84,12 @@ pub struct Game {
     magics: Vec<MagicSummary>,
     /// Quest log (Zircon `ClientUserQuest`).
     quests: Vec<mir_proto::UserQuestSummary>,
+    /// Group members in join order (the first leads).
+    group: Vec<(ObjectId, String)>,
+    allow_group: bool,
+    /// Pending invite: who asked.
+    group_invite: Option<String>,
+    auto_group_done: bool,
     /// Stance skills currently on (Thrusting, Half Moon).
     toggles: HashSet<u16>,
     /// Slaying's power attack is charged.
@@ -201,6 +207,10 @@ impl Game {
             pending_messages: Vec::new(),
             magics: Vec::new(),
             quests: Vec::new(),
+            group: Vec::new(),
+            allow_group: false,
+            group_invite: None,
+            auto_group_done: false,
             toggles: HashSet::new(),
             slaying_ready: false,
             cooldowns: StdHashMap::new(),
@@ -416,6 +426,32 @@ impl Game {
         {
             if now > 3000 && self.use_item_time == 0 {
                 self.belt_key(slot, now, conn);
+            }
+        }
+        // ZIRCON_AUTO_GROUP=name invites that player 3 s after entry (and
+        // allows groups); ZIRCON_AUTO_GROUP_ACCEPT=1 accepts any invite.
+        if let Ok(name) = std::env::var("ZIRCON_AUTO_GROUP") {
+            if now > 3000 && !self.auto_group_done && self.user.is_some() {
+                self.auto_group_done = true;
+                if let Some(c) = conn {
+                    c.send(ClientMessage::GroupSwitch { allow: true });
+                    c.send(ClientMessage::GroupInvite { name });
+                }
+                self.windows.group_open = true;
+            }
+        }
+        if std::env::var_os("ZIRCON_AUTO_GROUP_ACCEPT").is_some() {
+            if !self.allow_group && now > 1000 && self.user.is_some() && !self.auto_group_done {
+                self.auto_group_done = true;
+                if let Some(c) = conn {
+                    c.send(ClientMessage::GroupSwitch { allow: true });
+                }
+            }
+            if self.group_invite.take().is_some() {
+                if let Some(c) = conn {
+                    c.send(ClientMessage::GroupResponse { accept: true });
+                }
+                self.windows.group_open = true;
             }
         }
         // ZIRCON_AUTO_CHAT=text says it once, 2 s after entering the world.

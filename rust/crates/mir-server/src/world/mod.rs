@@ -293,6 +293,10 @@ pub struct PlayerData {
     /// Zircon `ShoutExpiry` / `Account.GlobalShoutExpiry`.
     pub shout_time: u64,
     pub global_shout_time: u64,
+    pub allow_group: bool,
+    pub group: Option<u32>,
+    /// Who invited us (Zircon `GroupInvitation`).
+    pub group_invite: Option<ObjectId>,
     pub quests: Vec<crate::accounts::StoredQuest>,
     /// Passive skill stats (Zircon `GetPassiveStats` and combat checks).
     pub def_mastery: i32,
@@ -621,6 +625,9 @@ pub struct World {
     /// Events raised this tick: (subject object, message).
     events: Vec<(ObjectId, ServerMessage)>,
     pub outgoing: Vec<Outgoing>,
+    /// Groups by id; the first member leads.
+    groups: BTreeMap<u32, Vec<ObjectId>>,
+    next_group: u32,
     last_spawn_check: u64,
     force_map: Option<String>,
     drops_by_monster: HashMap<i32, Vec<DropDef>>,
@@ -630,6 +637,7 @@ mod ai_profile;
 mod buffs;
 mod chat;
 mod combat;
+mod groups;
 mod inventory;
 mod magic;
 mod magic_wave4;
@@ -711,6 +719,8 @@ impl World {
             pending_magics: Vec::new(),
             events: Vec::new(),
             outgoing: Vec::new(),
+            groups: BTreeMap::new(),
+            next_group: 1,
             last_spawn_check: 0,
             force_map,
         }

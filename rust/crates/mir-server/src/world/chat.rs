@@ -152,12 +152,6 @@ impl World {
             }
         }
     }
-
-    /// Members of the speaker's group (including the speaker); empty when
-    /// not grouped.
-    pub(super) fn group_members(&self, _id: ObjectId) -> Vec<ObjectId> {
-        Vec::new()
-    }
 }
 
 fn say(id: Option<ObjectId>, kind: ChatKind, text: String) -> ServerMessage {

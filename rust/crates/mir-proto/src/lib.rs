@@ -1321,6 +1321,21 @@ pub enum ClientMessage {
     Chat {
         text: String,
     },
+    /// Allow group invites (turning it off leaves the group).
+    GroupSwitch {
+        allow: bool,
+    },
+    GroupInvite {
+        name: String,
+    },
+    /// Answer the pending invite.
+    GroupResponse {
+        accept: bool,
+    },
+    /// Leader kicks a member by name (or leaves by naming themself).
+    GroupRemove {
+        name: String,
+    },
     /// Return to town while dead (Zircon `C.TownRevive`).
     TownRevive,
     NpcCall {
@@ -1555,6 +1570,22 @@ pub enum ServerMessage {
     /// System / status line (Zircon `MessageType.System`).
     Chat {
         text: String,
+    },
+    GroupSwitch {
+        allow: bool,
+    },
+    GroupInvite {
+        from: String,
+    },
+    /// A member joined (sent per existing member to a joiner, self last);
+    /// the first member received is the leader.
+    GroupMember {
+        id: ObjectId,
+        name: String,
+    },
+    /// A member left; your own id means the group is gone for you.
+    GroupRemove {
+        id: ObjectId,
     },
     /// Someone spoke; `id` set for local talk shows a bubble over them.
     Say {

@@ -1114,14 +1114,50 @@ impl World {
         self.events.push((id, ServerMessage::ObjectDie { id }));
         self.monster_death_effects(id);
         if let Some(owner) = owner {
-            self.gain_experience(owner, exp as u64);
-            let (def, map) = {
+            let (def, map, loc) = {
                 let o = &self.objects[&id];
-                (o.monster_ref().def, o.map)
+                (o.monster_ref().def, o.map, o.location)
             };
+            // Zircon `YieldReward`: group members on the map within view
+            // range share drops; the living ones split the experience
+            // (+6% per member) by level.
+            let sharers = self.group_sharers(owner, map, loc);
+            let alive: Vec<ObjectId> = sharers
+                .iter()
+                .copied()
+                .filter(|m| !self.objects[m].dead)
+                .collect();
+            if alive.is_empty() {
+                let o = &self.objects[&owner];
+                if !o.dead && o.map == map && o.location.distance(loc) <= MAX_VIEW_RANGE {
+                    self.gain_experience(owner, exp as u64);
+                }
+            } else {
+                let total: i64 = alive
+                    .iter()
+                    .map(|m| self.objects[m].player().unwrap().level as i64)
+                    .sum();
+                let mut shared = exp;
+                if alive.len() > 1 {
+                    shared += shared * 0.06 * alive.len() as f64;
+                }
+                for m in alive {
+                    let level = self.objects[&m].player().unwrap().level as f64;
+                    self.gain_experience(m, (shared * level / total.max(1) as f64) as u64);
+                }
+            }
             self.quest_kill_progress(owner, def, map);
+            if sharers.is_empty() {
+                self.drop_loot(id, Some(owner), 1);
+            } else {
+                let n = sharers.len();
+                for m in sharers {
+                    self.drop_loot(id, Some(m), n);
+                }
+            }
+        } else {
+            self.drop_loot(id, None, 1);
         }
-        self.drop_loot(id, owner);
     }
 
     pub(super) fn roll_range(&mut self, min: i32, max: i32) -> i32 {

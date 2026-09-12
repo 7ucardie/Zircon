@@ -553,6 +553,40 @@ impl Game {
             }
             ServerMessage::NpcClose => self.windows.npc = None,
             ServerMessage::Chat { text } => self.say(text, now),
+            ServerMessage::GroupSwitch { allow } => self.allow_group = allow,
+            ServerMessage::GroupInvite { from } => {
+                self.say_colored(
+                    format!("{from} invites you to a group (P to answer)."),
+                    now,
+                    [0, 255, 255, 255],
+                );
+                self.group_invite = Some(from);
+            }
+            ServerMessage::GroupMember { id, name } => {
+                if !self.group.iter().any(|(i, _)| *i == id) {
+                    if Some(id) != self.user {
+                        self.say_colored(
+                            format!("{name} has joined the group."),
+                            now,
+                            [0, 255, 255, 255],
+                        );
+                    }
+                    self.group.push((id, name));
+                }
+            }
+            ServerMessage::GroupRemove { id } => {
+                if Some(id) == self.user {
+                    self.group.clear();
+                    self.say_colored("You have left the group.".into(), now, [0, 255, 255, 255]);
+                } else if let Some(pos) = self.group.iter().position(|(i, _)| *i == id) {
+                    let (_, name) = self.group.remove(pos);
+                    self.say_colored(
+                        format!("{name} has left the group."),
+                        now,
+                        [0, 255, 255, 255],
+                    );
+                }
+            }
             ServerMessage::Say { id, kind, text } => {
                 use mir_proto::ChatKind;
                 // Zircon chat colours (ChatPanel): white talk, yellow shout,
@@ -601,6 +635,9 @@ impl Game {
         self.magics.clear();
         self.toggles.clear();
         self.slaying_ready = false;
+        self.group.clear();
+        self.group_invite = None;
+        self.auto_group_done = false;
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

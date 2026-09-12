@@ -95,6 +95,9 @@ impl World {
                 npc_roll: None,
                 shout_time: 0,
                 global_shout_time: 0,
+                allow_group: rec.allow_group,
+                group: None,
+                group_invite: None,
                 quests: rec.quests.clone(),
                 def_mastery: 0,
                 phys_immunity: 0,
@@ -276,6 +279,7 @@ impl World {
         rec.currencies = p.currencies.iter().map(|(k, v)| (*k, *v)).collect();
         rec.rebirth = p.rebirth;
         rec.quests = p.quests.clone();
+        rec.allow_group = p.allow_group;
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;

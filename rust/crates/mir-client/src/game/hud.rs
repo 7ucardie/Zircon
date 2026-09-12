@@ -33,6 +33,9 @@ impl Game {
                 use_item_time,
                 objects,
                 user,
+                group,
+                allow_group,
+                group_invite,
                 ..
             } = self;
             let player_name = character
@@ -80,6 +83,10 @@ impl Game {
                 dead,
                 quests,
                 player_name: &player_name,
+                group,
+                allow_group: *allow_group,
+                group_invite: group_invite.as_deref(),
+                user: *user,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -119,6 +126,10 @@ impl Game {
                     self.audio.play(sound_table::idx::BUTTON_C);
                     kept.push(m);
                 }
+                ClientMessage::GroupResponse { accept } => {
+                    self.group_invite = None;
+                    kept.push(ClientMessage::GroupResponse { accept });
+                }
                 other => kept.push(other),
             }
         }
@@ -126,6 +137,7 @@ impl Game {
         self.windows_open_last_frame = self.windows.inventory_open
             || self.windows.character_open
             || self.windows.skills_open
+            || self.windows.group_open
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);
         if over {

@@ -61,6 +61,9 @@ impl World {
     }
 
     pub fn remove_object(&mut self, id: ObjectId) {
+        if self.objects.get(&id).is_some_and(|o| o.player().is_some()) {
+            self.group_forget(id);
+        }
         // A leaving player takes its pets along.
         let pets: Vec<ObjectId> = self
             .objects

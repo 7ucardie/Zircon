@@ -63,6 +63,17 @@ once per 30 s) and `!!text` goes to your group. Lines are coloured by kind
 (white talk, yellow shout, green whispers, cyan group, orange global, red
 system); `ZIRCON_AUTO_CHAT=text` says something two seconds after entry.
 
+Groups follow Zircon's `PlayerObject.Social`: `P` opens the group window
+with an "Allow group" toggle (invites are refused while it is off), a name
+box with Invite, Kick buttons for the leader and Leave. The invitee gets a
+prompt (Accept / Decline); the first member leads, groups hold 15 and a
+group left with one member dissolves. Members on the same map within 18
+cells share kills: the living ones split the experience (+6% per member,
+weighted by level) and each rolls the drops with the chance and gold
+divided by the member count, owning what they roll. `!!text` is group
+chat. `ZIRCON_AUTO_GROUP=name` invites that player after entry and
+`ZIRCON_AUTO_GROUP_ACCEPT=1` accepts any invite.
+
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's

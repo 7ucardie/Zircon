@@ -56,14 +56,26 @@ impl Game {
         conn: Option<&Connection>,
     ) {
         self.chat_keys(conn);
+        // A focused window text box owns the keyboard.
+        if self.windows.typing() {
+            self.input.digit = None;
+            self.input.fkey = None;
+            self.input.tab = false;
+        }
         // Keyboard shortcuts (Zircon defaults: Tab pick up, W bag, Q character).
-        for ch in self.input.text.chars() {
+        let shortcuts: String = if self.windows.typing() {
+            String::new()
+        } else {
+            self.input.text.clone()
+        };
+        for ch in shortcuts.chars() {
             match ch.to_ascii_lowercase() {
                 'w' | 'i' => self.windows.inventory_open = !self.windows.inventory_open,
                 'q' | 'c' => self.windows.character_open = !self.windows.character_open,
                 'e' | 's' => self.windows.skills_open = !self.windows.skills_open,
                 'z' => self.windows.belt_open = !self.windows.belt_open,
                 'l' => self.windows.quests_open = !self.windows.quests_open,
+                'p' => self.windows.group_open = !self.windows.group_open,
                 _ => {}
             }
         }
@@ -82,6 +94,7 @@ impl Game {
             self.windows.inventory_open = false;
             self.windows.character_open = false;
             self.windows.skills_open = false;
+            self.windows.group_open = false;
             if self.windows.npc.take().is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::NpcClose);

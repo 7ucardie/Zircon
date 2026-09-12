@@ -511,6 +511,18 @@ fn handle_message(
         }
         (Stage::InGame { object, .. }, ClientMessage::PickUp) => world.pick_up(object),
         (Stage::InGame { object, .. }, ClientMessage::Chat { text }) => world.chat(object, text),
+        (Stage::InGame { object, .. }, ClientMessage::GroupSwitch { allow }) => {
+            world.group_switch(object, allow)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GroupInvite { name }) => {
+            world.group_invite(object, name)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GroupResponse { accept }) => {
+            world.group_response(object, accept)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GroupRemove { name }) => {
+            world.group_remove(object, name)
+        }
         (Stage::InGame { object, .. }, ClientMessage::NpcCall { id }) => world.npc_call(object, id),
         (Stage::InGame { object, .. }, ClientMessage::NpcButton { button }) => {
             world.npc_button(object, button)
