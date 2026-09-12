@@ -2,9 +2,10 @@
 
 Status: Phase 1 (writers) landed 2026-09-12 in `mir-formats`; phase 2's
 generic data editor (`mir-editor`: tables, form, previews, relations, undo,
-save with backup) landed the same day. Still open from phase 2: the live
-`GameData::load` check, server hot reload, the map/region/spawn panel.
-Phases 3-4 are proposals.
+save with backup, Validate = server loader + consistency checks) landed the
+same day, and `mir-server` hot-reloads `System.db` when the file changes or
+on SIGHUP. Still open from phase 2: the map/region/spawn panel. Phases 3-4
+are proposals.
 
 ## What exists today
 

@@ -38,6 +38,15 @@ pub struct Editor {
     form_text: HashMap<usize, String>,
     form_error: Option<String>,
     monster_direction: u8,
+    /// Client `Map/` folder for the walkability checks.
+    map_dir: PathBuf,
+    /// Last validation run: load error or the list of problems.
+    validation: Option<Validation>,
+}
+
+enum Validation {
+    Failed(String),
+    Problems(Vec<mir_server::data::Problem>),
 }
 
 const NAME_PROPS: [&str; 7] = [
@@ -62,7 +71,7 @@ impl Editor {
             ),
             db_path,
             db,
-            previews: Previews::new(assets),
+            previews: Previews::new(&assets),
             dirty: false,
             selected: 0,
             filter: String::new(),
@@ -73,6 +82,8 @@ impl Editor {
             form_text: HashMap::new(),
             form_error: None,
             monster_direction: 4,
+            map_dir: assets.join("Map"),
+            validation: None,
         };
         if let Ok(name) = std::env::var("ZIRCON_EDITOR_COLLECTION") {
             if let Some(i) = ed
@@ -90,6 +101,20 @@ impl Editor {
         if let Ok(r) = std::env::var("ZIRCON_EDITOR_ROW") {
             let rows = ed.visible_rows();
             ed.row = r.parse::<usize>().ok().and_then(|i| rows.get(i).copied());
+        }
+        if std::env::var_os("ZIRCON_EDITOR_VALIDATE").is_some() {
+            // Visual check: break one spawn so the panel has something to show.
+            if std::env::var("ZIRCON_EDITOR_VALIDATE").as_deref() == Ok("break") {
+                if let Some(c) = ed.db.collection_mut("RespawnInfo") {
+                    if let Some(first) = c.records.first().cloned() {
+                        let mut r = first;
+                        c.set(&mut r, "Monster", Value::Int(999_999));
+                        c.records[0] = r;
+                        ed.dirty = true;
+                    }
+                }
+            }
+            ed.validate();
         }
         Ok(ed)
     }
@@ -211,6 +236,19 @@ impl Editor {
         }
     }
 
+    /// Run the server's loader and consistency checks on the in-memory data.
+    fn validate(&mut self) {
+        self.validation = Some(match mir_server::data::GameData::from_db(&self.db) {
+            Ok(data) => Validation::Problems(data.validate(&self.map_dir)),
+            Err(e) => Validation::Failed(format!("{e:#}")),
+        });
+        self.status = match &self.validation {
+            Some(Validation::Problems(p)) if p.is_empty() => "Validation passed".into(),
+            Some(Validation::Problems(p)) => format!("{} problems found", p.len()),
+            _ => "Validation failed: the server cannot load this data".into(),
+        };
+    }
+
     fn reload(&mut self) {
         match MirDb::load(&self.db_path) {
             Ok(db) => {
@@ -244,6 +282,7 @@ impl Editor {
         self.top_bar(ui);
         self.collections_panel(ui);
         self.detail_panel(ui);
+        self.validation_panel(ui);
         egui::CentralPanel::default().show(ui, |ui| self.table(ui));
     }
 
@@ -302,11 +341,69 @@ impl Editor {
                     self.row = None;
                     self.form_text.clear();
                 }
+                if ui.button("Validate").clicked() {
+                    self.validate();
+                }
                 ui.separator();
                 let dirty = if self.dirty { " (unsaved changes)" } else { "" };
                 ui.label(format!("{}{dirty}", self.status));
             });
         });
+    }
+
+    /// Bottom panel with the last validation result; problems link to rows.
+    fn validation_panel(&mut self, ui: &mut egui::Ui) {
+        let Some(v) = &self.validation else {
+            return;
+        };
+        let mut jump = None;
+        let mut close = false;
+        egui::Panel::bottom("validation")
+            .default_size(160.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.heading("Validation");
+                    if ui.button("Close").clicked() {
+                        close = true;
+                    }
+                });
+                egui::ScrollArea::vertical().show(ui, |ui| match v {
+                    Validation::Failed(e) => {
+                        ui.colored_label(egui::Color32::from_rgb(220, 80, 80), e);
+                    }
+                    Validation::Problems(p) if p.is_empty() => {
+                        ui.label("No problems: the server loads this data cleanly.");
+                    }
+                    Validation::Problems(p) => {
+                        for problem in p {
+                            if ui.link(problem.to_string()).clicked() {
+                                jump = Some((problem.collection.clone(), problem.index));
+                            }
+                        }
+                    }
+                });
+            });
+        if close {
+            self.validation = None;
+        }
+        if let Some((collection, index)) = jump {
+            if let Some(ci) = self
+                .db
+                .collections
+                .iter()
+                .position(|c| c.short_name() == collection)
+            {
+                // DropInfo has no Index: the problem carries the row position.
+                let pos = if collection == "DropInfo" {
+                    Some(index as usize)
+                } else {
+                    self.position_of_index(ci, index)
+                };
+                if let Some(pos) = pos {
+                    self.jump = Some((ci, pos));
+                }
+            }
+        }
     }
 
     fn collections_panel(&mut self, ui: &mut egui::Ui) {

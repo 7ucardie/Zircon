@@ -311,6 +311,32 @@ impl Accounts {
     }
 }
 
+/// A fresh level-1 warrior record, for `--inspect` and tests.
+pub fn test_character(name: &str) -> CharacterRecord {
+    CharacterRecord {
+        id: 0,
+        name: name.to_string(),
+        class: mir_proto::Class::Warrior,
+        gender: mir_proto::Gender::Male,
+        hair: 1,
+        level: 1,
+        experience: 0,
+        hp: 0,
+        mp: 0,
+        map: String::new(),
+        location: mir_proto::Point::default(),
+        direction: mir_proto::Direction::Down,
+        created: 0,
+        last_login: 0,
+        deleted: false,
+        items: Vec::new(),
+        gold: 0,
+        next_item_id: 0,
+        magics: Vec::new(),
+        belt: Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

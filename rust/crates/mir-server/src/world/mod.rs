@@ -523,7 +523,7 @@ impl World {
         self
     }
 
-    pub fn new(data: GameData, map_dir: impl AsRef<Path>, force_map: Option<String>) -> World {
+    fn drops_by_monster(data: &GameData) -> HashMap<i32, Vec<DropDef>> {
         let mut drops_by_monster: HashMap<i32, Vec<DropDef>> = HashMap::new();
         for d in &data.drops {
             drops_by_monster
@@ -531,6 +531,31 @@ impl World {
                 .or_default()
                 .push(d.clone());
         }
+        drops_by_monster
+    }
+
+    /// Hot reload: swap in freshly loaded game data. Live objects keep their
+    /// state; new definitions apply to the next spawn, stat refresh, drop or
+    /// purchase. Spawn groups of loaded maps are refreshed in place.
+    pub fn reload_data(&mut self, data: GameData) {
+        self.drops_by_monster = World::drops_by_monster(&data);
+        self.data = data;
+        for map in self.maps.values_mut() {
+            for g in &mut map.spawns {
+                if let Some(def) = self.data.respawns.iter().find(|r| r.index == g.def.index) {
+                    g.def = def.clone();
+                }
+            }
+        }
+        let players: Vec<ObjectId> = self.players().map(|o| o.id).collect();
+        for id in players {
+            self.refresh_stats(id, false);
+            self.send_player_stats(id);
+        }
+    }
+
+    pub fn new(data: GameData, map_dir: impl AsRef<Path>, force_map: Option<String>) -> World {
+        let drops_by_monster = World::drops_by_monster(&data);
         World {
             drops_by_monster,
             data,

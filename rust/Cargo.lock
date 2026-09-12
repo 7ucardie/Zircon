@@ -2133,6 +2133,7 @@ dependencies = [
  "eframe",
  "egui_extras",
  "mir-formats",
+ "mir-server",
  "png",
 ]
 

@@ -136,11 +136,16 @@ the selected row (complex values as text: stats `2:10;8:3`, arrays `1,2,3`,
 points `x,y`); item, magic, NPC and monster sprite previews; links from
 foreign keys (Item, Monster, Map, Region, Page...) and a list of every record
 that points back at the selected one (drops, stats, shop goods). Add,
-Duplicate, Delete, Undo (Cmd+Z), Save (Cmd+S). Saving writes a
-`System.db.bak-<timestamp>` copy first; restart `mir-server` to pick up the
-change. `--db FILE` edits another database; `ZIRCON_SCREENSHOT`,
-`ZIRCON_EDITOR_COLLECTION`, `ZIRCON_EDITOR_FILTER` and `ZIRCON_EDITOR_ROW`
-automate a visual check.
+Duplicate, Delete, Undo (Cmd+Z), Save (Cmd+S). Validate runs the server's
+own loader plus consistency checks (dangling monster/item/region references,
+spawn regions with no walkable cell, books without a magic) on the unsaved
+data and links each finding to its row. Saving writes a
+`System.db.bak-<timestamp>` copy first; a running `mir-server` notices the
+changed file within 2 s and reloads it (SIGHUP forces a reload on unix), so
+an edited potion heals for the new amount on its next use without a restart.
+`--db FILE` edits another database; `ZIRCON_SCREENSHOT`,
+`ZIRCON_EDITOR_COLLECTION`, `ZIRCON_EDITOR_FILTER`, `ZIRCON_EDITOR_ROW` and
+`ZIRCON_EDITOR_VALIDATE` automate a visual check.
 
 Underneath, `mir-formats` writes as well as reads: `MirDb::save`,
 `MapFile::save` and `ZlBuilder::save` re-encode `System.db`, `.map` and `.Zl`

@@ -9,7 +9,9 @@
 //!
 //! Automation for visual checks: `ZIRCON_SCREENSHOT=path.png:secs` saves a
 //! frame and exits; `ZIRCON_EDITOR_COLLECTION=ItemInfo`,
-//! `ZIRCON_EDITOR_FILTER=Potion` and `ZIRCON_EDITOR_ROW=0` preselect state.
+//! `ZIRCON_EDITOR_FILTER=Potion` and `ZIRCON_EDITOR_ROW=0` preselect state;
+//! `ZIRCON_EDITOR_VALIDATE=1` runs the validation on open (`break` first
+//! corrupts a spawn so the panel shows a finding).
 
 mod app;
 mod preview;

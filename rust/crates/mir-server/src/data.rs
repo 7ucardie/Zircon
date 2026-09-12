@@ -266,6 +266,32 @@ pub const EXPERIENCE: [u64; 41] = [
     8200000, 9000000, 11000000,
 ];
 
+/// One finding of [`GameData::validate`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem {
+    /// Collection short name (`RespawnInfo`).
+    pub collection: String,
+    /// Record `Index` (for `DropInfo`, which has none, the row position).
+    pub index: i32,
+    pub message: String,
+}
+
+impl Problem {
+    fn new(collection: &str, index: i32, message: String) -> Problem {
+        Problem {
+            collection: collection.to_string(),
+            index,
+            message,
+        }
+    }
+}
+
+impl std::fmt::Display for Problem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} #{}: {}", self.collection, self.index, self.message)
+    }
+}
+
 #[derive(Debug)]
 pub struct GameData {
     pub maps: BTreeMap<i32, MapDef>,
@@ -300,6 +326,12 @@ impl GameData {
     pub fn load(path: impl AsRef<Path>) -> Result<GameData> {
         let db = MirDb::load(path.as_ref())
             .with_context(|| format!("loading {}", path.as_ref().display()))?;
+        GameData::from_db(&db)
+    }
+
+    /// Build the game data from an already parsed database (the editor
+    /// validates unsaved edits this way).
+    pub fn from_db(db: &MirDb) -> Result<GameData> {
         let get = |name: &str| {
             db.collection(name)
                 .with_context(|| format!("System.db has no {name} collection"))
@@ -668,6 +700,140 @@ impl GameData {
             gold_item,
             magics,
         })
+    }
+
+    /// Consistency problems the loader tolerates but the game would trip on:
+    /// dangling references and spawn regions with no walkable cell. `map_dir`
+    /// is the client `Map/` folder; map files that fail to load are reported.
+    pub fn validate(&self, map_dir: &Path) -> Vec<Problem> {
+        let mut out = Vec::new();
+        let mut map_files: HashMap<i32, Option<mir_formats::MapFile>> = HashMap::new();
+        fn map_file<'a>(
+            cache: &'a mut HashMap<i32, Option<mir_formats::MapFile>>,
+            data: &GameData,
+            map_dir: &Path,
+            index: i32,
+            out: &mut Vec<Problem>,
+        ) -> Option<&'a mir_formats::MapFile> {
+            if let std::collections::hash_map::Entry::Vacant(slot) = cache.entry(index) {
+                let loaded = data.maps.get(&index).and_then(|m| {
+                    match mir_formats::MapFile::load(map_dir.join(format!("{}.map", m.file_name))) {
+                        Ok(f) => Some(f),
+                        Err(e) => {
+                            out.push(Problem::new(
+                                "MapInfo",
+                                index,
+                                format!("map file {}.map: {e}", m.file_name),
+                            ));
+                            None
+                        }
+                    }
+                });
+                slot.insert(loaded);
+            }
+            cache[&index].as_ref()
+        }
+        for r in self.regions.values() {
+            if !self.maps.contains_key(&r.map) {
+                out.push(Problem::new(
+                    "MapRegion",
+                    r.index,
+                    format!("map {} does not exist", r.map),
+                ));
+            }
+        }
+        for sp in &self.respawns {
+            if !self.monsters.contains_key(&sp.monster) {
+                out.push(Problem::new(
+                    "RespawnInfo",
+                    sp.index,
+                    format!("monster {} does not exist", sp.monster),
+                ));
+            }
+            let Some(region) = self.regions.get(&sp.region) else {
+                out.push(Problem::new(
+                    "RespawnInfo",
+                    sp.index,
+                    format!("region {} does not exist", sp.region),
+                ));
+                continue;
+            };
+            let Some(file) = map_file(&mut map_files, self, map_dir, region.map, &mut out) else {
+                continue;
+            };
+            let walkable = region
+                .points(file.width as i32)
+                .iter()
+                .any(|(x, y)| file.is_walkable(*x, *y));
+            if !walkable {
+                out.push(Problem::new(
+                    "RespawnInfo",
+                    sp.index,
+                    format!(
+                        "region {} ({}) has no walkable cell",
+                        sp.region, region.description
+                    ),
+                ));
+            }
+        }
+        for sz in &self.safe_zones {
+            if !self.regions.contains_key(&sz.region) {
+                out.push(Problem::new(
+                    "SafeZoneInfo",
+                    sz.index,
+                    format!("region {} does not exist", sz.region),
+                ));
+            }
+        }
+        for mv in &self.movements {
+            for (what, region) in [
+                ("source", mv.source_region),
+                ("destination", mv.destination_region),
+            ] {
+                if !self.regions.contains_key(&region) {
+                    out.push(Problem::new(
+                        "MovementInfo",
+                        mv.index,
+                        format!("{what} region {region} does not exist"),
+                    ));
+                }
+            }
+        }
+        for (i, d) in self.drops.iter().enumerate() {
+            if !self.monsters.contains_key(&d.monster) {
+                out.push(Problem::new(
+                    "DropInfo",
+                    i as i32,
+                    format!("monster {} does not exist", d.monster),
+                ));
+            }
+            if !self.items.contains_key(&d.item) {
+                out.push(Problem::new(
+                    "DropInfo",
+                    i as i32,
+                    format!("item {} does not exist", d.item),
+                ));
+            }
+        }
+        for n in &self.npcs {
+            if !self.regions.contains_key(&n.region) {
+                out.push(Problem::new(
+                    "NPCInfo",
+                    n.index,
+                    format!("region {} does not exist", n.region),
+                ));
+            }
+        }
+        for item in self.items.values() {
+            if item.item_type == 14 && self.magic_by_index(item.shape).is_none() {
+                out.push(Problem::new(
+                    "ItemInfo",
+                    item.index,
+                    format!("book points at missing magic {}", item.shape),
+                ));
+            }
+        }
+        out
     }
 
     /// Highest base-stat row with `level <= wanted` for the class (Zircon `AddBaseStats`).

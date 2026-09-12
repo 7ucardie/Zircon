@@ -24,6 +24,8 @@ pub enum Inbound {
     Disconnected {
         conn: ConnId,
     },
+    /// Re-read the database (SIGHUP or a changed file).
+    Reload,
 }
 
 pub async fn listen(
