@@ -178,6 +178,8 @@ pub enum Appearance {
         name: String,
         /// Zircon `MonsterImage` value; the client maps it to a library + base index.
         image: u16,
+        /// Name of the player this pet fights for.
+        owner: Option<String>,
     },
     Npc {
         name: String,
@@ -390,6 +392,7 @@ pub mod magic_type {
     pub const ICE_BOLT: u16 = 203;
     pub const GUST_BLAST: u16 = 204;
     pub const REPULSION: u16 = 205;
+    pub const ELECTRIC_SHOCK: u16 = 206;
     pub const TELEPORTATION: u16 = 207;
     pub const ADAMANTINE_FIRE_BALL: u16 = 208;
     pub const THUNDER_BOLT: u16 = 209;
@@ -421,6 +424,10 @@ pub mod magic_type {
     pub const GREATER_EVIL_SLAYER: u16 = 308;
     pub const RESILIENCE: u16 = 309;
     pub const MASS_HEAL: u16 = 313;
+    pub const SUMMON_SKELETON: u16 = 332;
+    pub const SUMMON_SHINSU: u16 = 333;
+    pub const SUMMON_JIN_SKELETON: u16 = 334;
+    pub const STRENGTH_OF_FAITH: u16 = 335;
     pub const WILLOW_DANCE: u16 = 401;
     pub const VINE_TREE_DANCE: u16 = 402;
     pub const DISCIPLINE: u16 = 403;
@@ -504,6 +511,7 @@ pub mod magic_type {
                 | BECKON
                 | EXPEL_UNDEAD
                 | CHAIN_LIGHTNING
+                | ELECTRIC_SHOCK
         )
     }
     /// Spells cast on a ground cell.
@@ -539,6 +547,10 @@ pub mod magic_type {
                 | REFLECT_DAMAGE
                 | FETTER
                 | RENOUNCE
+                | SUMMON_SKELETON
+                | SUMMON_SHINSU
+                | SUMMON_JIN_SKELETON
+                | STRENGTH_OF_FAITH
         )
     }
     /// Spells that only use the facing direction.
@@ -611,6 +623,11 @@ pub mod magic_type {
                 | METEOR_SHOWER
                 | RENOUNCE
                 | TEMPEST
+                | ELECTRIC_SHOCK
+                | SUMMON_SKELETON
+                | SUMMON_SHINSU
+                | SUMMON_JIN_SKELETON
+                | STRENGTH_OF_FAITH
         )
     }
 }
@@ -626,6 +643,7 @@ pub mod buff_type {
     pub const HEAL: u16 = 300;
     pub const MAGIC_RESISTANCE: u16 = 302;
     pub const RESILIENCE: u16 = 303;
+    pub const STRENGTH_OF_FAITH: u16 = 306;
     pub const POISONOUS_CLOUD: u16 = 400;
     pub const FULL_BLOOM: u16 = 401;
     pub const WHITE_LOTUS: u16 = 402;
@@ -634,7 +652,7 @@ pub mod buff_type {
     pub fn is_visible(b: u16) -> bool {
         matches!(
             b,
-            MAGIC_SHIELD | MAGIC_RESISTANCE | RESILIENCE | REFLECT_DAMAGE
+            MAGIC_SHIELD | MAGIC_RESISTANCE | RESILIENCE | REFLECT_DAMAGE | STRENGTH_OF_FAITH
         )
     }
 }

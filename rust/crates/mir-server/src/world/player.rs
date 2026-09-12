@@ -86,6 +86,7 @@ impl World {
                 surge_on: false,
                 dash: None,
                 life_steal: 0,
+                pets: Vec::new(),
             }),
             map,
             location,
@@ -326,7 +327,13 @@ impl World {
         o.hp = 0;
         let p = o.player_mut().unwrap();
         p.revive_time = self.now + REVIVE_DELAY;
+        let pets = std::mem::take(&mut p.pets);
         self.events.push((id, ServerMessage::ObjectDie { id }));
+        for pet in pets {
+            if self.objects.get(&pet).map(|o| !o.dead).unwrap_or(false) {
+                self.monster_die(pet, id);
+            }
+        }
         self.send_to(
             id,
             ServerMessage::Chat {

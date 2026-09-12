@@ -229,6 +229,17 @@ impl Game {
         }
     }
 
+    /// Name of the character in play.
+    pub fn user_name(&self) -> Option<&str> {
+        self.character.as_ref().map(|c| c.name.as_str())
+    }
+
+    /// Something the player may attack: a living monster that is not a pet
+    /// of theirs.
+    fn attackable(&self, o: &ClientObject) -> bool {
+        o.is_monster() && !o.dead && !(o.pet_owner().is_some() && o.pet_owner() == self.user_name())
+    }
+
     fn user(&self) -> Option<&ClientObject> {
         self.user.and_then(|id| self.objects.get(&id))
     }
@@ -377,6 +388,7 @@ fn buff_icon(kind: u16) -> u32 {
         buff_type::ENDURANCE => 95,
         buff_type::REFLECT_DAMAGE => 98,
         buff_type::RENOUNCE => 94,
+        buff_type::STRENGTH_OF_FAITH => 141,
         buff_type::MAGIC_SHIELD => 100,
         buff_type::HEAL => 78,
         buff_type::MAGIC_RESISTANCE => 92,

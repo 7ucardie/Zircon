@@ -138,7 +138,7 @@ impl Game {
         // Attack a hovered monster in melee range.
         if self.lmb {
             if let Some(target) = self.hovered.and_then(|id| self.objects.get(&id)) {
-                if target.is_monster() && !target.dead && user_loc.distance(target.location) <= 1 {
+                if self.attackable(target) && user_loc.distance(target.location) <= 1 {
                     if now >= self.action_time && now >= self.attack_time {
                         let direction = Direction::from_points(user_loc, target.location);
                         self.action_time = now + ATTACK_TIME;
@@ -384,7 +384,7 @@ impl Game {
                 .map(|o| o.id)
                 .or(self.user),
             m if magic_type::needs_target(m) => {
-                hovered.filter(|o| o.is_monster() && !o.dead).map(|o| o.id)
+                hovered.filter(|o| self.attackable(o)).map(|o| o.id)
             }
             _ => None,
         };

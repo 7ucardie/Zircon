@@ -200,6 +200,49 @@ impl World {
                 pending.push(pm(now + 500, None, loc, true))
             }
             magic_type::RENOUNCE => pending.push(pm(now + 600, None, loc, true)),
+            magic_type::ELECTRIC_SHOCK => {
+                if let Some(t) = target.filter(|t| self.objects[t].is_monster()) {
+                    targets.push(t);
+                    pending.push(pm(now + 500, Some(t), location, true));
+                } else {
+                    locations.push(location);
+                }
+            }
+            magic_type::SUMMON_SKELETON
+            | magic_type::SUMMON_JIN_SKELETON
+            | magic_type::SUMMON_SHINSU => {
+                let need = match magic {
+                    magic_type::SUMMON_SKELETON => 1,
+                    magic_type::SUMMON_JIN_SKELETON => 2,
+                    _ => 5,
+                };
+                if self.use_amulet(id, need).is_none() {
+                    cast_ok = false;
+                    self.send_to(
+                        id,
+                        ServerMessage::Chat {
+                            text: format!("{} needs {need} talisman(s).", def.name),
+                        },
+                    );
+                } else {
+                    let behind = loc.step(direction.rotate(4), 1);
+                    pending.push(pm(now + 500, None, behind, true));
+                }
+            }
+            magic_type::STRENGTH_OF_FAITH => {
+                if self.use_amulet(id, 5).is_none() {
+                    cast_ok = false;
+                    self.send_to(
+                        id,
+                        ServerMessage::Chat {
+                            text: format!("{} needs 5 talismans.", def.name),
+                        },
+                    );
+                } else {
+                    targets.push(id);
+                    pending.push(pm(now + 500, None, loc, true));
+                }
+            }
             magic_type::EXPEL_UNDEAD => {
                 let undead = target.filter(|t| match &self.objects[t].kind {
                     Kind::Monster(m) => self.data.monsters[&m.def].undead,
@@ -1138,6 +1181,140 @@ impl World {
                         self.buff_add(t, kind, secs * 1000, stats);
                         self.level_magic(pm.caster, pm.magic);
                     }
+                }
+                // ---- Pets ----
+                magic_type::ELECTRIC_SHOCK => {
+                    let Some(t) = pm.target else { continue };
+                    let Some((mlevel, boss, can_tame, owner, dead)) =
+                        self.objects.get(&t).and_then(|o| match &o.kind {
+                            Kind::Monster(m) => {
+                                let d = &self.data.monsters[&m.def];
+                                Some((d.level, d.is_boss, d.can_tame, m.owner, o.dead))
+                            }
+                            _ => None,
+                        })
+                    else {
+                        continue;
+                    };
+                    if dead || boss {
+                        continue;
+                    }
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    // Random.Next(MagicMaxLevel + 1) > Level => fail (half chance of exp).
+                    if self.rng.random_range(0..5) > level {
+                        if self.rng.random_range(0..2) == 0 {
+                            self.level_magic(pm.caster, pm.magic);
+                        }
+                        continue;
+                    }
+                    self.level_magic(pm.caster, pm.magic);
+                    let shock_ms = (level as u64 * 5 + 10) * 1000;
+                    if owner == Some(pm.caster) || self.rng.random_range(0..2) > 0 {
+                        if let Some(m) = self.objects.get_mut(&t).and_then(|o| o.monster_mut()) {
+                            m.shock_until = self.now + shock_ms;
+                            m.target = None;
+                        }
+                        continue;
+                    }
+                    if mlevel > clevel + 2 || !can_tame {
+                        continue;
+                    }
+                    if self.rng.random_range(0..(clevel + 20 + level * 5).max(1)) <= mlevel + 10 {
+                        continue;
+                    }
+                    let pets = self.objects[&pm.caster]
+                        .player()
+                        .map(|p| p.pets.len())
+                        .unwrap_or(0);
+                    if pets >= 3 || self.rng.random_range(0..4) > 0 {
+                        continue;
+                    }
+                    if self.rng.random_range(0..20) == 0 {
+                        let hp = self.objects[&t].hp;
+                        self.damage(t, pm.caster, hp.max(1), element::NONE, true);
+                        continue;
+                    }
+                    if let Some(old) = owner {
+                        if let Some(p) = self.objects.get_mut(&old).and_then(|o| o.player_mut()) {
+                            p.pets.retain(|x| *x != t);
+                        }
+                        let o = self.objects.get_mut(&t).unwrap();
+                        o.hp = o.hp.min((o.max_hp / 10).max(1));
+                    }
+                    self.tame(t, pm.caster, level, (level as u64 + 1) * 3_600_000);
+                }
+                magic_type::SUMMON_SKELETON
+                | magic_type::SUMMON_JIN_SKELETON
+                | magic_type::SUMMON_SHINSU => {
+                    let flag = match pm.magic {
+                        magic_type::SUMMON_SKELETON => 1,
+                        magic_type::SUMMON_JIN_SKELETON => 2,
+                        _ => 3,
+                    };
+                    let Some(def_index) = self
+                        .data
+                        .monsters
+                        .values()
+                        .find(|d| d.flag == flag)
+                        .map(|d| d.index)
+                    else {
+                        continue;
+                    };
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let pets: Vec<ObjectId> = self.objects[&pm.caster]
+                        .player()
+                        .map(|p| p.pets.clone())
+                        .unwrap_or_default();
+                    // Re-casting recalls an existing pet of that kind.
+                    if let Some(existing) = pets.iter().copied().find(|p| {
+                        matches!(self.objects.get(p).map(|o| &o.kind), Some(Kind::Monster(m)) if m.def == def_index)
+                    }) {
+                        let dir = self.objects[&pm.caster].direction;
+                        let behind = cloc.step(dir.rotate(4), 1);
+                        let to = if self.maps[&cmap].file.is_walkable(behind.x, behind.y)
+                            && !self.cell_blocked(cmap, behind, false)
+                        {
+                            behind
+                        } else {
+                            cloc
+                        };
+                        self.teleport_object(existing, to);
+                        continue;
+                    }
+                    if pets.len() >= 2 {
+                        continue;
+                    }
+                    let spot = if self.maps[&cmap]
+                        .file
+                        .is_walkable(pm.location.x, pm.location.y)
+                        && !self.cell_blocked(cmap, pm.location, false)
+                    {
+                        pm.location
+                    } else {
+                        cloc
+                    };
+                    self.create_monster(def_index, cmap, spot, None, Some(pm.caster), level * 2);
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::STRENGTH_OF_FAITH => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let (pmin, pmax) = {
+                        let p = self.objects[&pm.caster].player().unwrap();
+                        let um = p.magics.iter().find(|m| m.magic == pm.magic).unwrap();
+                        um.power_range(&self.data.magics[&pm.magic])
+                    };
+                    let secs = self.roll_range(pmin, pmax).max(1) as u64;
+                    self.buff_add(
+                        pm.caster,
+                        buff_type::STRENGTH_OF_FAITH,
+                        secs * 1000,
+                        BuffStats {
+                            dc_pct: (level + 1) * -20,
+                            pet_dc_pct: (level + 1) * 30,
+                            ..BuffStats::default()
+                        },
+                    );
+                    self.level_magic(pm.caster, pm.magic);
                 }
                 // ---- Wizard wave 3 ----
                 magic_type::RENOUNCE => {

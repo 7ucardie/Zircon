@@ -1347,6 +1347,97 @@ mod tests {
     }
 
     #[test]
+    fn taoist_summons_a_skeleton_that_follows_and_fights() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Necro");
+        rec.class = mir_proto::Class::Taoist;
+        rec.level = 17;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let summon = learn(&mut world, me, "Summon Skeleton");
+        let amulet = world
+            .data
+            .items
+            .values()
+            .filter(|d| {
+                d.item_type == mir_proto::item_type::AMULET
+                    && d.shape == 0
+                    && d.required_amount <= 17
+            })
+            .map(|d| d.index)
+            .min()
+            .expect("a talisman item");
+        world.test_give_item(me, amulet, 5);
+        let slot = world.test_slot_of(me, amulet).unwrap();
+        world.item_use(me, slot);
+        let mut now = 3000;
+        world.tick(now);
+        drain(&mut world);
+        let loc = world.objects[&me].location;
+        world.cast(me, summon, Direction::Down, None, loc);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        let pet = world
+            .objects
+            .values()
+            .find(|o| matches!(&o.kind, world::Kind::Monster(m) if m.owner == Some(me)))
+            .map(|o| o.id)
+            .expect("a summoned skeleton");
+        assert!(
+            matches!(&world.objects[&pet].appearance, Appearance::Monster { owner: Some(n), .. } if n == "Necro")
+        );
+        // Attack a chicken: the idle pet takes it as its target.
+        let victim = nearest_chicken(&world, me);
+        let map = world.objects[&me].map;
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 1))
+            .find(|p| {
+                world.maps[&map].file.is_walkable(p.x, p.y)
+                    && world.maps[&map].objects_at(*p).is_empty()
+            })
+            .unwrap();
+        world.teleport(victim, cell);
+        let dir = Direction::from_points(loc, cell);
+        for _ in 0..30 {
+            now += 500;
+            world.player_attack(me, dir, None);
+            world.tick(now);
+            let pet_target = world.objects.get(&pet).and_then(|o| match &o.kind {
+                world::Kind::Monster(m) => m.target,
+                _ => None,
+            });
+            if pet_target == Some(victim) {
+                break;
+            }
+        }
+        let pet_target = world.objects.get(&pet).and_then(|o| match &o.kind {
+            world::Kind::Monster(m) => m.target,
+            _ => None,
+        });
+        assert_eq!(pet_target, Some(victim), "the pet should join the fight");
+        // A second cast recalls instead of summoning another.
+        now += 3000;
+        world.tick(now);
+        world.cast(me, summon, Direction::Down, None, loc);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        let pets = world
+            .objects
+            .values()
+            .filter(|o| matches!(&o.kind, world::Kind::Monster(m) if m.owner == Some(me)))
+            .count();
+        assert_eq!(pets, 1, "same summon is recalled, not doubled");
+    }
+
+    #[test]
     fn warrior_thrusting_reaches_the_second_cell() {
         let Some(mut world) = world() else {
             return;

@@ -524,13 +524,28 @@ impl World {
             self.damage(attacker, target, r, element::NONE, false);
             self.level_magic(target, magic_type::REFLECT_DAMAGE);
         }
+        let credit = self.objects[&attacker].side().unwrap_or(attacker);
+        // Idle pets of the attacker join in (Zircon `Pets[i].Target = ob`).
+        if self.objects[&target].is_monster() {
+            let pets: Vec<ObjectId> = self.objects[&attacker]
+                .player()
+                .map(|p| p.pets.clone())
+                .unwrap_or_default();
+            for pet in pets {
+                if let Some(m) = self.objects.get_mut(&pet).and_then(|o| o.monster_mut()) {
+                    if m.target.is_none() {
+                        m.target = Some(target);
+                    }
+                }
+            }
+        }
         let (died, is_player, map, struck) = {
             let t = self.objects.get_mut(&target).unwrap();
             t.hp -= power;
             let mut struck = true;
             if let Kind::Monster(m) = &mut t.kind {
                 if m.exp_owner.is_none() {
-                    m.exp_owner = Some(attacker);
+                    m.exp_owner = Some(credit);
                 }
                 if m.target.is_none() {
                     m.target = Some(attacker);
@@ -579,15 +594,23 @@ impl World {
     }
 
     pub(super) fn monster_die(&mut self, id: ObjectId, _killer: ObjectId) {
-        let (exp, owner, spawn) = {
+        let (exp, owner, spawn, pet_of) = {
             let o = self.objects.get_mut(&id).unwrap();
             o.dead = true;
             o.hp = 0;
             let m = o.monster_mut().unwrap();
             m.dead_time = self.now + DEAD_DURATION;
             m.target = None;
-            (m.experience, m.exp_owner, m.spawn)
+            (m.experience, m.exp_owner, m.spawn, m.owner)
         };
+        if let Some(pet_of) = pet_of {
+            // Pets yield no experience or drops.
+            if let Some(p) = self.objects.get_mut(&pet_of).and_then(|o| o.player_mut()) {
+                p.pets.retain(|x| *x != id);
+            }
+            self.events.push((id, ServerMessage::ObjectDie { id }));
+            return;
+        }
         if let Some((map, gi)) = spawn {
             if let Some(g) = self.maps.get_mut(&map).and_then(|m| m.spawns.get_mut(gi)) {
                 g.alive -= 1;

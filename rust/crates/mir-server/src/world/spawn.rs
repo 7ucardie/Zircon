@@ -6,7 +6,6 @@ impl World {
             let g = &self.maps[&map].spawns[group];
             (g.def.monster, g.points.clone())
         };
-        let def: MonsterDef = self.data.monsters[&def_index].clone();
         let mut location = None;
         for _ in 0..20 {
             if let Some(p) = self.random_point(&points) {
@@ -19,16 +18,35 @@ impl World {
         let Some(location) = location else {
             return false;
         };
+        self.create_monster(def_index, map, location, Some((map, group)), None, 0);
+        self.maps.get_mut(&map).unwrap().spawns[group].alive += 1;
+        true
+    }
+
+    /// Put a monster of `def` on the map; pets carry an owner and a summon level.
+    pub(super) fn create_monster(
+        &mut self,
+        def_index: i32,
+        map: i32,
+        location: Point,
+        spawn: Option<(i32, usize)>,
+        owner: Option<ObjectId>,
+        summon_level: i32,
+    ) -> ObjectId {
+        let def: MonsterDef = self.data.monsters[&def_index].clone();
         let id = self.alloc_id();
-        let hp = def.health();
         let dir = Direction::from_index(self.rng.random_range(0..8));
         let jitter_search = self.rng.random_range(0..SEARCH_DELAY);
         let jitter_roam = self.rng.random_range(0..ROAM_DELAY);
+        let owner_name = owner
+            .and_then(|o| self.objects.get(&o))
+            .and_then(|o| o.player())
+            .map(|p| p.name.clone());
         let obj = Object {
             id,
             kind: Kind::Monster(MonsterData {
                 def: def.index,
-                spawn: Some((map, group)),
+                spawn,
                 target: None,
                 search_time: self.now + jitter_search,
                 roam_time: self.now + jitter_roam,
@@ -39,29 +57,18 @@ impl World {
                 move_delay: def.move_delay.max(0) as u64,
                 experience: def.experience,
                 exp_owner: None,
-                owner: None,
+                owner,
                 shock_until: 0,
+                summon_level,
+                tame_until: if owner.is_some() { u64::MAX } else { 0 },
             }),
             map,
             location,
             direction: dir,
-            hp,
-            max_hp: hp,
+            hp: 1,
+            max_hp: 1,
             dead: false,
-            stats: CombatStats {
-                accuracy: def.stat(stat::ACCURACY),
-                agility: def.stat(stat::AGILITY),
-                min_ac: def.stat(stat::MIN_AC),
-                max_ac: def.stat(stat::MAX_AC),
-                min_dc: def.stat(stat::MIN_DC),
-                max_dc: def.stat(stat::MAX_DC),
-                min_mr: def.stat(stat::MIN_MR),
-                max_mr: def.stat(stat::MAX_MR),
-                min_mc: 0,
-                max_mc: 0,
-                min_sc: 0,
-                max_sc: 0,
-            },
+            stats: CombatStats::ZERO,
             action_time: 0,
             move_time: 0,
             attack_time: 0,
@@ -69,14 +76,61 @@ impl World {
             appearance: Appearance::Monster {
                 name: def.name.clone(),
                 image: def.image,
+                owner: owner_name,
             },
             visible: HashSet::new(),
             poisons: Vec::new(),
             heal: None,
         };
         self.insert_object(obj);
-        self.maps.get_mut(&map).unwrap().spawns[group].alive += 1;
-        true
+        self.refresh_monster_stats(id, true);
+        if let Some(o) = owner {
+            if let Some(p) = self.objects.get_mut(&o).and_then(|o| o.player_mut()) {
+                p.pets.push(id);
+            }
+        }
+        id
+    }
+
+    /// Zircon `MonsterObject.RefreshStats`: base stats, +10 % per summon
+    /// level, and the owner's pet DC percent.
+    pub(super) fn refresh_monster_stats(&mut self, id: ObjectId, restore: bool) {
+        let Some((def_index, summon_level, owner)) =
+            self.objects.get(&id).and_then(|o| match &o.kind {
+                Kind::Monster(m) => Some((m.def, m.summon_level, m.owner)),
+                _ => None,
+            })
+        else {
+            return;
+        };
+        let def = &self.data.monsters[&def_index];
+        let boost = |v: i32| v + v * summon_level / 10;
+        let pet_dc = owner
+            .and_then(|o| self.objects.get(&o))
+            .and_then(|o| o.player())
+            .map(|p| p.buffs.iter().map(|b| b.stats.pet_dc_pct).sum::<i32>())
+            .unwrap_or(0);
+        let mut stats = CombatStats {
+            accuracy: boost(def.stat(stat::ACCURACY)),
+            agility: boost(def.stat(stat::AGILITY)),
+            min_ac: boost(def.stat(stat::MIN_AC)),
+            max_ac: boost(def.stat(stat::MAX_AC)),
+            min_dc: boost(def.stat(stat::MIN_DC)),
+            max_dc: boost(def.stat(stat::MAX_DC)),
+            min_mr: boost(def.stat(stat::MIN_MR)),
+            max_mr: boost(def.stat(stat::MAX_MR)),
+            min_mc: 0,
+            max_mc: 0,
+            min_sc: 0,
+            max_sc: 0,
+        };
+        stats.min_dc += stats.min_dc * pet_dc / 100;
+        stats.max_dc += stats.max_dc * pet_dc / 100;
+        let max_hp = boost(def.health());
+        let o = self.objects.get_mut(&id).unwrap();
+        o.stats = stats;
+        o.max_hp = max_hp;
+        o.hp = if restore { max_hp } else { o.hp.min(max_hp) };
     }
 
     /// Zircon `SpawnInfo.DoSpawn`, run once per second per map.

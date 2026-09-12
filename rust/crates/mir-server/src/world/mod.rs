@@ -150,6 +150,8 @@ pub struct BuffStats {
     pub reflect: i32,
     pub hp_pct: i32,
     pub mc_pct: i32,
+    /// Zircon `Stat.PetDCPercent`.
+    pub pet_dc_pct: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).
@@ -233,6 +235,7 @@ pub struct PlayerData {
     pub dash: Option<Dash>,
     /// Zircon `Stat.LifeSteal` percent from passives.
     pub life_steal: i32,
+    pub pets: Vec<ObjectId>,
 }
 
 #[derive(Debug)]
@@ -253,6 +256,10 @@ pub struct MonsterData {
     pub owner: Option<ObjectId>,
     /// Zircon `ShockTime`: cannot move until then; any damage clears it.
     pub shock_until: u64,
+    /// Zircon `SummonLevel`: +10 % stats per point.
+    pub summon_level: i32,
+    /// Pets return to the wild after this (`TameTime`).
+    pub tame_until: u64,
 }
 
 #[derive(Debug)]

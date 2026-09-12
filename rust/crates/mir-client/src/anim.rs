@@ -160,6 +160,22 @@ impl ClientObject {
         matches!(self.appearance, Appearance::Spell { .. })
     }
 
+    /// Owner of a pet monster.
+    pub fn pet_owner(&self) -> Option<&str> {
+        match &self.appearance {
+            Appearance::Monster { owner, .. } => owner.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// Name as drawn: pets show their owner (Zircon `Name (Owner)`).
+    pub fn display_name(&self) -> String {
+        match self.pet_owner() {
+            Some(o) => format!("{} ({o})", self.name()),
+            None => self.name().to_string(),
+        }
+    }
+
     pub fn is_player(&self) -> bool {
         matches!(self.appearance, Appearance::Player { .. })
     }

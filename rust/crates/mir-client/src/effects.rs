@@ -266,6 +266,12 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         magic_type::METEOR_SHOWER => (MAGIC, 1560, 9, 65, FIRE, true),
         magic_type::RENOUNCE => (MAGIC_EX2, 80, 10, 100, WHITE, false),
         magic_type::TEMPEST => (MAGIC_EX2, 910, 10, 60, WIND, false),
+        magic_type::ELECTRIC_SHOCK => (MAGIC, 0, 10, 60, LIGHTNING, false),
+        magic_type::SUMMON_SKELETON | magic_type::SUMMON_JIN_SKELETON => {
+            (MAGIC, 740, 10, 60, WHITE, false)
+        }
+        magic_type::SUMMON_SHINSU => (MAGIC, 2590, 19, 60, WHITE, false),
+        magic_type::STRENGTH_OF_FAITH => (MAGIC_EX2, 360, 10, 100, WHITE, false),
         _ => return None,
     };
     Some(Effect {
@@ -421,6 +427,18 @@ pub fn payload(
             for a in anchors {
                 out.effects
                     .push(Effect::at(MAGIC, 140, 10, 100, WHITE, a, now));
+            }
+        }
+        magic_type::ELECTRIC_SHOCK => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC, 10, 10, 100, LIGHTNING, a, now));
+            }
+        }
+        magic_type::STRENGTH_OF_FAITH => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX2, 370, 10, 100, WHITE, a, now));
             }
         }
         magic_type::FIRE_STORM => {

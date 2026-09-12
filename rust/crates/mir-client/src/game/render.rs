@@ -301,9 +301,17 @@ impl Game {
                     [255, 255, 255, 220]
                 };
                 let name_y = if o.dead { dy + 21 } else { dy - 6 };
-                text.draw_centered(o.name(), 12, dx as f32 + 24.0, name_y as f32, name_color);
-                let show_bar =
-                    !o.is_player() && !o.dead && (now < o.health_time || self.hovered == Some(id));
+                let my_pet = o.pet_owner().is_some() && o.pet_owner() == self.user_name();
+                text.draw_centered(
+                    &o.display_name(),
+                    12,
+                    dx as f32 + 24.0,
+                    name_y as f32,
+                    name_color,
+                );
+                let show_bar = !o.is_player()
+                    && !o.dead
+                    && (my_pet || now < o.health_time || self.hovered == Some(id));
                 if show_bar {
                     if let Some(bg) = Self::sprite(
                         &mut self.assets,

@@ -15,6 +15,16 @@ impl World {
     }
 
     pub fn remove_object(&mut self, id: ObjectId) {
+        // A leaving player takes its pets along.
+        let pets: Vec<ObjectId> = self
+            .objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .map(|p| p.pets.clone())
+            .unwrap_or_default();
+        for pet in pets {
+            self.remove_object(pet);
+        }
         if let Some(obj) = self.objects.remove(&id) {
             if let Some(map) = self.maps.get_mut(&obj.map) {
                 map.objects.retain(|o| *o != id);

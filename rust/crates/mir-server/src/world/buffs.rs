@@ -36,6 +36,9 @@ impl World {
             self.events
                 .push((id, ServerMessage::ObjectBuff { id, kind, on: true }));
         }
+        if kind == buff_type::STRENGTH_OF_FAITH {
+            self.refresh_pets(id);
+        }
     }
 
     pub(super) fn buff_remove(&mut self, id: ObjectId, kind: u16) {
@@ -59,6 +62,9 @@ impl World {
                     on: false,
                 },
             ));
+        }
+        if kind == buff_type::STRENGTH_OF_FAITH {
+            self.refresh_pets(id);
         }
     }
 
