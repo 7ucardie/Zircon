@@ -570,7 +570,8 @@ mod tests {
     fn world() -> Option<World> {
         let assets = std::env::var_os("ZIRCON_ASSETS").map(PathBuf::from)?;
         let data = GameData::load(assets.join("../Database/System.db")).ok()?;
-        Some(World::new(data, assets.join("Map"), None))
+        // Seeded so a failure reproduces; change the seed to explore other rolls.
+        Some(World::new(data, assets.join("Map"), None).with_seed(0x5A1C0))
     }
 
     fn drain(world: &mut World) -> Vec<ServerMessage> {

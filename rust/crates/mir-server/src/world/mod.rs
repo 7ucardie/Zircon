@@ -5,7 +5,7 @@
 //! attack delay `max(800, 1500 - AttackSpeed * 47)`, monster AI with 3 s search,
 //! 2 s roam, greedy chase, 1-cell melee. Time is milliseconds since server start.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mir_formats::mirdb::stat;
@@ -480,11 +480,13 @@ pub enum Outgoing {
 pub struct World {
     pub data: GameData,
     map_dir: PathBuf,
-    pub maps: HashMap<i32, MapState>,
-    pub objects: HashMap<ObjectId, Object>,
+    /// Ordered maps so ticks iterate deterministically (seeded tests).
+    pub maps: BTreeMap<i32, MapState>,
+    pub objects: BTreeMap<ObjectId, Object>,
     next_id: u32,
     pub now: u64,
-    rng: rand::rngs::ThreadRng,
+    /// Seeded from `ZIRCON_SEED` when set (tests), otherwise from the OS.
+    rng: rand::rngs::StdRng,
     pending_hits: Vec<PendingHit>,
     pending_magics: Vec<PendingMagic>,
     /// Events raised this tick: (subject object, message).
@@ -511,6 +513,13 @@ mod test_api;
 mod visibility;
 
 impl World {
+    /// Replace the RNG with a seeded one so a test run is reproducible.
+    #[cfg(test)]
+    pub fn with_seed(mut self, seed: u64) -> World {
+        self.rng = rand::SeedableRng::seed_from_u64(seed);
+        self
+    }
+
     pub fn new(data: GameData, map_dir: impl AsRef<Path>, force_map: Option<String>) -> World {
         let mut drops_by_monster: HashMap<i32, Vec<DropDef>> = HashMap::new();
         for d in &data.drops {
@@ -523,11 +532,17 @@ impl World {
             drops_by_monster,
             data,
             map_dir: map_dir.as_ref().to_path_buf(),
-            maps: HashMap::new(),
-            objects: HashMap::new(),
+            maps: BTreeMap::new(),
+            objects: BTreeMap::new(),
             next_id: 1,
             now: 0,
-            rng: rand::rng(),
+            rng: match std::env::var("ZIRCON_SEED")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+            {
+                Some(seed) => rand::SeedableRng::seed_from_u64(seed),
+                None => rand::SeedableRng::from_os_rng(),
+            },
             pending_hits: Vec::new(),
             pending_magics: Vec::new(),
             events: Vec::new(),

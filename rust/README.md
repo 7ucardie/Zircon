@@ -125,6 +125,8 @@ the named items on entry.
 
 `cargo run -p mir-server -- --inspect` prints the start map, player stats and
 spawn table without opening a port. `--map <file>` forces a start map.
+`ZIRCON_SEED=n` seeds the server's random rolls (the tests use a fixed seed and
+ordered object maps, so a failing roll reproduces).
 
 ## Docker
 
