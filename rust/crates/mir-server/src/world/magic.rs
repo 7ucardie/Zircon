@@ -53,7 +53,12 @@ impl World {
             deny(self, &format!("{} is still cooling down.", def.name));
             return;
         }
-        let cost = um.cost(&def);
+        // Cloak is paid in HP (see its arm); everything else in MP.
+        let cost = if magic == magic_type::CLOAK {
+            0
+        } else {
+            um.cost(&def)
+        };
         if cost > p.mp {
             deny(self, "Not enough mana.");
             return;
@@ -200,6 +205,64 @@ impl World {
                 pending.push(pm(now + 500, None, loc, true))
             }
             magic_type::RENOUNCE => pending.push(pm(now + 600, None, loc, true)),
+            // ---- Assassin wave 3 ----
+            magic_type::CLOAK => {
+                if self.objects[&id].has_buff(buff_type::CLOAK) {
+                    // Casting again drops the cloak for free.
+                    self.buff_remove(id, buff_type::CLOAK);
+                } else {
+                    let (hp, max_hp) = (self.objects[&id].hp, self.objects[&id].max_hp);
+                    let hp_cost = max_hp * um.cost(&def) / 1000;
+                    if hp_cost >= hp || hp < max_hp / 10 {
+                        deny(self, "Not enough health to cloak.");
+                        return;
+                    }
+                    let o = self.objects.get_mut(&id).unwrap();
+                    o.hp -= hp_cost;
+                    let (hp, max_hp) = (o.hp, o.max_hp);
+                    self.events
+                        .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+                    pending.push(pm(now + 500, None, loc, true));
+                }
+            }
+            magic_type::RAKE => {
+                if self.objects[&id].has_buff(buff_type::CLOAK) {
+                    self.buff_remove(id, buff_type::CLOAK);
+                    pending.push(pm(now + 600, None, loc.step(direction, 1), true));
+                }
+            }
+            magic_type::WRAITH_GRIP | magic_type::HELL_FIRE => {
+                match target.filter(|t| self.objects[t].is_monster()) {
+                    Some(t) => {
+                        let mlevel = match &self.objects[&t].kind {
+                            Kind::Monster(m) => self.data.monsters[&m.def].level,
+                            _ => 0,
+                        };
+                        if magic == magic_type::WRAITH_GRIP && mlevel > p.level + 15 {
+                            cast_ok = false;
+                            self.send_to(
+                                id,
+                                ServerMessage::Chat {
+                                    text: "That is too strong to grip.".into(),
+                                },
+                            );
+                        } else {
+                            targets.push(t);
+                            let delay = if magic == magic_type::HELL_FIRE {
+                                1200
+                            } else {
+                                500
+                            };
+                            pending.push(pm(now + delay, Some(t), location, true));
+                        }
+                    }
+                    None => {
+                        cast_ok = false;
+                        locations.push(location);
+                    }
+                }
+            }
+            magic_type::SUMMON_PUPPET => pending.push(pm(now + 500, None, loc, true)),
             // ---- Taoist wave 3 ----
             magic_type::INVISIBILITY | magic_type::TRANSPARENCY | magic_type::CELESTIAL_LIGHT => {
                 let (need, delay) = match magic {
@@ -514,6 +577,15 @@ impl World {
             }
             _ => {}
         }
+        // Zircon `MagicFinalise`: casting drops the cloak and transparency,
+        // except for the skills that keep them.
+        if !matches!(
+            magic,
+            magic_type::CLOAK | magic_type::POISONOUS_CLOUD | magic_type::TRANSPARENCY
+        ) {
+            self.buff_remove(id, buff_type::CLOAK);
+            self.buff_remove(id, buff_type::TRANSPARENCY);
+        }
         // Pay, set timers (Zircon: consume even when the spell fizzles).
         let face = match target {
             _ if magic_type::is_stance_cast(magic) => Direction::Down,
@@ -612,11 +684,21 @@ impl World {
         } else {
             self.rng.random_range(pmin..=pmax)
         };
-        power += match class {
-            Class::Wizard => self.roll_range(cs.min_mc, cs.max_mc),
-            Class::Taoist => self.roll_range(cs.min_sc, cs.max_sc),
-            Class::Assassin => self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc)),
-            Class::Warrior => 0,
+        power = match magic {
+            // Rake and puppets: a percent of DC; Hell Fire: power plus DC.
+            magic_type::RAKE | magic_type::SUMMON_PUPPET => self.roll_dc(cs) * power / 100,
+            magic_type::HELL_FIRE => power + self.roll_dc(cs),
+            _ => {
+                power
+                    + match class {
+                        Class::Wizard => self.roll_range(cs.min_mc, cs.max_mc),
+                        Class::Taoist => self.roll_range(cs.min_sc, cs.max_sc),
+                        Class::Assassin => {
+                            self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc))
+                        }
+                        Class::Warrior => 0,
+                    }
+            }
         };
         // Zircon `ModifyPowerMultiplier` (flank cells 30 %, fire wall 60 %...).
         power = power * scale / 100;
@@ -1281,6 +1363,156 @@ impl World {
                         self.buff_add(t, kind, secs * 1000, stats);
                         self.level_magic(pm.caster, pm.magic);
                     }
+                }
+                // ---- Assassin wave 3 ----
+                magic_type::CLOAK => {
+                    self.apply_cloak(pm.caster, false);
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::RAKE => {
+                    let victims: Vec<ObjectId> = self.maps[&cmap]
+                        .objects_at(pm.location)
+                        .iter()
+                        .copied()
+                        .filter(|v| self.objects[v].is_monster() && !self.objects[v].dead)
+                        .collect();
+                    for v in victims {
+                        if self.magic_attack(pm.caster, v, pm.magic, element::NONE, 100) > 0 {
+                            // Guaranteed slow, level 20, 6-10 s.
+                            let secs = (3 + self.rng.random_range(0..3)) * 2;
+                            self.apply_poison(
+                                v,
+                                Poison {
+                                    kind: poison_kind::SLOW,
+                                    value: 20,
+                                    ticks_left: 0,
+                                    next_tick: self.now + secs as u64 * 1000,
+                                    owner: Some(pm.caster),
+                                },
+                            );
+                            break;
+                        }
+                    }
+                }
+                magic_type::WRAITH_GRIP => {
+                    let Some(t) = pm.target else { continue };
+                    if self.objects.get(&t).map(|o| o.dead).unwrap_or(true) {
+                        continue;
+                    }
+                    let (pmin, pmax, _) = self.caster_power(pm.caster, pm.magic);
+                    let duration = self.roll_range(pmin, pmax).max(2);
+                    let cs = self.objects[&pm.caster].stats;
+                    let sp = self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc));
+                    self.apply_poison(
+                        t,
+                        Poison {
+                            kind: poison_kind::WRAITH_GRIP,
+                            value: sp,
+                            ticks_left: duration / 2,
+                            next_tick: self.now + 2000,
+                            owner: Some(pm.caster),
+                        },
+                    );
+                    let touch = self.objects[&pm.caster]
+                        .player()
+                        .map(|p| {
+                            p.magics
+                                .iter()
+                                .any(|m| m.magic == magic_type::TOUCH_OF_THE_DEPARTED)
+                        })
+                        .unwrap_or(false);
+                    if touch {
+                        self.apply_poison(
+                            t,
+                            Poison {
+                                kind: poison_kind::PARALYSIS,
+                                value: 0,
+                                ticks_left: 0,
+                                next_tick: self.now + duration as u64 * 1000,
+                                owner: Some(pm.caster),
+                            },
+                        );
+                        self.level_magic(pm.caster, magic_type::TOUCH_OF_THE_DEPARTED);
+                    }
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::HELL_FIRE => {
+                    let Some(t) = pm.target else { continue };
+                    if self.magic_attack(pm.caster, t, pm.magic, element::FIRE, 100) <= 0 {
+                        continue;
+                    }
+                    let (pmin, pmax, _) = self.caster_power(pm.caster, pm.magic);
+                    let duration = self.roll_range(pmin, pmax).max(2);
+                    let cs = self.objects[&pm.caster].stats;
+                    let value = self
+                        .roll_range(cs.min_sc, cs.max_sc)
+                        .min(self.roll_range(cs.min_mc, cs.max_mc))
+                        / 2;
+                    self.apply_poison(
+                        t,
+                        Poison {
+                            kind: poison_kind::HELL_FIRE,
+                            value: value.max(1),
+                            ticks_left: duration / 2,
+                            next_tick: self.now + 2000,
+                            owner: Some(pm.caster),
+                        },
+                    );
+                }
+                magic_type::SUMMON_PUPPET => {
+                    if let Some(t) = pm.target {
+                        // The explosion of a puppet (queued by `puppet_explode`).
+                        self.magic_attack(pm.caster, t, pm.magic, element::NONE, 100);
+                        continue;
+                    }
+                    let Some(def_index) = self
+                        .data
+                        .monsters
+                        .values()
+                        .find(|d| d.flag == 6)
+                        .map(|d| d.index)
+                    else {
+                        continue;
+                    };
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    for _ in 0..(level + 1) {
+                        let mut spot = None;
+                        for _ in 0..25 {
+                            let p = Point::new(
+                                cloc.x + self.rng.random_range(-1..=1),
+                                cloc.y + self.rng.random_range(-1..=1),
+                            );
+                            if self.maps[&cmap].file.is_walkable(p.x, p.y)
+                                && !self.cell_blocked(cmap, p, false)
+                            {
+                                spot = Some(p);
+                                break;
+                            }
+                        }
+                        let Some(spot) = spot else { break };
+                        let puppet =
+                            self.create_monster(def_index, cmap, spot, None, Some(pm.caster), 0);
+                        if let Some(m) = self.objects.get_mut(&puppet).and_then(|o| o.monster_mut())
+                        {
+                            m.explode_at = Some(self.now + 5000);
+                        }
+                    }
+                    // The caster slips away up to four cells and cloaks.
+                    for _ in 0..25 {
+                        let p = Point::new(
+                            cloc.x + self.rng.random_range(-4..=4),
+                            cloc.y + self.rng.random_range(-4..=4),
+                        );
+                        if p != cloc
+                            && self.maps[&cmap].file.is_walkable(p.x, p.y)
+                            && !self.cell_blocked(cmap, p, false)
+                        {
+                            self.teleport_object(pm.caster, p);
+                            break;
+                        }
+                    }
+                    self.apply_cloak(pm.caster, true);
+                    self.level_magic(pm.caster, pm.magic);
                 }
                 // ---- Taoist wave 3 ----
                 magic_type::INVISIBILITY | magic_type::TRANSPARENCY => {
@@ -2008,5 +2240,59 @@ impl World {
         let um = p.magics.iter().find(|m| m.magic == magic).unwrap();
         let (pmin, pmax) = um.power_range(&self.data.magics[&magic]);
         (pmin, pmax, (o.stats.min_sc, o.stats.max_sc))
+    }
+
+    /// Zircon `Cloak.MagicComplete` / `SummonPuppet.CloakEnd`: cloak with an
+    /// HP drain reduced by Pledge Of Blood; Ghost Walk by roll or forced.
+    pub(super) fn apply_cloak(&mut self, id: ObjectId, force_ghost: bool) {
+        if self.objects[&id].has_buff(buff_type::CLOAK) {
+            return;
+        }
+        let level = self.magic_level(id, magic_type::CLOAK);
+        let pledge = self.objects[&id]
+            .player()
+            .and_then(|p| {
+                p.magics
+                    .iter()
+                    .find(|m| m.magic == magic_type::PLEDGE_OF_BLOOD)
+            })
+            .map(|m| m.power_range(&self.data.magics[&m.magic]));
+        let pledge_value = match pledge {
+            Some((lo, hi)) => {
+                self.level_magic(id, magic_type::PLEDGE_OF_BLOOD);
+                self.roll_range(lo, hi)
+            }
+            None => 0,
+        };
+        let max_hp = self.objects[&id].max_hp;
+        let drain = (max_hp * (20 - level - pledge_value).max(0) / 1000).max(0);
+        self.buff_add(
+            id,
+            buff_type::CLOAK,
+            u64::MAX,
+            BuffStats {
+                cloak_damage: drain,
+                ..BuffStats::default()
+            },
+        );
+        let ghost_level = self.objects[&id]
+            .player()
+            .and_then(|p| p.magics.iter().find(|m| m.magic == magic_type::GHOST_WALK))
+            .map(|m| m.level as i32);
+        let ghost = if force_ghost {
+            true
+        } else if let Some(gl) = ghost_level {
+            let rate = (gl + 1) * 3;
+            let ok = self.rng.random_range(0..(2 + rate)) < rate;
+            if ok {
+                self.level_magic(id, magic_type::GHOST_WALK);
+            }
+            ok
+        } else {
+            false
+        };
+        if ghost {
+            self.buff_add(id, buff_type::GHOST_WALK, u64::MAX, BuffStats::default());
+        }
     }
 }

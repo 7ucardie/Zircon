@@ -69,19 +69,39 @@ and the original effect sprites:
   Shoulder Dash (dash that shoves weaker monsters aside), Flaming Sword,
   Dragon Rise and Blade Storm (12 s charges consumed by the next swing),
   Destructive Surge (stance hitting all eight neighbours), Defiance and Might
-  (self buffs, mutually exclusive).
+  (self buffs, mutually exclusive), Interchange (swap places), Beckon and
+  Mass Beckon (pull and paralyse), Swift Blade (sure-hit slash), Assault
+  (dash that stuns), Endurance (poison immunity), Reflect Damage, Fetter
+  (slow).
 - Wizard: Fire Ball, Lightning Ball, Ice Bolt, Gust Blast, Repulsion,
   Teleportation, Adamantine Fire Ball, Thunder Bolt, Ice Blades (slow),
   Cyclone, Scorched Earth, Lightning Beam, Frozen Earth, Blow Earth (lines
   of 8 cells with 30 % flanks), Fire Wall (burning cells for 20-60 s), Magic
-  Shield (halves damage, drains with hits).
+  Shield (halves damage, drains with hits), Electric Shock (tame), Expel
+  Undead, Geo Manipulation, Fire Storm, Lightning Wave, Ice Storm, Dragon
+  Tornado, Greater Frozen Earth, Chain Lightning (hops), Meteor Shower,
+  Renounce (MC for HP), Tempest (wind cells that repel).
 - Taoist: Heal, Spirit Sword, Poison Dust, Explosive Talisman (uses a
   talisman), Evil Slayer and Greater Evil Slayer (holy talisman bonus), Magic
-  Resistance and Resilience (area buffs costing talismans), Mass Heal.
+  Resistance and Resilience (area buffs costing talismans), Mass Heal,
+  Summon Skeleton, Summon Shinsu and Summon Jin Skeleton (pets that follow,
+  fight and return when recalled), Strength Of Faith (pet DC), Invisibility,
+  Mass Invisibility and Transparency (monsters lose hidden targets), Trap
+  Octagon (shock ring), Combat Kick, Elemental Superiority, Blood Lust,
+  Resurrection, Purification, Celestial Light (survive a killing blow).
 - Assassin: Willow Dance, Vine Tree Dance, Discipline, Bloody Flower (life
-  steal), Poisonous Cloud (agility cloud), Full Bloom, White Lotus and Red
-  Lotus (press the key to arm the next swing; each opens the next in the
-  chain), Flaming Daggers, Shredding.
+  steal), Poisonous Cloud (agility cloud), Full Bloom, White Lotus, Red Lotus
+  and Sweetbrier (press the key to arm the next swing; each opens the next
+  in the chain), Flaming Daggers, Shredding, Cloak (HP-priced stealth that
+  drains every 2 s, breaks on running, swinging or casting; Pledge Of Blood
+  cuts the drain, Ghost Walk rolls a deeper stealth), Calamity Of Full Moon
+  and Waning Moon (self-arming power swings, out of and inside the cloak),
+  Wraith Grip (roots; Touch Of The Departed adds paralysis), Hell Fire
+  (fire strike plus burn), Rake (from the cloak, guaranteed slow), Summon
+  Puppet (decoys that explode, then blink away cloaked), Karma (armed
+  execute from the cloak costing HP; Resolution and Release scale it),
+  Flame Splash (toggle: up to four extra directions per swing),
+  Rejuvenation (faster regeneration).
 
 Buff icons with their remaining time sit top-right. Other skills show in the
 window but cannot be cast yet.
@@ -96,7 +116,7 @@ warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_AUTOCLASS=wizard|taoist|assassin` picks the auto-created class;
 `ZIRCON_OPEN_SKILLS=1` opens the skill window; `ZIRCON_AUTO_CAST=<F key>`
 casts that key's spell at the nearest monster (`m<id>` casts by magic id, e.g.
-`m216` for Fire Wall); `ZIRCON_AUTO_BELT=1` links every
+`m216` for Fire Wall; self casts such as `m415` Summon Puppet need no monster); `ZIRCON_AUTO_BELT=1` links every
 consumable type in the bag to the belt and `ZIRCON_AUTO_USE=<slot>` presses
 that belt key once. Server side, `ZIRCON_DEV_LEVEL=n` starts new characters at
 level n, `ZIRCON_DEV_SKILLS=1` grants every class skill the level allows, and

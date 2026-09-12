@@ -61,6 +61,7 @@ impl World {
                 shock_until: 0,
                 summon_level,
                 tame_until: if owner.is_some() { u64::MAX } else { 0 },
+                explode_at: None,
             }),
             map,
             location,

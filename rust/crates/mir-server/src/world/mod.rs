@@ -39,6 +39,10 @@ pub mod poison_kind {
     pub const RED: u16 = 2;
     pub const SLOW: u16 = 4;
     pub const PARALYSIS: u16 = 8;
+    /// Stops movement (Zircon `WraithGrip`).
+    pub const WRAITH_GRIP: u16 = 16;
+    /// Tick damage with no colour (Zircon `HellFire`).
+    pub const HELL_FIRE: u16 = 32;
 }
 
 /// Paralysed objects take no actions.
@@ -157,6 +161,8 @@ pub struct BuffStats {
     pub max_sc: i32,
     /// Percent of max HP restored instead of dying (Zircon `Stat.CelestialLight`).
     pub celestial: i32,
+    /// HP drained every 2 s while cloaked (Zircon `Stat.CloakDamage`).
+    pub cloak_damage: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).
@@ -166,6 +172,8 @@ pub struct Buff {
     /// Server time when it ends; `u64::MAX` never.
     pub expires: u64,
     pub stats: BuffStats,
+    /// Next tick for ticking buffs (Cloak drain).
+    pub tick_at: u64,
 }
 
 /// Shoulder Dash in progress.
@@ -243,6 +251,10 @@ pub struct PlayerData {
     /// Zircon `Stat.LifeSteal` percent from passives.
     pub life_steal: i32,
     pub pets: Vec<ObjectId>,
+    /// Moon charges (Zircon `CanAttack` on Calamity / Waning Moon).
+    pub full_moon_ready: bool,
+    pub waning_moon_ready: bool,
+    pub flame_splash_on: bool,
 }
 
 #[derive(Debug)]
@@ -267,6 +279,8 @@ pub struct MonsterData {
     pub summon_level: i32,
     /// Pets return to the wild after this (`TameTime`).
     pub tame_until: u64,
+    /// Puppets explode at this time (or sooner when targeted or struck).
+    pub explode_at: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -559,7 +573,15 @@ impl World {
                 let o = self.objects.get_mut(id).unwrap();
                 let p = o.player_mut().unwrap();
                 p.regen_time = now + REGEN_DELAY;
-                let rate = if p.class == Class::Wizard { 0.03 } else { 0.02 };
+                let mut rate = if p.class == Class::Wizard { 0.03 } else { 0.02 };
+                // Rejuvenation: +0.5 % per level above the base.
+                if let Some(m) = p
+                    .magics
+                    .iter()
+                    .find(|m| m.magic == magic_type::REJUVENATION)
+                {
+                    rate += (0.5 + m.level as f32 * 0.5) / 100.0;
+                }
                 if p.mp < p.max_mp {
                     p.mp = (p.mp + (p.max_mp as f32 * rate).max(1.0) as i32).min(p.max_mp);
                     let stats = self.player_stats(&self.objects[id]);

@@ -1508,6 +1508,130 @@ mod tests {
     }
 
     #[test]
+    fn assassin_cloak_grip_hell_fire_and_puppets() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        // Assassins start on their own map; put this one at the warrior start
+        // where the chickens are.
+        let scout = world.add_player(1, 1, &test_character("Scout")).unwrap();
+        let (scout_map, scout_loc) = (world.objects[&scout].map, world.objects[&scout].location);
+        world.remove_object(scout);
+        let mut rec = test_character("Sin3");
+        rec.class = mir_proto::Class::Assassin;
+        rec.level = 50;
+        rec.map = world.data.maps[&scout_map].file_name.clone();
+        rec.location = scout_loc;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let cloak = learn(&mut world, me, "Cloak");
+        let grip = learn(&mut world, me, "Wraith Grip");
+        let hell = learn(&mut world, me, "Hell Fire");
+        let puppet = learn(&mut world, me, "Summon Puppet");
+        let mut now = 3000;
+        world.tick(now);
+        drain(&mut world);
+        let victim = nearest_chicken(&world, me);
+        let loc = world.objects[&me].location;
+        let map = world.objects[&me].map;
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 2))
+            .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+            .unwrap();
+        world.teleport(victim, cell);
+        // Wraith Grip pins the chicken with its own poison kind.
+        world.cast(
+            me,
+            grip,
+            Direction::from_points(loc, cell),
+            Some(victim),
+            cell,
+        );
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        let gripped = world.objects[&victim]
+            .poisons
+            .iter()
+            .any(|p| p.kind == world::poison_kind::WRAITH_GRIP);
+        assert!(gripped, "Wraith Grip poison applied");
+        // Hell Fire burns and leaves a ticking poison.
+        now += 2000;
+        world.tick(now);
+        let (hp_before, _, _) = world.test_hp(victim);
+        world.cast(
+            me,
+            hell,
+            Direction::from_points(loc, cell),
+            Some(victim),
+            cell,
+        );
+        for _ in 0..15 {
+            now += 100;
+            world.tick(now);
+        }
+        let (hp_after, _, dead) = world.test_hp(victim);
+        let burning = world.objects[&victim]
+            .poisons
+            .iter()
+            .any(|p| p.kind == world::poison_kind::HELL_FIRE);
+        assert!(
+            dead || hp_after < hp_before || burning,
+            "Hell Fire hurts: {hp_before} -> {hp_after}, burning {burning}"
+        );
+        // Cloak costs HP and keeps draining it every 2 s.
+        now += 2000;
+        world.tick(now);
+        let (hp0, _, _) = world.test_hp(me);
+        world.cast(me, cloak, Direction::Down, None, loc);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        assert!(
+            world.objects[&me].has_buff(mir_proto::buff_type::CLOAK),
+            "cloaked"
+        );
+        let (hp1, _, _) = world.test_hp(me);
+        assert!(hp1 < hp0, "cloak costs HP: {hp0} -> {hp1}");
+        now += 2500;
+        world.tick(now);
+        let (hp2, _, _) = world.test_hp(me);
+        assert!(hp2 < hp1, "cloak drains HP: {hp1} -> {hp2}");
+        // Summon Puppet drops the cloak, raises a puppet, blinks and re-cloaks.
+        world.cast(me, puppet, Direction::Down, None, loc);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        let puppets = world
+            .objects
+            .values()
+            .filter(|o| matches!(&o.kind, world::Kind::Monster(m) if m.owner == Some(me) && m.explode_at.is_some()))
+            .count();
+        assert_eq!(puppets, 1, "one puppet at level 0");
+        assert!(
+            world.objects[&me].has_buff(mir_proto::buff_type::GHOST_WALK),
+            "puppet cloak always ghost walks"
+        );
+        for _ in 0..60 {
+            now += 100;
+            world.tick(now);
+        }
+        let puppets = world
+            .objects
+            .values()
+            .filter(
+                |o| matches!(&o.kind, world::Kind::Monster(m) if m.owner == Some(me) && !o.dead),
+            )
+            .count();
+        assert_eq!(puppets, 0, "puppets explode after 5 s");
+    }
+
+    #[test]
     fn warrior_thrusting_reaches_the_second_cell() {
         let Some(mut world) = world() else {
             return;

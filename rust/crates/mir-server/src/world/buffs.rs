@@ -22,6 +22,7 @@ impl World {
             kind,
             expires,
             stats,
+            tick_at: now + 2000,
         });
         self.refresh_stats(id, false);
         self.send_player_stats(id);
@@ -50,6 +51,16 @@ impl World {
         if p.buffs.len() == before {
             return;
         }
+        if kind == buff_type::CLOAK {
+            // Ghost Walk cannot outlive the cloak.
+            p.buffs.retain(|b| b.kind != buff_type::GHOST_WALK);
+            self.send_to(
+                id,
+                ServerMessage::BuffRemove {
+                    kind: buff_type::GHOST_WALK,
+                },
+            );
+        }
         self.refresh_stats(id, false);
         self.send_player_stats(id);
         self.send_to(id, ServerMessage::BuffRemove { kind });
@@ -71,14 +82,39 @@ impl World {
     pub(super) fn process_buffs(&mut self) {
         let now = self.now;
         let mut expired = Vec::new();
+        let mut drains = Vec::new();
         for o in self.objects.values() {
             if let Some(p) = o.player() {
                 for b in &p.buffs {
                     if b.expires <= now {
                         expired.push((o.id, b.kind));
+                    } else if b.kind == buff_type::CLOAK && now >= b.tick_at {
+                        // Cloak drains HP every 2 s and drops instead of killing.
+                        if b.stats.cloak_damage >= o.hp {
+                            expired.push((o.id, b.kind));
+                        } else {
+                            drains.push((o.id, b.stats.cloak_damage));
+                        }
                     }
                 }
             }
+        }
+        for (id, amount) in drains {
+            let (hp, max_hp) = {
+                let o = self.objects.get_mut(&id).unwrap();
+                o.hp -= amount;
+                if let Some(b) = o
+                    .player_mut()
+                    .and_then(|p| p.buffs.iter_mut().find(|b| b.kind == buff_type::CLOAK))
+                {
+                    b.tick_at = now + 2000;
+                }
+                (o.hp, o.max_hp)
+            };
+            self.events
+                .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+            let stats = self.player_stats(&self.objects[&id]);
+            self.send_to(id, ServerMessage::StatsChanged(stats));
         }
         for (id, kind) in expired {
             self.buff_remove(id, kind);
@@ -132,7 +168,7 @@ impl World {
                     }
                     p.next_tick = now + 2000;
                     p.ticks_left -= 1;
-                    if p.kind == poison_kind::GREEN {
+                    if p.kind == poison_kind::GREEN || p.kind == poison_kind::HELL_FIRE {
                         damage += p.value;
                         owner = p.owner;
                     }

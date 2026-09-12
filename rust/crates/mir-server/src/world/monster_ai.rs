@@ -22,6 +22,15 @@ impl World {
             }
             return;
         }
+        // Puppets stand still and blow up after 5 s, or once something
+        // targets or strikes them.
+        if let Some(explode_at) = self.objects[&id].monster_ref().explode_at {
+            let targeted = self.objects[&id].monster_ref().target.is_some();
+            if now >= explode_at || targeted {
+                self.puppet_explode(id);
+            }
+            return;
+        }
         // Pets: follow the owner, come back when out of sight, untame on expiry.
         let owner = self.objects[&id].monster_ref().owner;
         if let Some(owner_id) = owner {
@@ -265,6 +274,7 @@ impl World {
             && self.now >= o.action_time
             && self.now >= o.move_time
             && self.now >= m.shock_until
+            && !o.poisons.iter().any(|p| p.kind == poison_kind::WRAITH_GRIP)
     }
 
     pub(super) fn monster_can_attack(&self, id: ObjectId) -> bool {
@@ -435,5 +445,44 @@ impl World {
         for pet in pets {
             self.refresh_monster_stats(pet, false);
         }
+    }
+
+    /// Zircon `Puppet.Die`: the owner's Summon Puppet hits everything within
+    /// two cells 800 ms later.
+    pub(super) fn puppet_explode(&mut self, id: ObjectId) {
+        let (owner, map, loc) = {
+            let o = &self.objects[&id];
+            (o.monster_ref().owner, o.map, o.location)
+        };
+        self.events.push((
+            id,
+            ServerMessage::ObjectEffect {
+                id,
+                effect: effect::PUPPET,
+                location: loc,
+            },
+        ));
+        if let Some(owner) = owner {
+            let victims: Vec<ObjectId> = self
+                .objects
+                .values()
+                .filter(|o| o.map == map && !o.dead && o.location.distance(loc) <= 2)
+                .filter(|o| matches!(&o.kind, Kind::Monster(m) if m.owner.is_none()))
+                .map(|o| o.id)
+                .collect();
+            for v in victims {
+                self.pending_magics.push(PendingMagic {
+                    time: self.now + 800,
+                    caster: owner,
+                    magic: magic_type::SUMMON_PUPPET,
+                    target: Some(v),
+                    location: loc,
+                    direction: None,
+                    primary: true,
+                    chain: None,
+                });
+            }
+        }
+        self.monster_die(id, owner.unwrap_or(id));
     }
 }

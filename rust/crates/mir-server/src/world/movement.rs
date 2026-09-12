@@ -90,6 +90,9 @@ impl World {
             o.direction = direction;
             o.action_time = self.now + MOVE_TIME;
             o.move_time = self.now + MOVE_TIME;
+            if run && o.has_buff(buff_type::CLOAK) {
+                self.buff_remove(id, buff_type::CLOAK);
+            }
         }
         self.move_object(id, to);
         if self.try_travel(id) {

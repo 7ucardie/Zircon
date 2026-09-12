@@ -443,8 +443,25 @@ pub mod magic_type {
     pub const DISCIPLINE: u16 = 403;
     pub const POISONOUS_CLOUD: u16 = 404;
     pub const FULL_BLOOM: u16 = 405;
+    pub const CLOAK: u16 = 406;
     pub const WHITE_LOTUS: u16 = 407;
+    pub const CALAMITY_OF_FULL_MOON: u16 = 408;
+    pub const WRAITH_GRIP: u16 = 409;
     pub const RED_LOTUS: u16 = 410;
+    pub const HELL_FIRE: u16 = 411;
+    pub const PLEDGE_OF_BLOOD: u16 = 412;
+    pub const RAKE: u16 = 413;
+    pub const SWEET_BRIER: u16 = 414;
+    pub const SUMMON_PUPPET: u16 = 415;
+    pub const KARMA: u16 = 416;
+    pub const TOUCH_OF_THE_DEPARTED: u16 = 417;
+    pub const WANING_MOON: u16 = 418;
+    pub const GHOST_WALK: u16 = 419;
+    pub const ELEMENTAL_PUPPET: u16 = 420;
+    pub const REJUVENATION: u16 = 421;
+    pub const RESOLUTION: u16 = 422;
+    pub const RELEASE: u16 = 424;
+    pub const FLAME_SPLASH: u16 = 425;
     pub const BLOODY_FLOWER: u16 = 426;
     pub const FLAMING_DAGGERS: u16 = 454;
     pub const SHREDDING: u16 = 455;
@@ -462,11 +479,20 @@ pub mod magic_type {
                 | DISCIPLINE
                 | BLOODY_FLOWER
                 | ASSAULT
+                | PLEDGE_OF_BLOOD
+                | TOUCH_OF_THE_DEPARTED
+                | GHOST_WALK
+                | ELEMENTAL_PUPPET
+                | REJUVENATION
+                | RESOLUTION
+                | RELEASE
+                | CALAMITY_OF_FULL_MOON
+                | WANING_MOON
         )
     }
     /// Stance skills switched with a hotkey and applied on melee swings.
     pub fn is_toggle(m: u16) -> bool {
-        matches!(m, THRUSTING | HALF_MOON | DESTRUCTIVE_SURGE)
+        matches!(m, THRUSTING | HALF_MOON | DESTRUCTIVE_SURGE | FLAME_SPLASH)
     }
     /// Warrior power attacks charged with a hotkey for 12 s (Zircon `Toggle`).
     pub fn is_charge(m: u16) -> bool {
@@ -475,6 +501,14 @@ pub mod magic_type {
     /// Assassin lotus combo: the hotkey arms the next swing.
     pub fn is_lotus(m: u16) -> bool {
         matches!(m, FULL_BLOOM | WHITE_LOTUS | RED_LOTUS)
+    }
+    /// Skills armed with a hotkey for the next swing (lotus chain, Sweetbrier, Karma).
+    pub fn is_armed(m: u16) -> bool {
+        is_lotus(m) || matches!(m, SWEET_BRIER | KARMA)
+    }
+    /// Moon charges that arm themselves while swinging.
+    pub fn is_auto_charge(m: u16) -> bool {
+        matches!(m, CALAMITY_OF_FULL_MOON | WANING_MOON)
     }
     /// Spells with the projectile cast animation (Zircon `Combat1`).
     pub fn is_projectile_cast(m: u16) -> bool {
@@ -523,6 +557,8 @@ pub mod magic_type {
                 | CHAIN_LIGHTNING
                 | ELECTRIC_SHOCK
                 | PURIFICATION
+                | WRAITH_GRIP
+                | HELL_FIRE
         )
     }
     /// Spells cast on a ground cell.
@@ -571,6 +607,9 @@ pub mod magic_type {
                 | TRANSPARENCY
                 | CELESTIAL_LIGHT
                 | COMBAT_KICK
+                | CLOAK
+                | RAKE
+                | SUMMON_PUPPET
         )
     }
     /// Spells that only use the facing direction.
@@ -658,6 +697,11 @@ pub mod magic_type {
                 | PURIFICATION
                 | TRANSPARENCY
                 | CELESTIAL_LIGHT
+                | CLOAK
+                | WRAITH_GRIP
+                | HELL_FIRE
+                | RAKE
+                | SUMMON_PUPPET
         )
     }
 }
@@ -721,6 +765,9 @@ pub mod effect {
     pub const WHITE_LOTUS: u8 = 4;
     pub const RED_LOTUS: u8 = 5;
     pub const FIRE_WALL_SMOKE: u8 = 6;
+    pub const SWEET_BRIER: u8 = 7;
+    pub const KARMA: u8 = 8;
+    pub const PUPPET: u8 = 9;
 }
 
 /// A buff as the client sees it.

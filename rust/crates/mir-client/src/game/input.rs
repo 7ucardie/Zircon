@@ -146,7 +146,7 @@ impl Game {
                         self.attack_time = now + attack_delay(self.stats.attack_speed as i64);
                         // Zircon `UserObject` priority: lotus arm, Slaying,
                         // stances, Destructive Surge, then charged power attacks.
-                        let mut attack_magic = self.armed_lotus;
+                        let mut attack_magic = self.armed_lotus.or(self.auto_charged);
                         if self.slaying_ready {
                             attack_magic = Some(magic_type::SLAYING);
                         }
@@ -158,6 +158,11 @@ impl Game {
                         }
                         if self.toggles.contains(&magic_type::DESTRUCTIVE_SURGE) {
                             attack_magic = Some(magic_type::DESTRUCTIVE_SURGE);
+                        }
+                        if self.toggles.contains(&magic_type::FLAME_SPLASH)
+                            && attack_magic.is_none()
+                        {
+                            attack_magic = Some(magic_type::FLAME_SPLASH);
                         }
                         if let Some(c) = self.charged {
                             attack_magic = Some(c);
@@ -324,7 +329,12 @@ impl Game {
             }
             return;
         }
-        if magic_type::is_lotus(magic) {
+        if magic_type::is_armed(magic) {
+            if magic == magic_type::KARMA && !self.buffs.iter().any(|(k, _)| *k == buff_type::CLOAK)
+            {
+                self.say("Karma needs the cloak.".into(), now);
+                return;
+            }
             if self.armed_lotus != Some(magic) {
                 self.armed_lotus = Some(magic);
                 self.say(format!("{} is ready.", def.name), now);
@@ -405,6 +415,7 @@ impl Game {
             Direction::Down
         } else if magic == magic_type::SHOULDER_DASH
             || magic == magic_type::COMBAT_KICK
+            || magic == magic_type::RAKE
             || magic_type::is_line(magic)
         {
             if mouse_cell == user_loc {

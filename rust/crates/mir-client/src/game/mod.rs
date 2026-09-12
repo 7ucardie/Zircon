@@ -90,6 +90,8 @@ pub struct Game {
     charged: Option<u16>,
     /// Lotus skill armed for the next swing (Zircon `User.AttackMagic`).
     armed_lotus: Option<u16>,
+    /// Moon charge the server armed (Calamity Of Full Moon / Waning Moon).
+    auto_charged: Option<u16>,
 }
 
 struct View {
@@ -193,6 +195,7 @@ impl Game {
             buffs: Vec::new(),
             charged: None,
             armed_lotus: None,
+            auto_charged: None,
             character: None,
             status: String::new(),
             map: None,
@@ -285,14 +288,19 @@ impl Game {
                         .min_by_key(|o| o.location.distance(u.location))
                         .map(|o| o.id)
                 });
-                if let Some(t) = nearest {
-                    let view = View::new(width, height, self.user());
-                    if let Some(o) = self.objects.get(&t) {
-                        let (px, py) = view.object_px(o);
-                        self.mouse = (px as f32 + 24.0, py as f32 + 16.0);
+                let by_id = v.strip_prefix('m').and_then(|s| s.parse::<u16>().ok());
+                // Self casts do not need a monster in reach.
+                let self_cast = by_id.map(magic_type::is_self_cast).unwrap_or(false);
+                if nearest.is_some() || self_cast {
+                    if let Some(t) = nearest {
+                        let view = View::new(width, height, self.user());
+                        if let Some(o) = self.objects.get(&t) {
+                            let (px, py) = view.object_px(o);
+                            self.mouse = (px as f32 + 24.0, py as f32 + 16.0);
+                        }
+                        self.hovered = Some(t);
                     }
-                    self.hovered = Some(t);
-                    if let Some(id) = v.strip_prefix('m').and_then(|s| s.parse::<u16>().ok()) {
+                    if let Some(id) = by_id {
                         self.use_skill(id, now, width, height, conn);
                     } else if let Ok(f) = v.parse::<u8>() {
                         self.function_key(f, now, width, height, conn);
@@ -373,6 +381,8 @@ fn cast_action(magic: u16) -> Action {
         Action::Stance
     } else if magic == magic_type::SWIFT_BLADE {
         Action::Attack
+    } else if magic == magic_type::RAKE {
+        Action::Attack5
     } else if magic_type::is_projectile_cast(magic) {
         Action::Cast1
     } else {
@@ -394,6 +404,7 @@ fn buff_icon(kind: u16) -> u32 {
         buff_type::BLOOD_LUST => 90,
         buff_type::CELESTIAL_LIGHT => 142,
         buff_type::TRANSPARENCY => 160,
+        buff_type::CLOAK | buff_type::GHOST_WALK => 160,
         buff_type::MAGIC_SHIELD => 100,
         buff_type::HEAL => 78,
         buff_type::MAGIC_RESISTANCE => 92,

@@ -29,6 +29,7 @@ impl World {
         let mut magics: Vec<u16> = Vec::new();
         let mut valid: Option<u16> = None;
         let mut toggles = Vec::new();
+        let mut karma_cost = 0;
         {
             let level = o.player().map(|p| p.level).unwrap_or(1);
             let mut owned: Vec<(u16, i32, i32)> = o
@@ -45,6 +46,17 @@ impl World {
                 .unwrap_or_default();
             owned.sort_by_key(|(m, _, _)| *m);
             let roll: bool = self.rng.random_range(0..5) == 0;
+            let moon_roll = self.rng.random_range(0..5);
+            let (o_hp, o_max_hp) = (o.hp, o.max_hp);
+            let release = o.player().and_then(|p| {
+                let um = p.magics.iter().find(|m| m.magic == magic_type::RELEASE)?;
+                let def = self.data.magics.get(&um.magic)?;
+                (p.level >= def.need_level[0]).then(|| um.power_range(def))
+            });
+            let resolution = o
+                .player()
+                .map(|p| p.magics.iter().any(|m| m.magic == magic_type::RESOLUTION))
+                .unwrap_or(false);
             let p = o.player_mut().unwrap();
             for (m, need, cost) in owned {
                 if level < need {
@@ -79,7 +91,10 @@ impl World {
                         }
                     }
                     // Lotus combo: the armed swing pays and cools down on a hit.
-                    magic_type::FULL_BLOOM | magic_type::WHITE_LOTUS | magic_type::RED_LOTUS => {
+                    magic_type::FULL_BLOOM
+                    | magic_type::WHITE_LOTUS
+                    | magic_type::RED_LOTUS
+                    | magic_type::SWEET_BRIER => {
                         let cd = p
                             .magics
                             .iter()
@@ -87,6 +102,68 @@ impl World {
                             .map(|x| x.cooldown_until)
                             .unwrap_or(0);
                         if attack_magic == Some(m) && self.now >= cd && cost <= p.mp {
+                            p.mp -= cost;
+                            valid = Some(m);
+                            magics.push(m);
+                        }
+                    }
+                    // Karma: an HP-priced strike that needs the cloak.
+                    magic_type::KARMA => {
+                        let cd = p
+                            .magics
+                            .iter()
+                            .find(|x| x.magic == m)
+                            .map(|x| x.cooldown_until)
+                            .unwrap_or(0);
+                        let cloaked = p.buffs.iter().any(|b| b.kind == buff_type::CLOAK);
+                        if attack_magic == Some(m) && self.now >= cd && cloaked {
+                            let mut hp_cost = o_max_hp * cost / 100;
+                            if let Some((rmin, _)) = release {
+                                hp_cost -= hp_cost * rmin / 100;
+                                magics.push(magic_type::RELEASE);
+                            }
+                            if resolution {
+                                magics.push(magic_type::RESOLUTION);
+                            }
+                            if hp_cost < o_hp {
+                                karma_cost = hp_cost;
+                                valid = Some(m);
+                                magics.push(m);
+                            }
+                        }
+                    }
+                    // Moon charges: consumed when armed, re-armed by a roll.
+                    magic_type::CALAMITY_OF_FULL_MOON | magic_type::WANING_MOON => {
+                        let cloaked = p.buffs.iter().any(|b| b.kind == buff_type::CLOAK);
+                        let ready = if m == magic_type::CALAMITY_OF_FULL_MOON {
+                            &mut p.full_moon_ready
+                        } else {
+                            &mut p.waning_moon_ready
+                        };
+                        if *ready && attack_magic == Some(m) {
+                            *ready = false;
+                            toggles.push((m, false));
+                            valid = Some(m);
+                            magics.push(m);
+                        }
+                        let allowed = if m == magic_type::CALAMITY_OF_FULL_MOON {
+                            !cloaked
+                        } else {
+                            cloaked
+                        };
+                        let level = p
+                            .magics
+                            .iter()
+                            .find(|x| x.magic == m)
+                            .map(|x| x.level as i32)
+                            .unwrap_or(0);
+                        if !*ready && allowed && moon_roll > level {
+                            *ready = true;
+                            toggles.push((m, true));
+                        }
+                    }
+                    magic_type::FLAME_SPLASH => {
+                        if attack_magic == Some(m) && p.flame_splash_on && cost <= p.mp {
                             p.mp -= cost;
                             valid = Some(m);
                             magics.push(m);
@@ -122,6 +199,13 @@ impl World {
         }
         for (m, on) in toggles {
             self.send_to(id, ServerMessage::MagicToggle { magic: m, on });
+        }
+        if karma_cost > 0 && attack_magic == valid {
+            let o = self.objects.get_mut(&id).unwrap();
+            o.hp -= karma_cost;
+            let (hp, max_hp) = (o.hp, o.max_hp);
+            self.events
+                .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
         }
         if attack_magic != valid {
             // Zircon logs and resyncs; the swing does not happen.
@@ -171,6 +255,24 @@ impl World {
             Some(magic_type::DESTRUCTIVE_SURGE) => {
                 (1..8).map(|i| loc.step(direction.rotate(i), 1)).collect()
             }
+            // Flame Splash: up to four of the other seven directions that hold a monster.
+            Some(magic_type::FLAME_SPLASH) => {
+                let mut dirs: Vec<Point> = (1..8)
+                    .map(|i| loc.step(direction.rotate(i), 1))
+                    .filter(|c| {
+                        self.maps[&map]
+                            .objects_at(*c)
+                            .iter()
+                            .any(|v| self.objects[v].is_monster() && !self.objects[v].dead)
+                    })
+                    .collect();
+                let mut picked = Vec::new();
+                while !dirs.is_empty() && picked.len() < 4 {
+                    let i = self.rng.random_range(0..dirs.len());
+                    picked.push(dirs.swap_remove(i));
+                }
+                picked
+            }
             _ => Vec::new(),
         };
         for cell in extra {
@@ -185,9 +287,13 @@ impl World {
                 raw: false,
             });
         }
+        // Any swing breaks the cloak.
+        if self.objects[&id].has_buff(buff_type::CLOAK) {
+            self.buff_remove(id, buff_type::CLOAK);
+        }
         // Lotus chain (Zircon `AttackLocationSuccess`): on a target in front,
         // the used lotus cools down and the next one in the chain opens.
-        if let Some(m) = valid.filter(|m| magic_type::is_lotus(*m)) {
+        if let Some(m) = valid.filter(|m| magic_type::is_armed(*m)) {
             let hit_something = self.maps[&map]
                 .objects_at(front)
                 .iter()
@@ -207,11 +313,23 @@ impl World {
                     magic_type::WHITE_LOTUS => {
                         vec![(magic_type::FULL_BLOOM, swing * 3 / 2), (m, own)]
                     }
-                    _ => vec![
+                    magic_type::RED_LOTUS => vec![
                         (magic_type::FULL_BLOOM, swing * 3 / 2),
                         (magic_type::WHITE_LOTUS, swing * 3 / 2),
                         (m, own),
                     ],
+                    magic_type::SWEET_BRIER => vec![
+                        (magic_type::WHITE_LOTUS, swing * 3 / 2),
+                        (magic_type::RED_LOTUS, swing * 3 / 2),
+                        (m, own),
+                    ],
+                    // Karma: locks Summon Puppet too and stops item use for 10 s.
+                    _ => {
+                        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                            p.use_item_time = self.now + 10_000;
+                        }
+                        vec![(m, own), (magic_type::SUMMON_PUPPET, own)]
+                    }
                 };
                 self.send_to(
                     id,
@@ -316,7 +434,18 @@ impl World {
                     .magics
                     .iter()
                     .copied()
-                    .find(|m| magic_type::is_lotus(*m));
+                    .find(|m| magic_type::is_lotus(*m) || *m == magic_type::SWEET_BRIER);
+                let karma = hit.magics.contains(&magic_type::KARMA);
+                // Resolution: Karma swings gain accuracy and pierce armour by its power.
+                let resolution_pct = if karma {
+                    self.objects[&hit.attacker]
+                        .player()
+                        .and_then(|p| p.magics.iter().find(|m| m.magic == magic_type::RESOLUTION))
+                        .map(|m| m.power_range(&self.data.magics[&m.magic]).0)
+                        .unwrap_or(0)
+                } else {
+                    0
+                };
                 // Hit chance: Random.Next(Agility) > Accuracy => dodge (lotus never misses).
                 let roll = if tstats.agility > 0 {
                     self.rng.random_range(0..tstats.agility)
@@ -324,7 +453,9 @@ impl World {
                     0
                 };
                 let sure_hit = lotus.is_some() || hit.magics.contains(&magic_type::SWIFT_BLADE);
-                if !sure_hit && roll > attacker_stats.accuracy {
+                let accuracy =
+                    attacker_stats.accuracy + attacker_stats.accuracy * resolution_pct / 100;
+                if !sure_hit && roll > accuracy {
                     continue;
                 }
                 let mut power = hit.power;
@@ -356,10 +487,35 @@ impl World {
                         | magic_type::SWIFT_BLADE => {
                             power = power * mp / 100;
                         }
-                        magic_type::DESTRUCTIVE_SURGE if !hit.primary => {
+                        magic_type::DESTRUCTIVE_SURGE | magic_type::FLAME_SPLASH
+                            if !hit.primary =>
+                        {
                             power = power * mp / 100;
                         }
-                        m if magic_type::is_lotus(m) => {
+                        magic_type::CALAMITY_OF_FULL_MOON | magic_type::WANING_MOON => power += mp,
+                        magic_type::KARMA => {
+                            power += self.roll_dc(attacker_stats);
+                            // The percent-HP execute: quartered on monsters, flat on bosses.
+                            let (thp, boss) = {
+                                let t = &self.objects[&tid];
+                                let boss = matches!(&t.kind, Kind::Monster(m) if self.data.monsters[&m.def].is_boss);
+                                (t.hp, boss)
+                            };
+                            let execute = if boss { mp * 20 } else { thp * mp / 100 / 4 };
+                            if execute > 0 {
+                                self.damage(tid, hit.attacker, execute, element::NONE, false);
+                            }
+                            let tloc = self.objects[&tid].location;
+                            self.events.push((
+                                tid,
+                                ServerMessage::ObjectEffect {
+                                    id: tid,
+                                    effect: effect::KARMA,
+                                    location: tloc,
+                                },
+                            ));
+                        }
+                        m if magic_type::is_lotus(m) || m == magic_type::SWEET_BRIER => {
                             // Zircon lotus: 2x DC minus one AC roll, plus a mana-scaled
                             // bonus minus MR; the combo buff triples the bonus.
                             let (max_mp, max_dc, combo) = {
@@ -368,6 +524,7 @@ impl World {
                                 let prev = match m {
                                     magic_type::WHITE_LOTUS => Some(buff_type::FULL_BLOOM),
                                     magic_type::RED_LOTUS => Some(buff_type::WHITE_LOTUS),
+                                    magic_type::SWEET_BRIER => Some(buff_type::RED_LOTUS),
                                     _ => None,
                                 };
                                 (
@@ -388,16 +545,22 @@ impl World {
                             power += (bonus - mr).max(0);
                             let (next, fx) = match m {
                                 magic_type::FULL_BLOOM => {
-                                    (buff_type::FULL_BLOOM, effect::FULL_BLOOM)
+                                    (Some(buff_type::FULL_BLOOM), effect::FULL_BLOOM)
                                 }
                                 magic_type::WHITE_LOTUS => {
-                                    (buff_type::WHITE_LOTUS, effect::WHITE_LOTUS)
+                                    (Some(buff_type::WHITE_LOTUS), effect::WHITE_LOTUS)
                                 }
-                                _ => (buff_type::RED_LOTUS, effect::RED_LOTUS),
+                                magic_type::RED_LOTUS => {
+                                    (Some(buff_type::RED_LOTUS), effect::RED_LOTUS)
+                                }
+                                _ => (None, effect::SWEET_BRIER),
                             };
                             self.buff_remove(hit.attacker, buff_type::FULL_BLOOM);
                             self.buff_remove(hit.attacker, buff_type::WHITE_LOTUS);
-                            self.buff_add(hit.attacker, next, 15_000, BuffStats::default());
+                            self.buff_remove(hit.attacker, buff_type::RED_LOTUS);
+                            if let Some(next) = next {
+                                self.buff_add(hit.attacker, next, 15_000, BuffStats::default());
+                            }
                             let tloc = self.objects[&tid].location;
                             self.events.push((
                                 tid,
@@ -412,7 +575,9 @@ impl World {
                     }
                 }
                 if lotus.is_none() {
-                    power -= self.roll_ac(tstats);
+                    let mut ac = self.roll_ac(tstats);
+                    ac -= ac * resolution_pct / 100;
+                    power -= ac;
                 }
                 if power <= 0 {
                     continue;
@@ -523,6 +688,11 @@ impl World {
         if let Some(r) = reflected {
             self.damage(attacker, target, r, element::NONE, false);
             self.level_magic(target, magic_type::REFLECT_DAMAGE);
+        }
+        if let Some(m) = self.objects.get_mut(&target).and_then(|o| o.monster_mut()) {
+            if m.explode_at.is_some() {
+                m.explode_at = Some(now);
+            }
         }
         let credit = self.objects[&attacker].side().unwrap_or(attacker);
         // Idle pets of the attacker join in (Zircon `Pets[i].Target = ob`).

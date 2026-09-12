@@ -222,9 +222,15 @@ impl Game {
                     } else if self.charged == Some(magic) {
                         self.charged = None;
                     }
-                } else if magic_type::is_lotus(magic) {
+                } else if magic_type::is_armed(magic) {
                     if !on && self.armed_lotus == Some(magic) {
                         self.armed_lotus = None;
+                    }
+                } else if magic_type::is_auto_charge(magic) {
+                    if on {
+                        self.auto_charged = Some(magic);
+                    } else if self.auto_charged == Some(magic) {
+                        self.auto_charged = None;
                     }
                 } else if on {
                     self.toggles.insert(magic);

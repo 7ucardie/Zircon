@@ -166,6 +166,7 @@ pub fn attack_effect(magic: u16, attacker: ObjectId, dir: u8, now: u64) -> Optio
         magic_type::THRUSTING => (MAGIC_EX3, 0, 6, 100, WHITE, true, 0),
         magic_type::HALF_MOON => (MAGIC, 230, 6, 100, WHITE, true, 0),
         magic_type::DESTRUCTIVE_SURGE => (MAGIC_EX2, 1420, 6, 100, WHITE, false, 0),
+        magic_type::FLAME_SPLASH => (MAGIC_EX4, 900, 8, 100, FIRE, false, 0),
         magic_type::FLAMING_SWORD => (MAGIC, 1470, 6, 100, FIRE, true, 0),
         magic_type::DRAGON_RISE => (MAGIC, 2185, 10, 100, WHITE, true, 200),
         magic_type::BLADE_STORM => (MAGIC_EX, 1780, 10, 60, WHITE, true, 0),
@@ -192,6 +193,9 @@ pub fn object_effect(kind: u8, id: ObjectId, cell: Point, now: u64) -> Option<Ef
         e::FULL_BLOOM => Effect::at(MAGIC_EX4, 1700, 4, 100, WHITE, Anchor::Object(id), now),
         e::WHITE_LOTUS => Effect::at(MAGIC_EX4, 1600, 12, 100, WHITE, Anchor::Object(id), now),
         e::RED_LOTUS => Effect::at(MAGIC_EX4, 1700, 12, 100, WHITE, Anchor::Object(id), now),
+        e::SWEET_BRIER => Effect::at(MAGIC_EX4, 1900, 10, 100, WHITE, Anchor::Object(id), now),
+        e::KARMA => Effect::at(MAGIC_EX4, 1800, 10, 100, WHITE, Anchor::Object(id), now),
+        e::PUPPET => Effect::at(MAGIC_EX4, 820, 8, 100, FIRE, Anchor::Cell(cell), now),
         _ => return None,
     })
 }
@@ -281,6 +285,21 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         magic_type::PURIFICATION => (MAGIC_EX2, 220, 10, 60, HOLY, false),
         magic_type::TRANSPARENCY => (MAGIC_EX2, 430, 7, 100, WHITE, false),
         magic_type::CELESTIAL_LIGHT => (MAGIC_EX2, 280, 8, 100, HOLY, false),
+        magic_type::WRAITH_GRIP => (MAGIC_EX4, 1460, 15, 60, WHITE, false),
+        magic_type::HELL_FIRE => (MAGIC_EX4, 1520, 15, 60, FIRE, false),
+        magic_type::CLOAK => (MAGIC_EX4, 600, 10, 60, WHITE, false),
+        magic_type::SUMMON_PUPPET => (MAGIC_EX4, 800, 16, 100, WHITE, false),
+        magic_type::RAKE => {
+            // Direction-specific banks (Zircon flips none).
+            let start = match dir {
+                0 => 1200,
+                1 | 7 => 1210,
+                2 | 6 => 1220,
+                3 | 5 => 1230,
+                _ => 1240,
+            };
+            (MAGIC_EX4, start, 9, 100, ICE, false)
+        }
         _ => return None,
     };
     Some(Effect {
@@ -489,6 +508,20 @@ pub fn payload(
             for a in anchors {
                 out.effects
                     .push(Effect::at(MAGIC_EX2, 290, 9, 100, HOLY, a, now));
+            }
+        }
+        magic_type::WRAITH_GRIP => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX4, 1420, 14, 100, WHITE, a, now));
+                out.effects
+                    .push(Effect::at(MAGIC_EX4, 1440, 14, 100, WHITE, a, now));
+            }
+        }
+        magic_type::HELL_FIRE => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX4, 1500, 10, 100, FIRE, a, now));
             }
         }
         magic_type::STRENGTH_OF_FAITH => {
