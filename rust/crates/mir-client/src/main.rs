@@ -16,6 +16,7 @@ mod gfx;
 mod items;
 mod net;
 mod scenes;
+mod sound_table;
 mod text;
 mod ui;
 mod windows;

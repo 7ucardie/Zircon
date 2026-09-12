@@ -14,8 +14,8 @@ impl Game {
             } => {
                 self.load_map(&map.file, &map.name);
                 self.map_light = map.light;
-                self.audio
-                    .play_music(map.music.clamp(0, u16::MAX as i32) as u16);
+                self.audio.stop_all();
+                self.audio.play_music(music_index(map.music));
                 self.objects.clear();
                 let (name, gender, class, hair) = self
                     .character
@@ -75,6 +75,7 @@ impl Game {
                         o.snap(state.location, state.direction, now);
                     }
                     None => {
+                        self.sfx_appear(&state);
                         self.objects
                             .insert(state.id, ClientObject::new(&state, now));
                     }
@@ -159,6 +160,7 @@ impl Game {
                         distance: 0,
                     });
                 }
+                self.sfx_attack(id, attack_magic);
                 if let Some(m) = attack_magic {
                     if let Some(e) = effects::attack_effect(m, id, direction.index(), now) {
                         self.effects.push(e);
@@ -173,6 +175,7 @@ impl Game {
                 magic,
             } => {
                 let from = self.objects.get(&id).map(|o| o.location);
+                self.sfx_attack(id, None);
                 if let Some(o) = self.objects.get_mut(&id) {
                     let loc = o.queue.back().map(|q| q.location).unwrap_or(o.location);
                     o.enqueue(Queued {
@@ -210,6 +213,9 @@ impl Game {
                         });
                     }
                 }
+                for &s in sound_table::magic_cast(magic) {
+                    self.audio.play(s);
+                }
                 if let Some(e) = effects::cast_effect(magic, id, direction.index(), now) {
                     self.effects.push(e);
                 }
@@ -232,13 +238,20 @@ impl Game {
                     .quest(q.quest)
                     .map(|d| d.name.clone())
                     .unwrap_or_else(|| format!("Quest {}", q.quest));
-                let text = if q.completed && !was_done {
-                    format!("Quest completed: {name}")
+                let (text, sound) = if q.completed && !was_done {
+                    (
+                        format!("Quest completed: {name}"),
+                        sound_table::idx::QUEST_COMPLETE,
+                    )
                 } else if !self.quests.iter().any(|x| x.quest == q.quest) {
-                    format!("Quest accepted: {name}")
+                    (
+                        format!("Quest accepted: {name}"),
+                        sound_table::idx::QUEST_TAKE,
+                    )
                 } else {
-                    format!("Quest updated: {name}")
+                    (format!("Quest updated: {name}"), 0)
                 };
+                self.audio.play(sound);
                 match self.quests.iter_mut().find(|x| x.quest == q.quest) {
                     Some(x) => *x = q,
                     None => self.quests.push(q),
@@ -350,11 +363,13 @@ impl Game {
                 effect,
                 location,
             } => {
+                self.audio.play(object_effect_sound(effect));
                 if let Some(e) = effects::object_effect(effect, id, location, now) {
                     self.effects.push(e);
                 }
             }
             ServerMessage::MapEffect { location, effect } => {
+                self.audio.play(map_effect_sound(effect));
                 self.effects
                     .extend(effects::map_effect(effect, location, now));
             }
@@ -373,6 +388,7 @@ impl Game {
                 if magic {
                     self.effects.push(effects::struck_effect(element, id, now));
                 }
+                self.sfx_struck(id);
                 if let Some(o) = self.objects.get_mut(&id) {
                     o.health_time = now + 5000;
                     o.damage.push((damage, now));
@@ -402,6 +418,7 @@ impl Game {
                 }
             }
             ServerMessage::ObjectDie { id } => {
+                self.sfx_die(id);
                 if let Some(o) = self.objects.get_mut(&id) {
                     o.dead = true;
                     o.hp = 0;
@@ -484,7 +501,12 @@ impl Game {
                     }
                 }
             }
-            ServerMessage::GoldChanged { gold } => self.gold = gold,
+            ServerMessage::GoldChanged { gold } => {
+                if gold > self.gold {
+                    self.audio.play(sound_table::idx::GOLD_GAINED);
+                }
+                self.gold = gold;
+            }
             ServerMessage::WeightsChanged(w) => self.weights = w,
             ServerMessage::ObjectAppearance { id, appearance } => {
                 if let Some(o) = self.objects.get_mut(&id) {
@@ -497,6 +519,8 @@ impl Game {
                 direction,
             } => {
                 self.load_map(&map.file, &map.name);
+                self.map_light = map.light;
+                self.audio.play_music(music_index(map.music));
                 let user = self.user;
                 self.objects.retain(|id, _| Some(*id) == user);
                 self.goal = None;
@@ -544,6 +568,7 @@ impl Game {
 
     /// Reset all world state (when leaving the map).
     pub fn leave_world(&mut self) {
+        self.audio.stop_all();
         self.map = None;
         self.objects.clear();
         self.user = None;

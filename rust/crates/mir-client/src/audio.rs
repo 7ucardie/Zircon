@@ -1,5 +1,10 @@
-//! Sound playback (rodio): Zircon sound effects by `SoundIndex` number
-//! (`Sound/<n>.wav`) and one looping music track.
+//! Sound playback (rodio) keyed by Zircon `SoundIndex`.
+//!
+//! The index -> file table comes from `sound_table` (generated from the C#
+//! client). Files are resolved case-insensitively under `Sound/`, missing
+//! files are silent. Each index may overlap up to five times; looping
+//! clips (music, fire wall hum) are singletons that `stop` ends. Channels
+//! (System, Music, Magic, Monster, Player) have their own volume.
 //!
 //! Without an output device (CI, headless) or with `ZIRCON_MUTE=1` every
 //! call is a no-op, so the client never depends on audio working.
@@ -11,14 +16,25 @@ use std::sync::Arc;
 
 use rodio::{Decoder, DeviceSinkBuilder, MixerDeviceSink, Player, Source};
 
+use crate::sound_table::{sound_file, CHANNELS};
+
+/// Most simultaneous copies of one index (Zircon `DXSound` overlap cap).
+const OVERLAP: usize = 5;
+/// Global cap on one-shot voices.
+const MAX_VOICES: usize = 32;
+
 pub struct Audio {
     sink: Option<MixerDeviceSink>,
-    root: PathBuf,
+    /// Lower-cased file name -> real path under `Sound/`.
+    files: HashMap<String, PathBuf>,
     cache: HashMap<u16, Option<Arc<[u8]>>>,
-    music: Option<(u16, Player)>,
-    effects: Vec<Player>,
-    pub effect_volume: f32,
-    pub music_volume: f32,
+    /// One-shot voices: (index, player).
+    voices: Vec<(u16, Player)>,
+    /// Looping singletons by index.
+    loops: HashMap<u16, Player>,
+    music: Option<u16>,
+    /// Volume per channel, 0..1 (Zircon: 0..100 per `SoundType`).
+    pub volumes: [f32; CHANNELS],
 }
 
 impl Audio {
@@ -36,37 +52,70 @@ impl Audio {
                 }
             }
         };
+        let dir = root.as_ref().join("Sound");
+        let mut files = HashMap::new();
+        if sink.is_some() {
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for e in rd.flatten() {
+                    files.insert(e.file_name().to_string_lossy().to_lowercase(), e.path());
+                }
+            }
+            tracing::info!(count = files.len(), dir = %dir.display(), "sound files");
+        }
+        let mut volumes = [0.5; CHANNELS];
+        volumes[2] = 0.3;
+        if let Some(v) = std::env::var("ZIRCON_VOLUME")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+        {
+            for x in volumes.iter_mut() {
+                *x *= v.clamp(0.0, 2.0);
+            }
+        }
         Audio {
             sink,
-            root: root.as_ref().join("Sound"),
+            files,
             cache: HashMap::new(),
+            voices: Vec::new(),
+            loops: HashMap::new(),
             music: None,
-            effects: Vec::new(),
-            effect_volume: 0.6,
-            music_volume: 0.4,
+            volumes,
         }
     }
 
-    fn bytes(&mut self, index: u16) -> Option<Arc<[u8]>> {
+    fn bytes(&mut self, index: u16, file: &str) -> Option<Arc<[u8]>> {
         if let Some(b) = self.cache.get(&index) {
             return b.clone();
         }
-        let path = self.root.join(format!("{index}.wav"));
-        let loaded = std::fs::read(&path).ok().map(Arc::<[u8]>::from);
+        let loaded = self
+            .files
+            .get(&file.to_lowercase())
+            .and_then(|p| std::fs::read(p).ok())
+            .map(Arc::<[u8]>::from);
         if loaded.is_none() {
-            tracing::debug!(index, "missing sound file");
+            tracing::debug!(index, file, "missing sound file");
         }
         self.cache.insert(index, loaded.clone());
         loaded
     }
 
-    /// Play a one-shot effect.
-    #[allow(dead_code)] // wired to actions, magics and monsters next
+    /// Play a sound by `SoundIndex`; looping indices become singletons.
     pub fn play(&mut self, index: u16) {
         if index == 0 || self.sink.is_none() {
             return;
         }
-        let Some(bytes) = self.bytes(index) else {
+        let Some((file, channel, looping)) = sound_file(index) else {
+            return;
+        };
+        self.voices.retain(|(_, p)| !p.empty());
+        self.loops.retain(|_, p| !p.empty());
+        if looping && self.loops.contains_key(&index) {
+            return;
+        }
+        if !looping && self.voices.iter().filter(|(i, _)| *i == index).count() >= OVERLAP {
+            return;
+        }
+        let Some(bytes) = self.bytes(index, file) else {
             return;
         };
         let Ok(source) = Decoder::new_wav(Cursor::new(bytes)) else {
@@ -74,46 +123,52 @@ impl Audio {
         };
         let sink = self.sink.as_ref().unwrap();
         let player = Player::connect_new(sink.mixer());
-        player.set_volume(self.effect_volume);
-        player.append(source);
-        self.effects.retain(|p| !p.empty());
-        // A hard cap keeps a burst of hits from piling up players.
-        if self.effects.len() >= 24 {
-            self.effects.remove(0);
+        player.set_volume(self.volumes[(channel as usize).min(CHANNELS - 1)]);
+        if looping {
+            player.append(source.repeat_infinite());
+            self.loops.insert(index, player);
+        } else {
+            player.append(source);
+            if self.voices.len() >= MAX_VOICES {
+                let (_, old) = self.voices.remove(0);
+                old.stop();
+            }
+            self.voices.push((index, player));
         }
-        self.effects.push(player);
     }
 
-    /// Loop a music track; re-requesting the playing track is a no-op.
-    pub fn play_music(&mut self, index: u16) {
-        if self.sink.is_none() {
-            return;
-        }
-        if index == 0 {
-            self.stop_music();
-            return;
-        }
-        if self.music.as_ref().map(|(i, _)| *i) == Some(index) {
-            return;
-        }
-        self.stop_music();
-        let Some(bytes) = self.bytes(index) else {
-            return;
-        };
-        let Ok(source) = Decoder::new_wav(Cursor::new(bytes)) else {
-            return;
-        };
-        let sink = self.sink.as_ref().unwrap();
-        let player = Player::connect_new(sink.mixer());
-        player.set_volume(self.music_volume);
-        player.append(source.repeat_infinite());
-        self.music = Some((index, player));
-    }
-
-    #[allow(dead_code)]
-    pub fn stop_music(&mut self) {
-        if let Some((_, p)) = self.music.take() {
+    /// Stop a looping sound (no-op for one-shots).
+    pub fn stop(&mut self, index: u16) {
+        if let Some(p) = self.loops.remove(&index) {
             p.stop();
         }
+    }
+
+    /// True while a looping index is playing.
+    pub fn is_looping(&self, index: u16) -> bool {
+        self.loops.get(&index).is_some_and(|p| !p.empty())
+    }
+
+    /// Switch the music track (`MapInfo.Music`, login/select scenes);
+    /// re-requesting the playing track is a no-op, 0 stops it.
+    pub fn play_music(&mut self, index: u16) {
+        if self.music == Some(index) {
+            return;
+        }
+        if let Some(old) = self.music.take() {
+            self.stop(old);
+        }
+        if index != 0 {
+            self.music = Some(index);
+            self.play(index);
+        }
+    }
+
+    /// Stop every loop (leaving the world).
+    pub fn stop_all(&mut self) {
+        for (_, p) in self.loops.drain() {
+            p.stop();
+        }
+        self.music = None;
     }
 }

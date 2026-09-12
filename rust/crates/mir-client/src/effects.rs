@@ -95,6 +95,8 @@ pub struct Projectile {
     pub dir_stride: u32,
     /// What to play on arrival.
     pub explode: Option<(u16, u32, u32, u64, [f32; 4])>,
+    /// `SoundIndex` played on arrival (0 = none).
+    pub sound: u16,
 }
 
 impl Projectile {
@@ -207,6 +209,7 @@ pub fn monster_projectile(magic: u16, from: Point, to: Anchor, now: u64) -> Proj
         dir16: 0,
         dir_stride: 10,
         explode: None,
+        sound: 0,
     }
 }
 
@@ -513,6 +516,7 @@ pub fn payload(
                         dir16: 0,
                         dir_stride: stride,
                         explode: Some(explode),
+                        sound: 0,
                     },
                 ));
             }
@@ -574,6 +578,7 @@ pub fn payload(
                         dir16: 0,
                         dir_stride: 10,
                         explode: Some(explode),
+                        sound: 0,
                     },
                 ));
             }
@@ -655,6 +660,7 @@ pub fn payload(
                         dir16: 0,
                         dir_stride: 10,
                         explode: Some((hit.0, hit.1, hit.2, 100, col)),
+                        sound: 0,
                     },
                 ));
             }
@@ -816,6 +822,7 @@ pub fn payload(
                         dir16: 0,
                         dir_stride: 10,
                         explode: Some((hit.0, hit.1, hit.2, 100, col)),
+                        sound: 0,
                     },
                 ));
             }
@@ -897,6 +904,7 @@ pub fn payload(
                         dir16: 0,
                         dir_stride: 10,
                         explode: Some((MAGIC, 1800, 10, 100, FIRE)),
+                        sound: 0,
                     },
                 ));
             }
@@ -969,6 +977,7 @@ pub fn payload(
                         dir16: 0,
                         dir_stride: 0,
                         explode: Some((MAGIC_EX, 2000, 8, 100, WIND)),
+                        sound: 0,
                     },
                 ));
             }

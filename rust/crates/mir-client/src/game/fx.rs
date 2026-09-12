@@ -15,7 +15,18 @@ impl Game {
         for (_, magic, caster_cell, targets, locations) in due {
             let payload = effects::payload(magic, caster_cell, &targets, &locations, now);
             self.effects.extend(payload.effects);
+            let end = sound_table::magic_end(magic);
+            if payload.projectiles.is_empty() {
+                for &s in end {
+                    self.audio.play(s);
+                }
+            } else {
+                for &s in sound_table::magic_travel(magic) {
+                    self.audio.play(s);
+                }
+            }
             for (from, to, mut p) in payload.projectiles {
+                p.sound = end.first().copied().unwrap_or(0);
                 let (fx, fy) = view.cell_px(from.x, from.y);
                 let (tx, ty) = match to {
                     Anchor::Object(id) => match self.objects.get(&id) {
@@ -41,6 +52,7 @@ impl Game {
             }
         });
         for p in arrived {
+            self.audio.play(p.sound);
             if let Some((library, start, count, delay, color)) = p.explode {
                 self.effects.push(Effect {
                     library,

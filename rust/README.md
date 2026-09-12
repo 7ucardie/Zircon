@@ -159,9 +159,23 @@ blobs are added for lit objects (torch light from equipment, a minimum
 glow around your own character, NPCs, fire walls and other fields), then
 the target is multiplied over the world before names and UI are drawn.
 The server broadcasts the daylight (`ZIRCON_DAY_CYCLE` game days per real
-day, default 12). Sound plays through rodio: each map's music loops on
-entry; `ZIRCON_MUTE=1` silences everything (also used by the screenshot
-runs).
+day, default 12).
+
+Sound follows Zircon's `SoundIndex` tables, generated from the C# client by
+`tools/gen_sound_table.py` into `mir-client/src/sound_table.rs` (index to
+file and channel, monster attack/struck/die by `MonsterImage`, magic
+cast/travel/impact sounds, attack-skill sounds). The client plays login and
+character-select music, each map's music on entry, footsteps on walk and
+run frames of your own character, weapon swings by weapon shape, player
+and monster struck and death sounds, spell casts with their projectile and
+impact sounds, teleport and lotus effects, the fire wall and tempest hums
+while one is within 20 cells, item cell sounds by item type, gold gained,
+quest accepted and completed, and NPC dialog links. Files are looked up
+case-insensitively under `Sound/`; missing files are silent (21 indices of
+this asset pack have no file, see `docs/research/sound.md`). Channels
+(system, music, magic, monster, player) have their own volume;
+`ZIRCON_VOLUME=0.5` scales all of them and `ZIRCON_MUTE=1` silences
+everything (also used by the screenshot runs).
 
 ## NPC scripts
 

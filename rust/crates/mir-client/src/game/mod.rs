@@ -20,13 +20,16 @@ use crate::assets::{
 };
 use crate::effects::{self, Anchor, Effect, Projectile};
 use crate::gfx::{Blend, Gpu, SpriteKey, SpriteRegion, SpriteRenderer, Surface};
-use crate::items::ItemCatalog;
+use crate::items::{ItemCatalog, ItemDef};
 use crate::net::Connection;
+use crate::sound_table;
 use crate::text::TextLayer;
 use crate::ui::{Ctx, Input};
 use crate::windows::{Bag, NpcDialog, WindowState};
 use mir_formats::monster_table::monster_sprite;
+use mir_proto::Grid;
 use mir_proto::{buff_type, magic_type, MagicSummary};
+use sound::{map_effect_sound, music_index, object_effect_sound};
 use std::collections::{HashMap as StdHashMap, HashSet};
 
 pub const CELL_W: i32 = 48;
@@ -160,6 +163,7 @@ mod hud;
 mod input;
 mod net;
 mod render;
+mod sound;
 
 impl Game {
     pub fn new(assets: Assets, catalog: ItemCatalog) -> Game {
@@ -281,9 +285,11 @@ impl Game {
             self.animation_time = now;
             self.animation = self.animation.wrapping_add(1);
         }
+        let before = self.user().map(|u| (u.action, u.frame_index));
         for o in self.objects.values_mut() {
             o.process(now);
         }
+        self.sfx_frame(before, now);
         self.advance_effects(now, width, height);
         self.hovered = self.hit_test(width, height);
         // Developer automation: ZIRCON_AUTO_CAST=<F key> (or m<magic id>) casts

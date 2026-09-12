@@ -106,7 +106,18 @@ impl Game {
                         }
                         self.use_item_time = now + use_item_lock(def.durability);
                     }
+                    self.sfx_item_slot(Grid::Inventory, slot);
                     kept.push(ClientMessage::ItemUse { slot });
+                }
+                ClientMessage::ItemMove {
+                    from, from_slot, ..
+                } => {
+                    self.sfx_item_slot(from, from_slot);
+                    kept.push(m);
+                }
+                ClientMessage::NpcButton { .. } => {
+                    self.audio.play(sound_table::idx::BUTTON_C);
+                    kept.push(m);
                 }
                 other => kept.push(other),
             }

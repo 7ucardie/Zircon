@@ -261,6 +261,7 @@ impl Game {
             self.use_item_time = now + use_item_lock(def.durability);
         }
         if let Some(c) = conn {
+            self.sfx_item_slot(Grid::Inventory, slot);
             c.send(ClientMessage::ItemUse { slot });
         }
     }

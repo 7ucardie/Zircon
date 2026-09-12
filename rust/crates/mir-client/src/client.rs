@@ -251,6 +251,17 @@ impl Client {
         fps: f32,
     ) {
         self.poll_network(now);
+        match self.scene {
+            Scene::Login(_) => self
+                .game
+                .audio
+                .play_music(crate::sound_table::idx::LOGIN_SCENE),
+            Scene::Select(_) => self
+                .game
+                .audio
+                .play_music(crate::sound_table::idx::SELECT_SCENE),
+            Scene::Game => {}
+        }
         let action = match &mut self.scene {
             Scene::Login(l) => l.frame(
                 &self.input,
