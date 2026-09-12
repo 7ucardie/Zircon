@@ -60,14 +60,18 @@ impl UserMagic {
 
     /// `BaseCost + Level * LevelCost / 3`.
     pub fn cost(&self, def: &MagicDef) -> i32 {
-        def.base_cost + self.level as i32 * def.level_cost / 3
+        mir_proto::rules::magic_cost(def.base_cost, def.level_cost, self.level)
     }
 
     /// `(min, max)` power for the current level (Zircon `UserMagic.GetPower`).
     pub fn power_range(&self, def: &MagicDef) -> (i32, i32) {
-        let min = (def.min_base_power + self.level as i32 * def.min_level_power / 3).max(0);
-        let max = def.max_base_power + self.level as i32 * def.max_level_power / 3;
-        (min, max)
+        mir_proto::rules::magic_power(
+            def.min_base_power,
+            def.max_base_power,
+            def.min_level_power,
+            def.max_level_power,
+            self.level,
+        )
     }
 
     /// Player level needed to gain experience at the current magic level.

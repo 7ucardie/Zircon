@@ -606,6 +606,7 @@ pub struct PlayerStats {
     pub max_ac: i32,
     pub accuracy: i32,
     pub agility: i32,
+    pub attack_speed: i32,
 }
 
 /// Summary of a character on the select screen.
@@ -643,6 +644,41 @@ pub enum NewCharacterResult {
 
 /// Account rules shared by client-side validation and the server.
 pub mod rules {
+    /// Zircon `Globals` timings (ms).
+    pub const MOVE_TIME: u64 = 600;
+    pub const TURN_TIME: u64 = 300;
+    pub const ATTACK_TIME: u64 = 600;
+    pub const ATTACK_DELAY: u64 = 1500;
+    pub const ASPEED_RATE: u64 = 47;
+
+    /// Time between swings: `max(800, 1500 - AttackSpeed * 47)` ms.
+    pub fn attack_delay(attack_speed: i64) -> u64 {
+        (ATTACK_DELAY as i64 - attack_speed * ASPEED_RATE as i64).max(800) as u64
+    }
+
+    /// Zircon `UserMagic.Cost`: `BaseCost + Level * LevelCost / 3`.
+    pub fn magic_cost(base_cost: i32, level_cost: i32, level: u8) -> i32 {
+        base_cost + level as i32 * level_cost / 3
+    }
+
+    /// Zircon `UserMagic.GetPower` bounds for a level.
+    pub fn magic_power(
+        min_base: i32,
+        max_base: i32,
+        min_level: i32,
+        max_level: i32,
+        level: u8,
+    ) -> (i32, i32) {
+        let min = (min_base + level as i32 * min_level / 3).max(0);
+        let max = max_base + level as i32 * max_level / 3;
+        (min, max)
+    }
+
+    /// Client-side consumable lock: `max(250, Durability)` ms.
+    pub fn use_item_lock(durability: i32) -> u64 {
+        durability.max(250) as u64
+    }
+
     pub const EMAIL_MIN: usize = 3;
     pub const EMAIL_MAX: usize = 50;
     pub const PASSWORD_MIN: usize = 6;

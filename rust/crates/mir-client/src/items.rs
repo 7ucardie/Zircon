@@ -43,7 +43,7 @@ pub struct MagicDef {
 
 impl MagicDef {
     pub fn cost(&self, level: u8) -> i32 {
-        self.base_cost + level as i32 * self.level_cost / 3
+        mir_proto::rules::magic_cost(self.base_cost, self.level_cost, level)
     }
 }
 

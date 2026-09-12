@@ -1,0 +1,125 @@
+use super::*;
+
+impl World {
+    /// Zircon `CanBeSeenBy`: everyone sees everyone for now; invisibility
+    /// and cloak plug in here.
+    pub(super) fn can_see(&self, _viewer: &Object, _target: &Object) -> bool {
+        true
+    }
+
+    pub(super) fn insert_object(&mut self, obj: Object) {
+        let map = self.maps.get_mut(&obj.map).expect("map loaded");
+        map.objects.push(obj.id);
+        map.add_to_cell(obj.id, obj.location);
+        self.objects.insert(obj.id, obj);
+    }
+
+    pub fn remove_object(&mut self, id: ObjectId) {
+        if let Some(obj) = self.objects.remove(&id) {
+            if let Some(map) = self.maps.get_mut(&obj.map) {
+                map.objects.retain(|o| *o != id);
+                map.remove_from_cell(id, obj.location);
+            }
+            if let Kind::Monster(m) = &obj.kind {
+                if !obj.dead {
+                    if let Some((map, gi)) = m.spawn {
+                        if let Some(g) = self.maps.get_mut(&map).and_then(|m| m.spawns.get_mut(gi))
+                        {
+                            g.alive -= 1;
+                        }
+                    }
+                }
+            }
+            // Everyone who saw it gets a remove.
+            for other in self.objects.values_mut() {
+                if other.visible.remove(&id) {
+                    if let Some(p) = other.player() {
+                        self.outgoing
+                            .push(Outgoing::To(p.conn, ServerMessage::ObjectRemove { id }));
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn send_to(&mut self, id: ObjectId, msg: ServerMessage) {
+        if let Some(p) = self.objects.get(&id).and_then(|o| o.player()) {
+            self.outgoing.push(Outgoing::To(p.conn, msg));
+        }
+    }
+
+    /// Recompute each player's visible set and emit show/remove.
+    pub(super) fn update_visibility(&mut self) {
+        let players: Vec<ObjectId> = self
+            .objects
+            .values()
+            .filter(|o| o.is_player())
+            .map(|o| o.id)
+            .collect();
+        for pid in players {
+            let (map, loc, conn, account) = {
+                let p = &self.objects[&pid];
+                let pd = p.player().unwrap();
+                (p.map, p.location, pd.conn, pd.account)
+            };
+            let now = self.now;
+            let now_visible: HashSet<ObjectId> = self.maps[&map]
+                .objects
+                .iter()
+                .copied()
+                .filter(|id| *id != pid)
+                .filter(|id| {
+                    let o = &self.objects[id];
+                    if o.location.distance(loc) > MAX_VIEW_RANGE {
+                        return false;
+                    }
+                    match &o.kind {
+                        Kind::Item(i) => {
+                            i.owner.is_none_or(|a| a == account)
+                                || now >= i.spawn_time + DROP_SHARE_AFTER
+                        }
+                        _ => self.can_see(&self.objects[&pid], o),
+                    }
+                })
+                .collect();
+            let old = std::mem::take(&mut self.objects.get_mut(&pid).unwrap().visible);
+            for id in old.difference(&now_visible) {
+                self.outgoing
+                    .push(Outgoing::To(conn, ServerMessage::ObjectRemove { id: *id }));
+            }
+            for id in now_visible.difference(&old) {
+                let state = self.objects[id].state();
+                self.outgoing
+                    .push(Outgoing::To(conn, ServerMessage::ObjectShow(state)));
+            }
+            self.objects.get_mut(&pid).unwrap().visible = now_visible;
+        }
+    }
+
+    /// Deliver this tick's events to every player that can see the subject
+    /// (Zircon `Broadcast` to `SeenByPlayers`). Self-originated movement and
+    /// attacks are not echoed; the client predicts those.
+    pub(super) fn flush_events(&mut self) {
+        let events = std::mem::take(&mut self.events);
+        let players: Vec<(ObjectId, ConnId)> = self
+            .objects
+            .values()
+            .filter_map(|o| o.player().map(|p| (o.id, p.conn)))
+            .collect();
+        for (subject, msg) in events {
+            let echo_self = !matches!(
+                msg,
+                ServerMessage::ObjectMove { .. }
+                    | ServerMessage::ObjectTurn { .. }
+                    | ServerMessage::ObjectAttack { .. }
+            );
+            for (pid, conn) in &players {
+                let sees =
+                    *pid == subject && echo_self || self.objects[pid].visible.contains(&subject);
+                if sees {
+                    self.outgoing.push(Outgoing::To(*conn, msg.clone()));
+                }
+            }
+        }
+    }
+}
