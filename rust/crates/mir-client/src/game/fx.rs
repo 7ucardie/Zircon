@@ -77,7 +77,25 @@ impl Game {
             .filter(|o| !o.dead && o.visible_buffs.contains(&buff_type::MAGIC_SHIELD))
             .map(|o| o.id)
             .collect();
+        let reflecting: Vec<ObjectId> = self
+            .objects
+            .values()
+            .filter(|o| !o.dead && o.visible_buffs.contains(&buff_type::REFLECT_DAMAGE))
+            .map(|o| o.id)
+            .collect();
         let mut effects = self.effects.clone();
+        for id in reflecting {
+            effects.push(Effect {
+                library: effects::MAGIC_EX2,
+                start: 1240 + ((now / 100) % 3) as u32,
+                count: 1,
+                delay_ms: 1000,
+                color: effects::WHITE,
+                anchor: Anchor::Object(id),
+                direction: None,
+                started: now,
+            });
+        }
         for id in shielded {
             effects.push(Effect {
                 library: effects::MAGIC,

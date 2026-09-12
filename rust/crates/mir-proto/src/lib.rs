@@ -375,8 +375,16 @@ pub mod magic_type {
     pub const DRAGON_RISE: u16 = 107;
     pub const BLADE_STORM: u16 = 108;
     pub const DESTRUCTIVE_SURGE: u16 = 109;
+    pub const INTERCHANGE: u16 = 110;
     pub const DEFIANCE: u16 = 111;
+    pub const BECKON: u16 = 112;
     pub const MIGHT: u16 = 113;
+    pub const SWIFT_BLADE: u16 = 114;
+    pub const ASSAULT: u16 = 115;
+    pub const ENDURANCE: u16 = 116;
+    pub const REFLECT_DAMAGE: u16 = 117;
+    pub const FETTER: u16 = 118;
+    pub const MASS_BECKON: u16 = 123;
     pub const FIRE_BALL: u16 = 201;
     pub const LIGHTNING_BALL: u16 = 202;
     pub const ICE_BOLT: u16 = 203;
@@ -425,6 +433,7 @@ pub mod magic_type {
                 | VINE_TREE_DANCE
                 | DISCIPLINE
                 | BLOODY_FLOWER
+                | ASSAULT
         )
     }
     /// Stance skills switched with a hotkey and applied on melee swings.
@@ -456,6 +465,8 @@ pub mod magic_type {
                 | GREATER_EVIL_SLAYER
                 | MAGIC_RESISTANCE
                 | RESILIENCE
+                | BECKON
+                | MASS_BECKON
         )
     }
     /// Spells that fly at or strike a chosen monster.
@@ -476,11 +487,32 @@ pub mod magic_type {
                 | EXPLOSIVE_TALISMAN
                 | EVIL_SLAYER
                 | GREATER_EVIL_SLAYER
+                | INTERCHANGE
+                | BECKON
         )
     }
     /// Spells cast on a ground cell.
     pub fn needs_cell(m: u16) -> bool {
-        matches!(m, FIRE_WALL | MAGIC_RESISTANCE | RESILIENCE | MASS_HEAL)
+        matches!(
+            m,
+            FIRE_WALL | MAGIC_RESISTANCE | RESILIENCE | MASS_HEAL | SWIFT_BLADE
+        )
+    }
+    /// Spells cast on oneself (no target, own cell).
+    pub fn is_self_cast(m: u16) -> bool {
+        matches!(
+            m,
+            TELEPORTATION
+                | MAGIC_SHIELD
+                | DEFIANCE
+                | MIGHT
+                | POISONOUS_CLOUD
+                | SHOULDER_DASH
+                | MASS_BECKON
+                | ENDURANCE
+                | REFLECT_DAMAGE
+                | FETTER
+        )
     }
     /// Spells that only use the facing direction.
     pub fn is_line(m: u16) -> bool {
@@ -491,7 +523,14 @@ pub mod magic_type {
     }
     /// Self buffs cast facing down (Zircon `Combat15`).
     pub fn is_stance_cast(m: u16) -> bool {
-        matches!(m, DEFIANCE | MIGHT)
+        matches!(
+            m,
+            DEFIANCE | MIGHT | ENDURANCE | REFLECT_DAMAGE | MASS_BECKON
+        )
+    }
+    /// Casts played with the stance frames although not facing down.
+    pub fn is_stance_anim(m: u16) -> bool {
+        matches!(m, DEFIANCE | MIGHT | ENDURANCE | REFLECT_DAMAGE | FETTER)
     }
     /// Spells the prototype can cast.
     pub fn is_castable(m: u16) -> bool {
@@ -527,6 +566,13 @@ pub mod magic_type {
                 | RESILIENCE
                 | MASS_HEAL
                 | POISONOUS_CLOUD
+                | INTERCHANGE
+                | BECKON
+                | MASS_BECKON
+                | SWIFT_BLADE
+                | ENDURANCE
+                | REFLECT_DAMAGE
+                | FETTER
         )
     }
 }
@@ -535,6 +581,8 @@ pub mod magic_type {
 pub mod buff_type {
     pub const DEFIANCE: u16 = 100;
     pub const MIGHT: u16 = 101;
+    pub const ENDURANCE: u16 = 102;
+    pub const REFLECT_DAMAGE: u16 = 103;
     pub const MAGIC_SHIELD: u16 = 201;
     pub const HEAL: u16 = 300;
     pub const MAGIC_RESISTANCE: u16 = 302;
@@ -545,7 +593,10 @@ pub mod buff_type {
     pub const RED_LOTUS: u16 = 403;
     /// Buffs other players can see (Zircon `visible: true`).
     pub fn is_visible(b: u16) -> bool {
-        matches!(b, MAGIC_SHIELD | MAGIC_RESISTANCE | RESILIENCE)
+        matches!(
+            b,
+            MAGIC_SHIELD | MAGIC_RESISTANCE | RESILIENCE | REFLECT_DAMAGE
+        )
     }
 }
 
@@ -913,6 +964,12 @@ pub enum ServerMessage {
     },
     ObjectDie {
         id: ObjectId,
+    },
+    /// An object jumped to a cell (teleport, swap, pull); sent to itself too.
+    ObjectTeleport {
+        id: ObjectId,
+        location: Point,
+        direction: Direction,
     },
     /// One Shoulder Dash step (Zircon `S.ObjectDash`); sent to the dasher too.
     ObjectDash {

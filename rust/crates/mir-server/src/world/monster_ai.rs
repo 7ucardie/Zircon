@@ -13,6 +13,9 @@ impl World {
             };
             (o.map, o.location, o.dead, m.dead_time)
         };
+        if !dead && paralysed(&self.objects[&id]) {
+            return;
+        }
         if dead {
             if now > dead_time {
                 self.remove_object(id);

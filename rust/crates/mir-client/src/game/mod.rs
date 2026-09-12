@@ -358,8 +358,10 @@ fn attack_action(magic: Option<u16>) -> Action {
 
 /// Zircon `Functions.GetMagicAnimation`.
 fn cast_action(magic: u16) -> Action {
-    if magic_type::is_stance_cast(magic) {
+    if magic_type::is_stance_anim(magic) || magic == magic_type::MASS_BECKON {
         Action::Stance
+    } else if magic == magic_type::SWIFT_BLADE {
+        Action::Attack
     } else if magic_type::is_projectile_cast(magic) {
         Action::Cast1
     } else {
@@ -372,6 +374,8 @@ fn buff_icon(kind: u16) -> u32 {
     match kind {
         buff_type::DEFIANCE => 97,
         buff_type::MIGHT => 96,
+        buff_type::ENDURANCE => 95,
+        buff_type::REFLECT_DAMAGE => 98,
         buff_type::MAGIC_SHIELD => 100,
         buff_type::HEAL => 78,
         buff_type::MAGIC_RESISTANCE => 92,

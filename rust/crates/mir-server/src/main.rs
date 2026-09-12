@@ -961,7 +961,7 @@ mod tests {
         };
         let mut rec = test_character("Pyro");
         rec.class = mir_proto::Class::Wizard;
-        rec.level = 24;
+        rec.level = 40;
         let me = world.add_player(1, 1, &rec).unwrap();
         world.tick(0);
         drain(&mut world);
@@ -978,7 +978,8 @@ mod tests {
         let hp_before = world.objects[&victim].hp;
         world.cast(me, fire_wall, Direction::from_points(loc, cell), None, cell);
         let mut now = 1000;
-        for _ in 0..30 {
+        // Six seconds: three wall ticks, enough for small rolls to add up.
+        for _ in 0..60 {
             now += 100;
             // Keep the chicken on the burning cell; it roams otherwise.
             if world.objects.get(&victim).map(|v| !v.dead).unwrap_or(false) {
@@ -997,9 +998,19 @@ mod tests {
             .get(&victim)
             .map(|v| v.dead || v.hp < hp_before)
             .unwrap_or(true);
-        assert!(hurt, "a chicken standing in the fire wall burns");
+        let (hp_now, dead_now) = world
+            .objects
+            .get(&victim)
+            .map(|v| (v.hp, v.dead))
+            .unwrap_or((0, true));
+        assert!(
+            hurt,
+            "a chicken standing in the fire wall burns: hp {hp_before} -> {hp_now}, dead {dead_now}, walls {walls}, chicken at {:?}, wall cell {:?}",
+            world.objects.get(&victim).map(|v| v.location),
+            cell
+        );
         // Walls burn out: level 0 => 10 ticks of 2 s.
-        for _ in 0..250 {
+        for _ in 0..220 {
             now += 100;
             world.tick(now);
         }
@@ -1176,6 +1187,81 @@ mod tests {
             .map(|v| v.dead || v.hp < hp_before)
             .unwrap_or(true);
         assert!(hurt, "the talisman should hit");
+    }
+
+    #[test]
+    fn warrior_beckon_pulls_a_chicken_and_fetter_slows_it() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Puller");
+        rec.level = 55;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let beckon = learn(&mut world, me, "Beckon");
+        let fetter = learn(&mut world, me, "Fetter");
+        let victim = nearest_chicken(&world, me);
+        let loc = world.objects[&me].location;
+        let map = world.objects[&me].map;
+        let dir = Direction::ALL
+            .iter()
+            .copied()
+            .find(|d| {
+                (1..=3).all(|i| {
+                    let p = loc.step(*d, i);
+                    world.maps[&map].file.is_walkable(p.x, p.y)
+                        && world.maps[&map].objects_at(p).is_empty()
+                })
+            })
+            .expect("a clear direction");
+        let far = loc.step(dir, 3);
+        let mut now = 1000;
+        let mut pulled = false;
+        // Level 0 succeeds 3 times in 9; keep trying.
+        for _ in 0..40 {
+            world.teleport(victim, far);
+            world.cast(me, beckon, dir, Some(victim), far);
+            for _ in 0..12 {
+                now += 100;
+                world.tick(now);
+                if world.objects[&victim].location == loc.step(dir, 1) {
+                    pulled = true;
+                    break;
+                }
+            }
+            drain(&mut world);
+            if pulled {
+                break;
+            }
+            now += 3000;
+            world.tick(now);
+        }
+        assert!(
+            pulled,
+            "Beckon should pull the chicken in front of the warrior"
+        );
+        assert!(
+            world.objects[&victim]
+                .poisons
+                .iter()
+                .any(|p| p.kind == world::poison_kind::PARALYSIS),
+            "pulled monsters are paralysed"
+        );
+        now += 3000;
+        world.tick(now);
+        world.cast(me, fetter, dir, None, loc);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        assert!(
+            world.objects[&victim]
+                .poisons
+                .iter()
+                .any(|p| p.kind == world::poison_kind::SLOW),
+            "Fetter slows monsters within two cells"
+        );
     }
 
     #[test]

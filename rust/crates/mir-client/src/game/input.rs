@@ -377,15 +377,7 @@ impl Game {
             self.say("You are already shielded.".into(), now);
             return;
         }
-        let self_cast = matches!(
-            magic,
-            magic_type::TELEPORTATION
-                | magic_type::MAGIC_SHIELD
-                | magic_type::DEFIANCE
-                | magic_type::MIGHT
-                | magic_type::POISONOUS_CLOUD
-                | magic_type::SHOULDER_DASH
-        );
+        let self_cast = magic_type::is_self_cast(magic);
         let target = match magic {
             magic_type::HEAL => hovered
                 .filter(|o| o.is_player())

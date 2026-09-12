@@ -248,6 +248,12 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         magic_type::EVIL_SLAYER => (MAGIC, 3250, 6, 80, HOLY, true),
         magic_type::GREATER_EVIL_SLAYER => (MAGIC, 3360, 6, 80, HOLY, true),
         magic_type::MAGIC_RESISTANCE | magic_type::RESILIENCE => (MAGIC, 2080, 6, 80, WHITE, true),
+        magic_type::INTERCHANGE => (MAGIC_EX2, 0, 9, 100, WHITE, false),
+        magic_type::BECKON => (MAGIC_EX2, 580, 10, 100, WHITE, true),
+        magic_type::MASS_BECKON => (MAGIC_EX5, 100, 10, 100, WHITE, false),
+        magic_type::ENDURANCE => (MAGIC_EX3, 190, 10, 100, WHITE, false),
+        magic_type::REFLECT_DAMAGE => (MAGIC_EX2, 1220, 10, 100, WHITE, false),
+        magic_type::FETTER => (MAGIC_EX2, 2370, 10, 100, WHITE, false),
         _ => return None,
     };
     Some(Effect {
@@ -391,6 +397,12 @@ pub fn payload(
             for a in anchors {
                 out.effects
                     .push(Effect::at(MAGIC, 670, 7, 100, HOLY, a, now));
+            }
+        }
+        magic_type::SWIFT_BLADE => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX2, 2330, 16, 100, WHITE, a, now));
             }
         }
         magic_type::SCORCHED_EARTH | magic_type::FROZEN_EARTH => {

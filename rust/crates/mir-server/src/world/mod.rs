@@ -33,6 +33,19 @@ pub const REGEN_DELAY: u64 = 10_000;
 /// the player can return to town at any time while dead.
 pub const REVIVE_DELAY: u64 = 600_000;
 
+/// Zircon `PoisonType` bits used by the prototype.
+pub mod poison_kind {
+    pub const GREEN: u16 = 1;
+    pub const RED: u16 = 2;
+    pub const SLOW: u16 = 4;
+    pub const PARALYSIS: u16 = 8;
+}
+
+/// Paralysed objects take no actions.
+fn paralysed(o: &Object) -> bool {
+    o.poisons.iter().any(|p| p.kind == poison_kind::PARALYSIS)
+}
+
 /// Zircon slow poison: `Value * 100` ms added to every action delay.
 fn slow_ms(o: &Object) -> u64 {
     o.poisons
@@ -133,6 +146,8 @@ pub struct BuffStats {
     pub agility: i32,
     /// Percent of damage absorbed (Zircon `Stat.MagicShield`).
     pub magic_shield: i32,
+    /// Percent of melee damage returned to monsters (Zircon `Stat.ReflectDamage`).
+    pub reflect: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).

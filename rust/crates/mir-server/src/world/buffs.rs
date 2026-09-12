@@ -84,6 +84,10 @@ impl World {
         let Some(o) = self.objects.get_mut(&target) else {
             return;
         };
+        // Zircon: Endurance makes players immune to every poison.
+        if o.has_buff(buff_type::ENDURANCE) {
+            return;
+        }
         if let Some(existing) = o.poisons.iter().position(|p| p.kind == poison.kind) {
             if o.poisons[existing].value > poison.value {
                 return;
@@ -122,7 +126,7 @@ impl World {
                     }
                     p.next_tick = now + 2000;
                     p.ticks_left -= 1;
-                    if p.kind == 1 {
+                    if p.kind == poison_kind::GREEN {
                         damage += p.value;
                         owner = p.owner;
                     }

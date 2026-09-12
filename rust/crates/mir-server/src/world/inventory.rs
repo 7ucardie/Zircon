@@ -222,7 +222,7 @@ impl World {
             3 => {
                 let map = self.objects[&id].map;
                 let to = self.random_walkable(map).ok_or("Nowhere to teleport to")?;
-                self.move_object(id, to);
+                self.teleport_with_effects(id, to);
             }
             _ => return Err(format!("{} cannot be used", def.name)),
         }

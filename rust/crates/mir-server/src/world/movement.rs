@@ -1,6 +1,20 @@
 use super::*;
 
 impl World {
+    /// Jump an object to a cell and tell everyone, including itself.
+    pub(super) fn teleport_object(&mut self, id: ObjectId, to: Point) {
+        self.move_object(id, to);
+        let direction = self.objects[&id].direction;
+        self.events.push((
+            id,
+            ServerMessage::ObjectTeleport {
+                id,
+                location: to,
+                direction,
+            },
+        ));
+    }
+
     /// Is `p` blocked for movement? `grace` applies Zircon's 300 ms vacated-cell
     /// grace that only players get.
     pub(super) fn cell_blocked(&self, map: i32, p: Point, grace: bool) -> bool {
@@ -185,6 +199,42 @@ impl World {
                 self.move_object(v, beyond);
                 if let Some(o) = self.objects.get_mut(&v) {
                     o.direction = dash.direction.rotate(4);
+                }
+                // Assault augment: the shove also paralyses (300 + power ms).
+                let assault = self.objects[&id].player().and_then(|p| {
+                    let um = p.magics.iter().find(|m| m.magic == magic_type::ASSAULT)?;
+                    let def = self.data.magics.get(&um.magic)?;
+                    (p.level >= def.need_level[0] && now >= um.cooldown_until)
+                        .then(|| (um.power_range(def), def.delay.max(0) as u64))
+                });
+                if let Some(((pmin, pmax), delay)) = assault {
+                    let ms = 300 + self.roll_range(pmin, pmax) as u64;
+                    self.apply_poison(
+                        v,
+                        Poison {
+                            kind: poison_kind::PARALYSIS,
+                            value: 0,
+                            ticks_left: 0,
+                            next_tick: now + ms,
+                            owner: Some(id),
+                        },
+                    );
+                    if let Some(um) = self
+                        .objects
+                        .get_mut(&id)
+                        .and_then(|o| o.player_mut())
+                        .and_then(|p| p.magics.iter_mut().find(|m| m.magic == magic_type::ASSAULT))
+                    {
+                        um.cooldown_until = now + delay;
+                    }
+                    self.send_to(
+                        id,
+                        ServerMessage::MagicCooldown {
+                            magic: magic_type::ASSAULT,
+                            delay_ms: delay as u32,
+                        },
+                    );
+                    self.level_magic(id, magic_type::ASSAULT);
                 }
                 self.events.push((
                     v,

@@ -172,6 +172,25 @@ impl World {
                 targets.push(t);
                 pending.push(pm(now + 500, Some(t), location, true));
             }
+            // Warrior pulls: 300 ms, need a monster.
+            magic_type::INTERCHANGE | magic_type::BECKON => {
+                if let Some(t) = target.filter(|t| self.objects[t].is_monster()) {
+                    targets.push(t);
+                    pending.push(pm(now + 300, Some(t), location, true));
+                }
+            }
+            magic_type::MASS_BECKON
+            | magic_type::ENDURANCE
+            | magic_type::REFLECT_DAMAGE
+            | magic_type::FETTER => pending.push(pm(now + 500, None, loc, true)),
+            magic_type::SWIFT_BLADE => {
+                if location.distance(loc) > MAGIC_RANGE {
+                    cast_ok = false;
+                } else {
+                    locations.push(location);
+                    pending.push(pm(now + 900, None, location, true));
+                }
+            }
             // Self casts.
             magic_type::TELEPORTATION => pending.push(pm(now + 500, None, loc, true)),
             magic_type::MAGIC_SHIELD => pending.push(pm(now + 1100, None, loc, true)),
@@ -710,32 +729,195 @@ impl World {
                     let Some(to) = self.random_walkable(cmap) else {
                         continue;
                     };
-                    self.events.push((
+                    self.teleport_with_effects(pm.caster, to);
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                // ---- Warrior wave 3 ----
+                magic_type::INTERCHANGE | magic_type::BECKON => {
+                    let Some(t) = pm.target else { continue };
+                    let Some((tloc, mlevel, boss, dead, tmap)) =
+                        self.objects.get(&t).and_then(|o| match &o.kind {
+                            Kind::Monster(m) => Some((
+                                o.location,
+                                self.data.monsters[&m.def].level,
+                                self.data.monsters[&m.def].is_boss,
+                                o.dead,
+                                o.map,
+                            )),
+                            _ => None,
+                        })
+                    else {
+                        continue;
+                    };
+                    if dead || tmap != cmap {
+                        continue;
+                    }
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let ok = if pm.magic == magic_type::INTERCHANGE {
+                        mlevel < clevel && !boss
+                    } else {
+                        !boss
+                    };
+                    // Random.Next(9) > 2 + Level * 2 => fail.
+                    if !ok || self.rng.random_range(0..9) > 2 + level * 2 {
+                        continue;
+                    }
+                    if pm.magic == magic_type::INTERCHANGE {
+                        self.teleport_with_effects(pm.caster, tloc);
+                        self.teleport_object(t, cloc);
+                    } else {
+                        let dir = self.objects[&pm.caster].direction;
+                        let front = cloc.step(dir, 1);
+                        let walkable = self.maps[&cmap].file.is_walkable(front.x, front.y);
+                        if !walkable || self.cell_blocked(cmap, front, false) {
+                            continue;
+                        }
+                        self.teleport_object(t, front);
+                        self.apply_poison(
+                            t,
+                            Poison {
+                                kind: poison_kind::PARALYSIS,
+                                value: 0,
+                                ticks_left: 0,
+                                next_tick: self.now + (1 + level as u64) * 1000,
+                                owner: Some(pm.caster),
+                            },
+                        );
+                    }
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::MASS_BECKON => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let victims: Vec<(ObjectId, i32, bool)> = self
+                        .objects
+                        .values()
+                        .filter(|o| o.map == cmap && !o.dead && o.location.distance(cloc) <= 9)
+                        .filter_map(|o| match &o.kind {
+                            Kind::Monster(m) if m.owner.is_none() => Some((
+                                o.id,
+                                self.data.monsters[&m.def].level,
+                                self.data.monsters[&m.def].is_boss,
+                            )),
+                            _ => None,
+                        })
+                        .collect();
+                    for (v, mlevel, boss) in victims {
+                        if mlevel - 10 > clevel || boss {
+                            continue;
+                        }
+                        if self.rng.random_range(0..9) > 2 + level * 2 {
+                            continue;
+                        }
+                        let mut dest = None;
+                        for _ in 0..25 {
+                            let p = Point::new(
+                                cloc.x + self.rng.random_range(-3..=3),
+                                cloc.y + self.rng.random_range(-3..=3),
+                            );
+                            if self.maps[&cmap].file.is_walkable(p.x, p.y)
+                                && !self.cell_blocked(cmap, p, false)
+                            {
+                                dest = Some(p);
+                                break;
+                            }
+                        }
+                        let Some(p) = dest else { continue };
+                        self.teleport_object(v, p);
+                        self.apply_poison(
+                            v,
+                            Poison {
+                                kind: poison_kind::PARALYSIS,
+                                value: 0,
+                                ticks_left: 0,
+                                next_tick: self.now + (1 + level as u64) * 1000,
+                                owner: Some(pm.caster),
+                            },
+                        );
+                        self.level_magic(pm.caster, pm.magic);
+                    }
+                }
+                magic_type::SWIFT_BLADE => {
+                    // 7x7 around the cell: a DC-percent melee hit on everything.
+                    let victims: Vec<Point> = self
+                        .objects
+                        .values()
+                        .filter(|o| {
+                            o.map == cmap
+                                && o.is_monster()
+                                && !o.dead
+                                && o.location.distance(pm.location) <= 3
+                        })
+                        .map(|o| o.location)
+                        .collect();
+                    let power = {
+                        let s = self.objects[&pm.caster].stats;
+                        self.roll_dc(s)
+                    };
+                    for cell in victims {
+                        self.pending_hits.push(PendingHit {
+                            time: self.now,
+                            attacker: pm.caster,
+                            target_cell: (cmap, cell),
+                            power,
+                            target: None,
+                            magics: vec![magic_type::SWIFT_BLADE],
+                            primary: true,
+                            raw: false,
+                        });
+                    }
+                }
+                magic_type::ENDURANCE => {
+                    let level = self.magic_level(pm.caster, pm.magic) as u64;
+                    self.buff_add(
                         pm.caster,
-                        ServerMessage::ObjectEffect {
-                            id: pm.caster,
-                            effect: effect::TELEPORT_OUT,
-                            location: cloc,
-                        },
-                    ));
-                    self.move_object(pm.caster, to);
-                    let dir = self.objects[&pm.caster].direction;
-                    self.send_to(
+                        buff_type::ENDURANCE,
+                        (10 + level * 5) * 1000,
+                        BuffStats::default(),
+                    );
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::REFLECT_DAMAGE => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    self.buff_add(
                         pm.caster,
-                        ServerMessage::MoveDenied {
-                            location: to,
-                            direction: dir,
+                        buff_type::REFLECT_DAMAGE,
+                        (15 + level as u64 * 10) * 1000,
+                        BuffStats {
+                            reflect: 5 + level * 3,
+                            ..BuffStats::default()
                         },
                     );
-                    self.events.push((
-                        pm.caster,
-                        ServerMessage::ObjectEffect {
-                            id: pm.caster,
-                            effect: effect::TELEPORT_IN,
-                            location: to,
-                        },
-                    ));
                     self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::FETTER => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let victims: Vec<(ObjectId, i32)> = self
+                        .objects
+                        .values()
+                        .filter(|o| o.map == cmap && !o.dead && o.location.distance(cloc) <= 2)
+                        .filter_map(|o| match &o.kind {
+                            Kind::Monster(m) if m.owner.is_none() => {
+                                Some((o.id, self.data.monsters[&m.def].level))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    for (v, mlevel) in victims {
+                        if mlevel > clevel + 15 {
+                            continue;
+                        }
+                        self.apply_poison(
+                            v,
+                            Poison {
+                                kind: poison_kind::SLOW,
+                                value: (3 + level) * 2,
+                                ticks_left: 0,
+                                next_tick: self.now + (5 + level as u64 * 3) * 1000,
+                                owner: Some(pm.caster),
+                            },
+                        );
+                        self.level_magic(pm.caster, pm.magic);
+                    }
                 }
                 magic_type::MAGIC_SHIELD => {
                     let c = &self.objects[&pm.caster];
@@ -902,9 +1084,9 @@ impl World {
         self.apply_poison(
             target,
             Poison {
-                kind: 4,
+                kind: poison_kind::SLOW,
                 value: level * 2,
-                ticks_left: 1,
+                ticks_left: 0,
                 next_tick: self.now + secs as u64 * 1000,
                 owner: Some(owner),
             },
@@ -964,5 +1146,37 @@ impl World {
             ));
             return;
         }
+    }
+
+    /// Level of a learned skill (0 when unknown).
+    pub(super) fn magic_level(&self, id: ObjectId, magic: u16) -> i32 {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .and_then(|p| p.magics.iter().find(|m| m.magic == magic))
+            .map(|m| m.level as i32)
+            .unwrap_or(0)
+    }
+
+    /// Zircon `Teleport`: out effect on the old cell, jump, in effect.
+    pub(super) fn teleport_with_effects(&mut self, id: ObjectId, to: Point) {
+        let from = self.objects[&id].location;
+        self.events.push((
+            id,
+            ServerMessage::ObjectEffect {
+                id,
+                effect: effect::TELEPORT_OUT,
+                location: from,
+            },
+        ));
+        self.teleport_object(id, to);
+        self.events.push((
+            id,
+            ServerMessage::ObjectEffect {
+                id,
+                effect: effect::TELEPORT_IN,
+                location: to,
+            },
+        ));
     }
 }

@@ -323,7 +323,8 @@ impl World {
                 } else {
                     0
                 };
-                if lotus.is_none() && roll > attacker_stats.accuracy {
+                let sure_hit = lotus.is_some() || hit.magics.contains(&magic_type::SWIFT_BLADE);
+                if !sure_hit && roll > attacker_stats.accuracy {
                     continue;
                 }
                 let mut power = hit.power;
@@ -351,7 +352,8 @@ impl World {
                         }
                         magic_type::FLAMING_SWORD
                         | magic_type::DRAGON_RISE
-                        | magic_type::BLADE_STORM => {
+                        | magic_type::BLADE_STORM
+                        | magic_type::SWIFT_BLADE => {
                             power = power * mp / 100;
                         }
                         magic_type::DESTRUCTIVE_SURGE if !hit.primary => {
@@ -477,7 +479,11 @@ impl World {
         magic: bool,
     ) -> i32 {
         let now = self.now;
-        let mut power = if self.objects[&target].poisons.iter().any(|p| p.kind == 2) {
+        let mut power = if self.objects[&target]
+            .poisons
+            .iter()
+            .any(|p| p.kind == poison_kind::RED)
+        {
             power * 12 / 10 // Red poison: +20 % damage taken
         } else {
             power
@@ -503,6 +509,20 @@ impl World {
                 },
             );
             power -= power * 50 / 100;
+        }
+        // Reflect Damage: a monster's melee hit comes back at `reflect` %.
+        let reflected = if !magic && self.objects[&attacker].is_monster() {
+            self.objects[&target]
+                .player()
+                .and_then(|p| p.buffs.iter().find(|b| b.kind == buff_type::REFLECT_DAMAGE))
+                .map(|b| power.max(0) * b.stats.reflect / 100)
+                .filter(|r| *r > 0)
+        } else {
+            None
+        };
+        if let Some(r) = reflected {
+            self.damage(attacker, target, r, element::NONE, false);
+            self.level_magic(target, magic_type::REFLECT_DAMAGE);
         }
         let (died, is_player, map, struck) = {
             let t = self.objects.get_mut(&target).unwrap();

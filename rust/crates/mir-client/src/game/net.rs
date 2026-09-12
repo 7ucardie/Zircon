@@ -128,6 +128,19 @@ impl Game {
                 self.move_time = 0;
                 self.action_time = 0;
             }
+            ServerMessage::ObjectTeleport {
+                id,
+                location,
+                direction,
+            } => {
+                if Some(id) == self.user {
+                    self.goal = None;
+                    self.move_time = 0;
+                }
+                if let Some(o) = self.objects.get_mut(&id) {
+                    o.snap(location, direction, now);
+                }
+            }
             ServerMessage::ObjectAttack {
                 id,
                 direction,
