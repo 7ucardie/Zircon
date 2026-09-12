@@ -93,6 +93,9 @@ impl App {
             return;
         };
         let now = self.start.elapsed().as_millis() as u64;
+        if self.frames == 0 && self.fps == 0.0 {
+            tracing::info!(now, "first frame");
+        }
         self.frames += 1;
         if self.fps_time.elapsed().as_secs_f32() >= 1.0 {
             self.fps = self.frames as f32 / self.fps_time.elapsed().as_secs_f32();

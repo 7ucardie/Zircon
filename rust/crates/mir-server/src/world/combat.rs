@@ -1,3 +1,4 @@
+use super::monster_ai::has_poison;
 use super::*;
 
 impl World {
@@ -243,6 +244,8 @@ impl World {
             magics: magics.clone(),
             primary: true,
             raw: false,
+            element: element::NONE,
+            ranged: false,
         });
         // Secondary cells (Zircon `SecondaryAttackLocation`).
         let extra: Vec<Point> = match valid {
@@ -285,6 +288,8 @@ impl World {
                 magics: magics.clone(),
                 primary: false,
                 raw: false,
+                element: element::NONE,
+                ranged: false,
             });
         }
         // Any swing breaks the cloak.
@@ -417,6 +422,7 @@ impl World {
                     continue;
                 }
                 if hit.target.is_some()
+                    && !hit.ranged
                     && target
                         .location
                         .distance(self.objects[&hit.attacker].location)
@@ -452,7 +458,16 @@ impl World {
                 } else {
                     0
                 };
-                let sure_hit = lotus.is_some() || hit.magics.contains(&magic_type::SWIFT_BLADE);
+                // Abyss halves a monster's chance to act on its swing.
+                if !attacker_is_player
+                    && has_poison(&self.objects[&hit.attacker], poison_kind::ABYSS)
+                    && self.rng.random_range(0..2) > 0
+                {
+                    continue;
+                }
+                let elemental = hit.element != element::NONE;
+                let sure_hit =
+                    elemental || lotus.is_some() || hit.magics.contains(&magic_type::SWIFT_BLADE);
                 let accuracy =
                     attacker_stats.accuracy + attacker_stats.accuracy * resolution_pct / 100;
                 if !sure_hit && roll > accuracy {
@@ -574,7 +589,9 @@ impl World {
                         _ => {}
                     }
                 }
-                if lotus.is_none() {
+                if elemental {
+                    power -= self.roll_range(tstats.min_mr, tstats.max_mr);
+                } else if lotus.is_none() {
                     let mut ac = self.roll_ac(tstats);
                     ac -= ac * resolution_pct / 100;
                     power -= ac;
@@ -597,9 +614,14 @@ impl World {
                         magics: Vec::new(),
                         primary: true,
                         raw: true,
+                        element: element::NONE,
+                        ranged: false,
                     });
                 }
-                let dealt = self.damage(tid, hit.attacker, power, element::NONE, false);
+                let dealt = self.damage(tid, hit.attacker, power, hit.element, false);
+                if dealt > 0 && !attacker_is_player {
+                    self.monster_hit_poison(hit.attacker, tid);
+                }
                 if dealt > 0 && attacker_is_player {
                     // Bloody Flower life steal on the primary hit (cap 750, 1500 with a lotus).
                     let (pct, hp, max_hp) = {
@@ -635,6 +657,48 @@ impl World {
         }
     }
 
+    /// Zircon monster `Attack(ob, power, element)`: 1-in-`PoisonRate` chance
+    /// to poison with the monster's SC as value.
+    pub(super) fn monster_hit_poison(&mut self, attacker: ObjectId, target: ObjectId) {
+        let ai = self.data.monsters[&self.objects[&attacker].monster_ref().def].ai;
+        let Some(hp) = self.ai_profile(ai).hit_poison else {
+            return;
+        };
+        if hp.rate > 1 && self.rng.random_range(0..hp.rate) != 0 {
+            return;
+        }
+        let stats = self.objects[&attacker].stats;
+        let value = self.roll_range(stats.min_sc, stats.max_sc);
+        let timed = !matches!(
+            hp.kind,
+            poison_kind::GREEN | poison_kind::RED | poison_kind::HELL_FIRE
+        );
+        let poison = if timed {
+            Poison {
+                kind: hp.kind,
+                value,
+                ticks_left: 0,
+                next_tick: self.now + hp.ticks as u64 * hp.frequency_s as u64 * 1000,
+                owner: Some(attacker),
+            }
+        } else {
+            Poison {
+                kind: hp.kind,
+                value,
+                ticks_left: hp.ticks,
+                next_tick: self.now + hp.frequency_s as u64 * 1000,
+                owner: Some(attacker),
+            }
+        };
+        self.apply_poison(target, poison);
+        if hp.kind == poison_kind::ABYSS {
+            // Abyss makes a monster lose its target.
+            if let Some(m) = self.objects.get_mut(&target).and_then(|o| o.monster_mut()) {
+                m.target = None;
+            }
+        }
+    }
+
     pub(super) fn damage(
         &mut self,
         target: ObjectId,
@@ -644,6 +708,29 @@ impl World {
         magic: bool,
     ) -> i32 {
         let now = self.now;
+        // Monster class rules: untouchable guards and statues, 1-damage
+        // trees, class-based mitigation.
+        let mut power = power;
+        if let Some((ai, hidden)) = self.objects.get(&target).and_then(|o| match &o.kind {
+            Kind::Monster(m) => Some((self.data.monsters[&m.def].ai, m.hidden)),
+            _ => None,
+        }) {
+            let prof = self.ai_profile(ai);
+            if prof.invulnerable && (prof.guard || hidden || prof.hidden.is_none()) {
+                return 0;
+            }
+            if prof.clamp_damage && power > 1 {
+                power = 1;
+            }
+            if let Some(mit) = prof.class_mitigation {
+                if let Some(class) = self.objects[&attacker]
+                    .player()
+                    .map(|p| p.class.mir_class())
+                {
+                    power = power * mit[(class as usize).min(3)] / 100;
+                }
+            }
+        }
         let mut power = if self.objects[&target]
             .poisons
             .iter()
@@ -692,6 +779,25 @@ impl World {
         if let Some(m) = self.objects.get_mut(&target).and_then(|o| o.monster_mut()) {
             if m.explode_at.is_some() {
                 m.explode_at = Some(now);
+            }
+        }
+        // Blink-strikers teleport away once at half health.
+        if let Some(ai) = self.objects.get(&target).and_then(|o| match &o.kind {
+            Kind::Monster(m) if !m.panic_used => Some(self.data.monsters[&m.def].ai),
+            _ => None,
+        }) {
+            let (hp, max_hp) = {
+                let o = &self.objects[&target];
+                (o.hp - power.max(0), o.max_hp)
+            };
+            if self.ai_profile(ai).panic_teleport && hp > 0 && hp <= max_hp / 2 {
+                self.objects
+                    .get_mut(&target)
+                    .unwrap()
+                    .monster_mut()
+                    .unwrap()
+                    .panic_used = true;
+                self.teleport_nearby(target, 7, 12);
             }
         }
         let credit = self.objects[&attacker].side().unwrap_or(attacker);
@@ -830,6 +936,7 @@ impl World {
             }
         }
         self.events.push((id, ServerMessage::ObjectDie { id }));
+        self.monster_death_effects(id);
         if let Some(owner) = owner {
             self.gain_experience(owner, exp as u64);
         }

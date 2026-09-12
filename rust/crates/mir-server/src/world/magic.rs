@@ -1157,6 +1157,8 @@ impl World {
                             magics: vec![magic_type::SWIFT_BLADE],
                             primary: true,
                             raw: false,
+                            element: element::NONE,
+                            ranged: false,
                         });
                     }
                 }
@@ -1713,6 +1715,8 @@ impl World {
                             magics: vec![magic_type::COMBAT_KICK],
                             primary: true,
                             raw: false,
+                            element: element::NONE,
+                            ranged: false,
                         });
                         self.level_magic(pm.caster, pm.magic);
                         break;

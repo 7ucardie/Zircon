@@ -62,6 +62,18 @@ impl World {
                 summon_level,
                 tame_until: if owner.is_some() { u64::MAX } else { 0 },
                 explode_at: None,
+                hidden: super::ai_profile::profile(def.ai).hidden.is_some(),
+                hide_check: 0,
+                range_time: 0,
+                fear_time: 0,
+                blink_time: 0,
+                bonus: false,
+                panic_used: false,
+                spell_time: 0,
+                stage: -1,
+                minions: Vec::new(),
+                master: None,
+                guard: def.ai == -1,
             }),
             map,
             location,
@@ -274,6 +286,28 @@ impl World {
                 if item.index == self.data.gold_item {
                     break;
                 }
+            }
+        }
+    }
+
+    /// Zircon `Map.CreateGuards`: fixed guard placements from `GuardInfo`.
+    pub(super) fn spawn_guards(&mut self, map: i32) {
+        let guards: Vec<(i32, Point, u8)> = self
+            .data
+            .guards
+            .iter()
+            .filter(|g| g.map == map)
+            .map(|g| (g.monster, Point::new(g.x, g.y), g.direction))
+            .collect();
+        for (monster, at, dir) in guards {
+            if !self.data.monsters.contains_key(&monster)
+                || !self.maps[&map].file.is_walkable(at.x, at.y)
+            {
+                continue;
+            }
+            let id = self.create_monster(monster, map, at, None, None, 0);
+            if let Some(o) = self.objects.get_mut(&id) {
+                o.direction = Direction::from_index(dir);
             }
         }
     }

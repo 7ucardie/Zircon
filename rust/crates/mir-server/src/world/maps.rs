@@ -82,6 +82,7 @@ impl World {
         );
         self.do_spawns(index);
         self.spawn_npcs(index);
+        self.spawn_guards(index);
         Ok(())
     }
 

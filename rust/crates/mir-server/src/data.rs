@@ -97,6 +97,16 @@ impl MonsterDef {
     }
 }
 
+/// `GuardInfo`: a fixed monster placement on a map.
+#[derive(Debug, Clone)]
+pub struct GuardDef {
+    pub map: i32,
+    pub monster: i32,
+    pub x: i32,
+    pub y: i32,
+    pub direction: u8,
+}
+
 #[derive(Debug, Clone)]
 pub struct SafeZoneDef {
     pub index: i32,
@@ -299,6 +309,7 @@ pub struct GameData {
     pub respawns: Vec<RespawnDef>,
     pub monsters: HashMap<i32, MonsterDef>,
     pub safe_zones: Vec<SafeZoneDef>,
+    pub guards: Vec<GuardDef>,
     pub base_stats: Vec<BaseStatDef>,
     pub npcs: Vec<NpcDef>,
     pub items: HashMap<i32, ItemDef>,
@@ -685,12 +696,28 @@ impl GameData {
             .map(|i| i.index)
             .unwrap_or(0);
 
+        let guards = match db.collection("GuardInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| GuardDef {
+                    map: i32_of(c, r, "Map"),
+                    monster: i32_of(c, r, "Monster"),
+                    x: i32_of(c, r, "X"),
+                    y: i32_of(c, r, "Y"),
+                    direction: i32_of(c, r, "Direction") as u8,
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
         Ok(GameData {
             maps,
             regions,
             respawns,
             monsters,
             safe_zones,
+            guards,
             base_stats,
             npcs,
             items,

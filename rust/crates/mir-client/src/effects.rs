@@ -184,6 +184,49 @@ pub fn attack_effect(magic: u16, attacker: ObjectId, dir: u8, now: u64) -> Optio
     })
 }
 
+/// A monster's thrown/spat projectile (Zircon draws per-monster art; this
+/// port uses the generic bolt in a neutral tint).
+pub fn monster_projectile(magic: u16, from: Point, to: Anchor, now: u64) -> Projectile {
+    let (library, start, count, color) = match magic {
+        magic_type::PINK_FIRE_BALL => (MAGIC, 1640, 6, FIRE),
+        magic_type::GREEN_SLUDGE_BALL => (MAGIC, 2620, 6, DARK),
+        _ => (MAGIC, 1640, 6, WHITE),
+    };
+    Projectile {
+        library,
+        start,
+        count,
+        delay_ms: 100,
+        color,
+        from,
+        to,
+        started: now,
+        duration: 0,
+        dir16: 0,
+        dir_stride: 10,
+        explode: None,
+    }
+}
+
+/// Monster-only spell ids share the closest player spell's visuals.
+pub fn monster_alias(magic: u16) -> u16 {
+    match magic {
+        magic_type::MONSTER_SCORCHED_EARTH => magic_type::SCORCHED_EARTH,
+        magic_type::MONSTER_ICE_STORM => magic_type::ICE_STORM,
+        magic_type::MONSTER_DEATH_CLOUD => magic_type::POISONOUS_CLOUD,
+        magic_type::MONSTER_THUNDER_STORM => magic_type::THUNDER_BOLT,
+        magic_type::SAMA_GUARDIAN_FIRE => magic_type::FIRE_STORM,
+        magic_type::SAMA_GUARDIAN_ICE => magic_type::ICE_STORM,
+        magic_type::SAMA_GUARDIAN_LIGHTNING => magic_type::LIGHTNING_WAVE,
+        magic_type::SAMA_GUARDIAN_WIND => magic_type::DRAGON_TORNADO,
+        magic_type::PINK_FIRE_BALL => magic_type::FIRE_BALL,
+        magic_type::GREEN_SLUDGE_BALL => magic_type::ICE_BOLT,
+        magic_type::MONSTER_SPLASH => magic_type::FIRE_STORM,
+        magic_type::MONSTER_DARK_BEAM => magic_type::LIGHTNING_BEAM,
+        m => m,
+    }
+}
+
 /// Effects triggered by `ObjectEffect` (teleport, lotus hits).
 pub fn object_effect(kind: u8, id: ObjectId, cell: Point, now: u64) -> Option<Effect> {
     use mir_proto::effect as e;
@@ -226,6 +269,7 @@ pub fn shield_frame(now: u64) -> u32 {
 
 /// The charge-up effect on the caster when a spell starts.
 pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Effect> {
+    let magic = monster_alias(magic);
     let (library, start, count, delay, color, directed) = match magic {
         magic_type::FIRE_BALL => (MAGIC, 1820, 8, 70, FIRE, true),
         magic_type::ICE_BOLT => (MAGIC, 2620, 6, 80, ICE, true),
@@ -331,6 +375,7 @@ pub fn payload(
         effects: Vec::new(),
         projectiles: Vec::new(),
     };
+    let magic = monster_alias(magic);
     let anchors: Vec<Anchor> = targets
         .iter()
         .map(|t| Anchor::Object(*t))

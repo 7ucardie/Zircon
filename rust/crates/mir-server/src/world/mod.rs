@@ -43,6 +43,17 @@ pub mod poison_kind {
     pub const WRAITH_GRIP: u16 = 16;
     /// Tick damage with no colour (Zircon `HellFire`).
     pub const HELL_FIRE: u16 = 32;
+    /// Stops a monster completely.
+    pub const SILENCED: u16 = 64;
+    /// Shrinks a monster's view range to 2 and halves its hit chance.
+    pub const ABYSS: u16 = 128;
+    /// Monsters stop attacking and run.
+    pub const FEAR: u16 = 1024;
+    /// Roots (tick damage).
+    pub const CONTAINMENT: u16 = 4096;
+    /// Tick damage that stops regeneration.
+    pub const HEMORRHAGE: u16 = 16384;
+    pub const BINDING: u16 = 32768;
 }
 
 /// Paralysed objects take no actions.
@@ -281,6 +292,24 @@ pub struct MonsterData {
     pub tame_until: u64,
     /// Puppets explode at this time (or sooner when targeted or struck).
     pub explode_at: Option<u64>,
+    /// Burrowed / dormant: invisible and untouchable until something comes close.
+    pub hidden: bool,
+    pub hide_check: u64,
+    /// Ranged attackers: earliest time for the next ranged shot.
+    pub range_time: u64,
+    /// Archers stop shooting until then after a scare.
+    pub fear_time: u64,
+    pub blink_time: u64,
+    /// Next hit deals double (blink-in strike).
+    pub bonus: bool,
+    pub panic_used: bool,
+    pub spell_time: u64,
+    /// Boss summon phase (-1 = not started).
+    pub stage: i32,
+    pub minions: Vec<ObjectId>,
+    pub master: Option<ObjectId>,
+    /// Town guard (AI -1): fights wild monsters, cannot be hurt.
+    pub guard: bool,
 }
 
 #[derive(Debug)]
@@ -379,6 +408,15 @@ impl Object {
         if other.dead || other.is_item() || other.is_spell() || matches!(other.kind, Kind::Npc(_)) {
             return false;
         }
+        // Guards police wild monsters; nobody else fights their own kind.
+        if let (Kind::Monster(me), Kind::Monster(them)) = (&self.kind, &other.kind) {
+            if me.guard {
+                return them.owner.is_none() && !them.guard;
+            }
+            if them.guard {
+                return false;
+            }
+        }
         match (self.side(), other.side()) {
             (Some(_), None) => other.is_monster(),
             (None, Some(_)) => true,
@@ -453,6 +491,23 @@ struct PendingHit {
     primary: bool,
     /// Blade Storm's delayed half: damage already computed.
     raw: bool,
+    /// Elemental hits skip the dodge roll and go through MR.
+    element: u8,
+    /// Ranged hits do not require adjacency when they land.
+    ranged: bool,
+}
+
+/// A monster spell landing after its delay: elemental damage on targets
+/// and/or on whoever stands in `cells` (with a percent scale each).
+#[derive(Debug)]
+struct PendingMonsterSpell {
+    time: u64,
+    caster: ObjectId,
+    targets: Vec<ObjectId>,
+    cells: Vec<(Point, i32)>,
+    power: i32,
+    element: u8,
+    map: i32,
 }
 
 /// A spell whose effect lands after its travel/cast delay (Zircon `DelayMagic`).
@@ -491,6 +546,8 @@ pub struct World {
     /// Seeded from `ZIRCON_SEED` when set (tests), otherwise from the OS.
     rng: rand::rngs::StdRng,
     pending_hits: Vec<PendingHit>,
+    pending_monster_spells: Vec<PendingMonsterSpell>,
+    ai_profiles: HashMap<i32, ai_profile::AiProfile>,
     pending_magics: Vec<PendingMagic>,
     /// Events raised this tick: (subject object, message).
     events: Vec<(ObjectId, ServerMessage)>,
@@ -500,6 +557,7 @@ pub struct World {
     drops_by_monster: HashMap<i32, Vec<DropDef>>,
 }
 
+mod ai_profile;
 mod buffs;
 mod combat;
 mod inventory;
@@ -573,6 +631,8 @@ impl World {
                 None => rand::SeedableRng::from_os_rng(),
             },
             pending_hits: Vec::new(),
+            pending_monster_spells: Vec::new(),
+            ai_profiles: HashMap::new(),
             pending_magics: Vec::new(),
             events: Vec::new(),
             outgoing: Vec::new(),
@@ -696,6 +756,7 @@ impl World {
         self.process_charges();
         self.process_dashes();
         self.process_spells();
+        self.process_monster_spells();
 
         if now >= self.last_spawn_check + 1000 {
             self.last_spawn_check = now;
@@ -720,8 +781,5 @@ impl Object {
             Kind::Monster(m) => m,
             _ => panic!("not a monster"),
         }
-    }
-    fn monster_mut_ref(&self) -> &MonsterData {
-        self.monster_ref()
     }
 }

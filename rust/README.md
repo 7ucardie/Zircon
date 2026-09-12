@@ -128,6 +128,20 @@ spawn table without opening a port. `--map <file>` forces a start map.
 `ZIRCON_SEED=n` seeds the server's random rolls (the tests use a fixed seed and
 ordered object maps, so a failing roll reproduces).
 
+## Monster AI
+
+`MonsterInfo.AI` selects a behaviour profile (`world/ai_profile.rs`, ported
+from Zircon's `MonsterRegistrations`): town guards (immobile, untouchable,
+kill wild monsters on sight), passive farm animals and trees, ranged
+spitters and archers (with kiting and self-scare), ray-limited line
+attacks, splash and self-area hits, caster classes (Thunder Bolt, Fire Ball,
+mass lightning, beams, storms and the Sama guardian kits), poison-on-hit
+tables (green, red, paralysis, silence, abyss), blink-strikers with a
+one-time panic teleport, burrowers and ambushers that stay invisible until
+prey is close, suicide larvae, corpse spawners and boss summon phases.
+Elemental monster hits ignore dodge and go through MR; monsters that lose
+their target re-search every half second like Zircon does every tick.
+
 ## Editing content
 
 `cargo run -p mir-editor` opens the data editor (egui): every `System.db`

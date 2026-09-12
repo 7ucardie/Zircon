@@ -700,8 +700,10 @@ fn warrior_beckon_pulls_a_chicken_and_fetter_slows_it() {
     );
     now += 3000;
     world.tick(now);
-    // The chicken may have wandered off meanwhile; put it back in reach.
+    // The chicken may have wandered off meanwhile; put it back in reach, and
+    // refill the mana the Beckon retries used up.
     world.teleport(victim, loc.step(dir, 1));
+    world.test_refill_mp(me);
     world.cast(me, fetter, dir, None, loc);
     for _ in 0..8 {
         now += 100;
@@ -1207,4 +1209,52 @@ fn move_is_validated_against_walls_and_objects() {
     drain(&mut world);
     world.player_move(me, open_dir, false);
     assert_eq!(world.objects[&me].location, Point::new(cell.x, cell.y));
+}
+
+#[test]
+fn guards_stand_in_town_and_archers_shoot_from_range() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let mut rec = test_character("Watch");
+    rec.level = 40;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let map = world.objects[&me].map;
+    assert!(
+        world.test_guard_count(map) > 0,
+        "GuardInfo places guards on the start map"
+    );
+    // A skeleton axe thrower (AI 7) six cells away shoots without closing in
+    // (closer than that it would back off first).
+    let loc = world.objects[&me].location;
+    let cell = Direction::ALL
+        .iter()
+        .map(|d| loc.step(*d, 6))
+        .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+        .unwrap();
+    let archer = world.test_spawn_ai(7, map, cell).expect("an AI 7 monster");
+    world.test_set_target(archer, me);
+    let (hp0, _, _) = world.test_hp(me);
+    let mut now = 3000;
+    let mut shot = false;
+    for _ in 0..80 {
+        now += 100;
+        world.teleport(archer, cell);
+        world.teleport(me, loc);
+        world.tick(now);
+        if drain(&mut world)
+            .iter()
+            .any(|m| matches!(m, ServerMessage::ObjectRangeAttack { id, .. } if *id == archer))
+        {
+            shot = true;
+        }
+    }
+    assert!(shot, "archer used a ranged attack");
+    let (hp1, _, _) = world.test_hp(me);
+    assert!(
+        hp1 <= hp0,
+        "ranged hit landed or was dodged: {hp0} -> {hp1}"
+    );
 }

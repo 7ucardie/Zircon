@@ -299,9 +299,19 @@ fn handle_inbound(
         }
         Inbound::Message { conn, msg } => {
             let stage = sessions.state.get(&conn).copied().unwrap_or(Stage::New);
+            tracing::debug!(conn, ?stage, kind = %message_kind(&msg), "message");
             handle_message(world, accounts, sessions, conn, stage, msg);
         }
     }
+}
+
+/// Variant name of a client message, for debug logging.
+fn message_kind(msg: &ClientMessage) -> String {
+    let text = format!("{msg:?}");
+    text.split([' ', '{', '('])
+        .next()
+        .unwrap_or("?")
+        .to_string()
 }
 
 /// Character summaries with the map name filled in from game data.

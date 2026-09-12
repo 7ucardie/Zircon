@@ -161,6 +161,32 @@ impl Game {
                     }
                 }
             }
+            ServerMessage::ObjectRangeAttack {
+                id,
+                direction,
+                target,
+                location,
+                magic,
+            } => {
+                let from = self.objects.get(&id).map(|o| o.location);
+                if let Some(o) = self.objects.get_mut(&id) {
+                    let loc = o.queue.back().map(|q| q.location).unwrap_or(o.location);
+                    o.enqueue(Queued {
+                        action: Action::Attack,
+                        direction,
+                        location: loc,
+                        distance: 0,
+                    });
+                }
+                if let Some(from) = from {
+                    let to = match target {
+                        Some(t) => effects::Anchor::Object(t),
+                        None => effects::Anchor::Cell(location),
+                    };
+                    self.projectiles
+                        .push(effects::monster_projectile(magic, from, to, now));
+                }
+            }
             ServerMessage::ObjectMagic {
                 id,
                 direction,

@@ -105,4 +105,35 @@ impl World {
             .map(|(x, y)| Point::new(*x, *y))
             .collect()
     }
+
+    /// Test helper: spawn a monster whose definition uses `ai` next to `at`.
+    #[cfg(test)]
+    pub fn test_spawn_ai(&mut self, ai: i32, map: i32, at: Point) -> Option<ObjectId> {
+        let def = self.data.monsters.values().find(|d| d.ai == ai)?.index;
+        Some(self.create_monster(def, map, at, None, None, 0))
+    }
+
+    /// Test helper: number of guards alive on a map.
+    #[cfg(test)]
+    pub fn test_guard_count(&self, map: i32) -> usize {
+        self.on_map(map)
+            .filter(|o| matches!(&o.kind, Kind::Monster(m) if m.guard) && !o.dead)
+            .count()
+    }
+
+    /// Test helper: give a monster a target.
+    #[cfg(test)]
+    pub fn test_set_target(&mut self, id: ObjectId, target: ObjectId) {
+        if let Some(m) = self.objects.get_mut(&id).and_then(|o| o.monster_mut()) {
+            m.target = Some(target);
+        }
+    }
+
+    /// Test helper: full mana.
+    #[cfg(test)]
+    pub fn test_refill_mp(&mut self, id: ObjectId) {
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.mp = p.max_mp;
+        }
+    }
 }

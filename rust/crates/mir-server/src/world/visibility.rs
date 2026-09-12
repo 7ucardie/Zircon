@@ -4,6 +4,9 @@ impl World {
     /// Zircon `CanBeSeenBy`: everyone sees everyone for now; invisibility
     /// and cloak plug in here.
     pub(super) fn can_see(&self, viewer: &Object, target: &Object) -> bool {
+        if matches!(&target.kind, Kind::Monster(m) if m.hidden) {
+            return false;
+        }
         // Zircon `CanBeSeenBy`: transparent or cloaked players vanish unless
         // the viewer is at least their level and within CloakRange (3).
         if target.has_buff(buff_type::TRANSPARENCY) || target.has_buff(buff_type::CLOAK) {

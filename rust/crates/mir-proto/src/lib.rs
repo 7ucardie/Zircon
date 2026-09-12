@@ -463,6 +463,19 @@ pub mod magic_type {
     pub const RELEASE: u16 = 424;
     pub const FLAME_SPLASH: u16 = 425;
     pub const BLOODY_FLOWER: u16 = 426;
+    // Monster-only spells (Zircon 501+; 550+ are this port's own tags).
+    pub const MONSTER_SCORCHED_EARTH: u16 = 501;
+    pub const MONSTER_ICE_STORM: u16 = 502;
+    pub const MONSTER_DEATH_CLOUD: u16 = 503;
+    pub const MONSTER_THUNDER_STORM: u16 = 504;
+    pub const SAMA_GUARDIAN_FIRE: u16 = 505;
+    pub const SAMA_GUARDIAN_ICE: u16 = 506;
+    pub const SAMA_GUARDIAN_LIGHTNING: u16 = 507;
+    pub const SAMA_GUARDIAN_WIND: u16 = 508;
+    pub const PINK_FIRE_BALL: u16 = 530;
+    pub const GREEN_SLUDGE_BALL: u16 = 540;
+    pub const MONSTER_SPLASH: u16 = 550;
+    pub const MONSTER_DARK_BEAM: u16 = 551;
     pub const FLAMING_DAGGERS: u16 = 454;
     pub const SHREDDING: u16 = 455;
 
@@ -1067,6 +1080,15 @@ pub enum ServerMessage {
         id: ObjectId,
         direction: Direction,
         attack_magic: Option<u16>,
+    },
+    /// A monster shot something at `target` (or `location`); `magic` picks
+    /// the projectile look (0 = plain).
+    ObjectRangeAttack {
+        id: ObjectId,
+        direction: Direction,
+        target: Option<ObjectId>,
+        location: Point,
+        magic: u16,
     },
     /// Someone cast a spell: play the cast animation and, when `cast`, the
     /// payload effects on `targets` / `locations` afterwards.
