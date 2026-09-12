@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use mir_formats::zl::{ImageInfo, SurfaceKind, ZlLibrary};
 
-use crate::monster_table::library_path;
+use mir_formats::monster_table::library_path;
 
 pub mod lib {
     pub const INTERFACE: u16 = 3;

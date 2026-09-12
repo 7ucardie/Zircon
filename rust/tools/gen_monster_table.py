@@ -1,5 +1,5 @@
 """Generate the MonsterImage -> (LibraryFile, body shape) table from the C# client source.
-Run from repo root: python3 rust/tools/gen_monster_table.py > rust/crates/mir-client/src/monster_table.rs
+Run from repo root: python3 rust/tools/gen_monster_table.py > rust/crates/mir-formats/src/monster_table.rs
 """
 import re, sys, pathlib
 root = pathlib.Path(__file__).resolve().parents[2]

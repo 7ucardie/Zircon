@@ -130,11 +130,24 @@ ordered object maps, so a failing roll reproduces).
 
 ## Editing content
 
-`mir-formats` now writes as well as reads: `MirDb::save`, `MapFile::save` and
-`ZlBuilder::save` re-encode `System.db`, `.map` and `.Zl` files (the shipped
-files round-trip byte for byte in the tests) and leave a `.bak-<timestamp>`
-copy of the previous file. New sprites go in through `ZlBuilder::push_rgba`
-(DXT1/DXT5 encoding). The editor itself is planned in `docs/EDITOR_PLAN.md`.
+`cargo run -p mir-editor` opens the data editor (egui): every `System.db`
+collection as a sortable, filterable table with typed cells; a detail form for
+the selected row (complex values as text: stats `2:10;8:3`, arrays `1,2,3`,
+points `x,y`); item, magic, NPC and monster sprite previews; links from
+foreign keys (Item, Monster, Map, Region, Page...) and a list of every record
+that points back at the selected one (drops, stats, shop goods). Add,
+Duplicate, Delete, Undo (Cmd+Z), Save (Cmd+S). Saving writes a
+`System.db.bak-<timestamp>` copy first; restart `mir-server` to pick up the
+change. `--db FILE` edits another database; `ZIRCON_SCREENSHOT`,
+`ZIRCON_EDITOR_COLLECTION`, `ZIRCON_EDITOR_FILTER` and `ZIRCON_EDITOR_ROW`
+automate a visual check.
+
+Underneath, `mir-formats` writes as well as reads: `MirDb::save`,
+`MapFile::save` and `ZlBuilder::save` re-encode `System.db`, `.map` and `.Zl`
+files (the shipped files round-trip byte for byte in the tests) and leave a
+`.bak-<timestamp>` copy of the previous file. New sprites go in through
+`ZlBuilder::push_rgba` (DXT1/DXT5 encoding). The rest of the editor plan is in
+`docs/EDITOR_PLAN.md`.
 
 ## Docker
 

@@ -3,7 +3,8 @@
 //! - [`zl`]: `.Zl` sprite libraries (DXT-compressed images with offsets and shadows)
 //! - [`map`]: `.map` tile maps (48x32 cell grid, three tile layers, walk flags)
 //! - [`mirdb`]: `System.db` static game content written by the C# MirDB ORM
-//! - [`dxt`]: DXT1/DXT5 block decoders
+//! - [`dxt`]: DXT1/DXT5 block decoders and encoders
+//! - [`monster_table`]: `LibraryFile` paths and the monster image -> library table
 //!
 //! `.map` and MirDB files round-trip byte for byte through their `parse` /
 //! `to_bytes` pairs; `save` writes a timestamped backup first.
@@ -11,6 +12,7 @@
 pub mod dxt;
 pub mod map;
 pub mod mirdb;
+pub mod monster_table;
 pub mod zl;
 
 pub use map::MapFile;

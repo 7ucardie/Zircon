@@ -13,7 +13,6 @@ mod effects;
 mod game;
 mod gfx;
 mod items;
-mod monster_table;
 mod net;
 mod scenes;
 mod text;

@@ -21,11 +21,11 @@ use crate::assets::{
 use crate::effects::{self, Anchor, Effect, Projectile};
 use crate::gfx::{Blend, Gpu, SpriteKey, SpriteRegion, SpriteRenderer, Surface};
 use crate::items::ItemCatalog;
-use crate::monster_table::monster_sprite;
 use crate::net::Connection;
 use crate::text::TextLayer;
 use crate::ui::{Ctx, Input};
 use crate::windows::{Bag, NpcDialog, WindowState};
+use mir_formats::monster_table::monster_sprite;
 use mir_proto::{buff_type, magic_type, MagicSummary};
 use std::collections::{HashMap as StdHashMap, HashSet};
 

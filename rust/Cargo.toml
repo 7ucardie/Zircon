@@ -5,6 +5,7 @@ members = [
     "crates/mir-proto",
     "crates/mir-server",
     "crates/mir-client",
+    "crates/mir-editor",
 ]
 
 [workspace.package]
