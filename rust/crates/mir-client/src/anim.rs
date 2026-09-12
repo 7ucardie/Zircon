@@ -271,7 +271,7 @@ impl ClientObject {
             let r = (sum - t) / sum;
             let dx = (48.0 * self.move_distance as f32 * r) as i32;
             let dy = (32.0 * self.move_distance as f32 * r) as i32;
-            let (mut x, mut y) = match self.direction {
+            let (x, y) = match self.direction {
                 Direction::Up => (0, dy),
                 Direction::UpRight => (-dx, dy),
                 Direction::Right => (-dx, 0),
@@ -281,8 +281,7 @@ impl ClientObject {
                 Direction::Left => (dx, 0),
                 Direction::UpLeft => (dx, dy),
             };
-            x -= x % 2;
-            y -= y % 2;
+            // Upstream dropped the even-pixel snap with the render/sim decoupling.
             self.moving_offset = (x, y);
         }
         self.damage.retain(|(_, t)| now < t + 1500);

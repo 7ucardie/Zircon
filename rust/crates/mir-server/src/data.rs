@@ -224,7 +224,8 @@ pub struct MagicDef {
     pub name: String,
     /// Zircon `MagicType` value.
     pub magic: u16,
-    /// `MirClass` value.
+    /// Class flags (Warrior 1, Wizard 2, Taoist 4, Assassin 8); upstream
+    /// Zircon moved from a single `Class` to `RequiredClass` flags.
     pub class: u8,
     pub school: i32,
     pub icon: i32,
@@ -611,7 +612,7 @@ impl GameData {
                         index: c.index(r),
                         name: c.str_or(r, "Name", "").to_string(),
                         magic: i32_of(c, r, "Magic") as u16,
-                        class: i32_of(c, r, "Class") as u8,
+                        class: magic_class_flags(c, r),
                         school: i32_of(c, r, "School"),
                         icon: i32_of(c, r, "Icon"),
                         min_base_power: i32_of(c, r, "MinBasePower"),
@@ -684,5 +685,20 @@ impl GameData {
 
     pub fn max_experience(level: i32) -> u64 {
         EXPERIENCE.get(level.max(0) as usize).copied().unwrap_or(0)
+    }
+}
+
+/// Class flags of a magic: new databases carry `RequiredClass` flags, old
+/// ones a `Class` byte (0 Warrior .. 3 Assassin, 4 All).
+fn magic_class_flags(c: &mir_formats::mirdb::Collection, r: &mir_formats::mirdb::Record) -> u8 {
+    if c.has_property("RequiredClass") {
+        return i32_of(c, r, "RequiredClass") as u8;
+    }
+    match i32_of(c, r, "Class") {
+        0 => 1,
+        1 => 2,
+        2 => 4,
+        3 => 8,
+        _ => 15,
     }
 }

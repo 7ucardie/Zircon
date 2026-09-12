@@ -980,6 +980,10 @@ mod tests {
         let mut now = 1000;
         for _ in 0..30 {
             now += 100;
+            // Keep the chicken on the burning cell; it roams otherwise.
+            if world.objects.get(&victim).map(|v| !v.dead).unwrap_or(false) {
+                world.teleport(victim, cell);
+            }
             world.tick(now);
         }
         let walls = world

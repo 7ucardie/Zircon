@@ -119,7 +119,7 @@ impl ItemCatalog {
         let mut v: Vec<&MagicDef> = self
             .magics
             .values()
-            .filter(|m| m.class == class && m.school != 0 && m.school != 20)
+            .filter(|m| m.class & (1 << class) != 0 && m.school != 0 && m.school != 20)
             .collect();
         v.sort_by_key(|m| (m.need_level[0], m.magic));
         v
@@ -176,7 +176,17 @@ impl ItemCatalog {
                         index: c.index(r),
                         name: c.str_or(r, "Name", "").to_string(),
                         magic: c.int_or(r, "Magic", 0) as u16,
-                        class: c.int_or(r, "Class", 0) as u8,
+                        class: if c.has_property("RequiredClass") {
+                            c.int_or(r, "RequiredClass", 15) as u8
+                        } else {
+                            match c.int_or(r, "Class", 4) {
+                                0 => 1,
+                                1 => 2,
+                                2 => 4,
+                                3 => 8,
+                                _ => 15,
+                            }
+                        },
                         school: c.int_or(r, "School", 0) as i32,
                         icon: c.int_or(r, "Icon", 0) as i32,
                         base_cost: c.int_or(r, "BaseCost", 0) as i32,

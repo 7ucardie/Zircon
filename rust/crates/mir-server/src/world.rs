@@ -739,7 +739,10 @@ impl World {
                 .magics
                 .values()
                 .filter(|m| {
-                    m.class == class && m.school != 0 && m.school != 20 && m.need_level[0] <= level
+                    m.class & (1 << class) != 0
+                        && m.school != 0
+                        && m.school != 20
+                        && m.need_level[0] <= level
                 })
                 .map(|m| m.magic)
                 .collect();
@@ -3582,7 +3585,7 @@ impl World {
         }
         let o = self.objects.get_mut(&id).ok_or("no player")?;
         let p = o.player_mut().ok_or("no player")?;
-        if p.class.mir_class() != magic.class {
+        if magic.class & (1 << p.class.mir_class()) == 0 {
             return Err("Your class cannot learn this".into());
         }
         if let Some(known) = p.magics.iter().find(|m| m.magic == magic.magic) {

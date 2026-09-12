@@ -125,6 +125,10 @@ impl Collection {
         self.index_of.get(name).copied()
     }
 
+    pub fn has_property(&self, name: &str) -> bool {
+        self.index_of.contains_key(name)
+    }
+
     pub fn get<'a>(&self, record: &'a Record, name: &str) -> Option<&'a Value> {
         self.property_index(name).and_then(|i| record.values.get(i))
     }

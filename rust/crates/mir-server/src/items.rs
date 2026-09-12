@@ -146,7 +146,7 @@ impl Bag {
             .filter(|i| {
                 matches!(
                     data.items.get(&i.info).map(|d| d.item_type),
-                    Some(item_type::WEAPON) | Some(item_type::TORCH)
+                    Some(item_type::WEAPON) | Some(item_type::TORCH) | Some(item_type::SHIELD)
                 )
             })
             .map(|i| item_weight(data, i))

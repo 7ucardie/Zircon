@@ -96,16 +96,15 @@ pub fn shield_library(shape: u16, female: bool) -> Option<u16> {
 
 /// Zircon `PlayerObject.WeaponList`: weapon shape / 10 -> weapon library.
 pub fn weapon_library(shape: u16, female: bool) -> Option<u16> {
+    // Upstream fix: keys 9..15 -> M_Weapon10..16, AOH 110..115, ADL 120/121/125.
     let key = shape / 10;
     let male = match key {
         0..=6 => Some(83 + key),
-        10..=16 => Some(90 + (key - 10)),
-        110..=112 => Some(117 + (key - 110)),
-        113 => Some(119),
-        114..=116 => Some(120 + (key - 114)),
+        9..=15 => Some(90 + (key - 9)),
+        110..=115 => Some(117 + (key - 110)),
         120 => Some(111),
-        122 => Some(112),
-        126 => Some(113),
+        121 => Some(112),
+        125 => Some(113),
         _ => None,
     }?;
     // Female libraries mirror the male ones 14 entries later for the basic
@@ -196,12 +195,15 @@ impl Assets {
         let loaded = library_path(id).and_then(|rel| {
             let mut path = self.root.join(rel);
             if !path.exists() {
-                // Asset packs differ in filename case (e.g. Storeitems.Zl).
+                // Asset packs differ in filename case (Storeitems.Zl) and upstream
+                // renamed StoreItems.Zl to StoreItem.Zl.
                 if let (Some(dir), Some(name)) = (path.parent(), path.file_name()) {
                     let wanted = name.to_string_lossy().to_lowercase();
+                    let alt = wanted.replace("storeitems.zl", "storeitem.zl");
                     if let Ok(entries) = std::fs::read_dir(dir) {
                         for e in entries.flatten() {
-                            if e.file_name().to_string_lossy().to_lowercase() == wanted {
+                            let have = e.file_name().to_string_lossy().to_lowercase();
+                            if have == wanted || have == alt {
                                 path = e.path();
                                 break;
                             }

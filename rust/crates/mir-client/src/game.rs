@@ -1599,6 +1599,50 @@ impl Game {
                 }
             }
 
+            // Floor pass (upstream MapControl fix): cell-sized static middle and
+            // front tiles belong to the floor and never occlude objects.
+            for y in y_range.clone() {
+                let draw_y = (y - uy + view.off_y + 1) * CELL_H + view.poy - view.umy;
+                for x in x_range.clone() {
+                    let Some(cell) = map.cell(x, y) else { continue };
+                    let draw_x = (x - ux + view.off_x) * CELL_W + view.pox - view.umx;
+                    for (file, index, animated) in [
+                        (cell.middle_file, cell.middle_image, cell.middle_animated()),
+                        (cell.front_file, cell.front_image, cell.front_animated()),
+                    ] {
+                        if file == 0 || animated {
+                            continue;
+                        }
+                        let Some(library) = kr_library(file) else {
+                            continue;
+                        };
+                        let Some(info) = self.assets.info(library, index as u32) else {
+                            continue;
+                        };
+                        let (w, h) = (info.width as i32, info.height as i32);
+                        if !((w == 48 && h == 32) || (w == 96 && h == 64)) {
+                            continue;
+                        }
+                        if let Some(r) = Self::sprite(
+                            &mut self.assets,
+                            renderer,
+                            gpu,
+                            library,
+                            index as u32,
+                            Surface::Image,
+                        ) {
+                            renderer.draw(
+                                r,
+                                draw_x as f32,
+                                (draw_y - CELL_H) as f32,
+                                white,
+                                Blend::Alpha,
+                            );
+                        }
+                    }
+                }
+            }
+
             // Rows: middle tiles, front tiles, then objects.
             let mut rows: HashMap<i32, Vec<ObjectId>> = HashMap::new();
             for o in self.objects.values() {
@@ -1647,19 +1691,18 @@ impl Game {
                         };
                         let (w, h) = (info.width as i32, info.height as i32);
                         let cell_sized = (w == 48 && h == 32) || (w == 96 && h == 64);
+                        // Static cell-sized tiles were drawn by the floor pass.
+                        if cell_sized && !animated {
+                            continue;
+                        }
                         let draw_x = (x - ux + view.off_x) * CELL_W + view.pox - view.umx;
-                        let (py, use_blend) = if layer == 0 {
-                            (draw_y - h, blend && !cell_sized)
+                        let py = if cell_sized {
+                            draw_y - CELL_H
                         } else {
-                            (
-                                if cell_sized {
-                                    draw_y - CELL_H
-                                } else {
-                                    draw_y - h
-                                },
-                                blend,
-                            )
+                            draw_y - h
                         };
+                        let use_blend = blend;
+                        let _ = layer;
                         if let Some(r) = Self::sprite(
                             &mut self.assets,
                             renderer,
