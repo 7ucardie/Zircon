@@ -183,6 +183,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            light: 10,
             appearance: Appearance::Npc {
                 name: "Tester".into(),
                 image: 0,

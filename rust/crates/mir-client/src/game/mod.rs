@@ -39,11 +39,15 @@ type PendingPayload = (u64, u16, Point, Vec<ObjectId>, Vec<Point>);
 
 pub struct Game {
     pub assets: Assets,
+    pub audio: crate::audio::Audio,
     /// The character we entered the world with (name, look).
     pub character: Option<CharacterSummary>,
     pub status: String,
     map: Option<MapFile>,
     map_name: String,
+    /// `MapInfo.Light` of the current map and the server's daylight.
+    map_light: u8,
+    day_time: f32,
     objects: HashMap<ObjectId, ClientObject>,
     user: Option<ObjectId>,
     stats: PlayerStats,
@@ -159,8 +163,10 @@ mod render;
 
 impl Game {
     pub fn new(assets: Assets, catalog: ItemCatalog) -> Game {
+        let audio = crate::audio::Audio::new(assets.root());
         Game {
             assets,
+            audio,
             catalog,
             input: Input::default(),
             inventory: (0..INVENTORY_SIZE).map(|_| None).collect(),
@@ -203,6 +209,8 @@ impl Game {
             status: String::new(),
             map: None,
             map_name: String::new(),
+            map_light: 0,
+            day_time: 1.0,
             objects: HashMap::new(),
             user: None,
             stats: PlayerStats {
@@ -429,5 +437,32 @@ fn buff_icon(kind: u16) -> u32 {
         buff_type::WHITE_LOTUS => 163,
         buff_type::RED_LOTUS => 164,
         _ => 73,
+    }
+}
+
+impl Game {
+    /// Zircon `MapControl.Light.UpdateLights`: the colour the light target
+    /// is cleared to before the blobs are added.
+    pub fn light_clear(&self) -> [f32; 3] {
+        if self.map.is_none() || self.user.is_none() {
+            return [1.0, 1.0, 1.0];
+        }
+        let dead = self
+            .user
+            .and_then(|u| self.objects.get(&u))
+            .map(|o| o.dead)
+            .unwrap_or(false);
+        if dead {
+            return [205.0 / 255.0, 92.0 / 255.0, 92.0 / 255.0];
+        }
+        match self.map_light {
+            1 => [1.0, 1.0, 1.0],
+            2 => [15.0 / 255.0; 3],
+            3 => [100.0 / 255.0; 3],
+            _ => {
+                let s = (255.0 * self.day_time.clamp(0.0, 1.0)).round() / 255.0;
+                [s, s, s]
+            }
+        }
     }
 }

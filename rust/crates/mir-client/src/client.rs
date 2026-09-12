@@ -98,6 +98,11 @@ impl Client {
         }
     }
 
+    /// Darkness colour for the light pass (white outside the world).
+    pub fn light_clear(&self) -> [f32; 3] {
+        self.game.light_clear()
+    }
+
     pub fn send(&self, msg: ClientMessage) {
         if let Some(c) = &self.conn {
             c.send(msg);

@@ -13,6 +13,9 @@ impl Game {
                 stats,
             } => {
                 self.load_map(&map.file, &map.name);
+                self.map_light = map.light;
+                self.audio
+                    .play_music(map.music.clamp(0, u16::MAX as i32) as u16);
                 self.objects.clear();
                 let (name, gender, class, hair) = self
                     .character
@@ -23,6 +26,7 @@ impl Game {
                     });
                 let state = ObjectState {
                     id,
+                    light: 0,
                     appearance: Appearance::Player {
                         name,
                         gender,
@@ -242,6 +246,7 @@ impl Game {
                 self.say(text, now);
             }
             ServerMessage::QuestCancelled { quest } => self.quests.retain(|q| q.quest != quest),
+            ServerMessage::DayChanged { day_time } => self.day_time = day_time,
             ServerMessage::BeltLinks(links) => {
                 for l in links {
                     if let Some(slot) = self.belt.get_mut(l.slot as usize) {

@@ -18,3 +18,4 @@ glyphon = "0.12"
 pollster = "0.4"
 guillotiere = "0.7"
 png = "0.18"
+rodio = { version = "0.22", default-features = false, features = ["wav", "playback"] }

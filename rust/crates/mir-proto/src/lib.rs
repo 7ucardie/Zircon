@@ -1074,6 +1074,8 @@ pub struct ObjectState {
     pub hp: i32,
     pub max_hp: i32,
     pub dead: bool,
+    /// Light radius (Zircon `Stat.Light`; NPCs 10, fire fields 15).
+    pub light: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1081,6 +1083,10 @@ pub struct MapDescriptor {
     /// File stem under `Map/`, e.g. "0" for `Map/0.map`.
     pub file: String,
     pub name: String,
+    /// Zircon `LightSetting`: Default 0 (day cycle), Light 1, Night 2, Twilight 3.
+    pub light: u8,
+    /// `MapInfo.Music` sound index (0 = none).
+    pub music: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1518,6 +1524,10 @@ pub enum ServerMessage {
         quests: Vec<NpcQuest>,
     },
     NpcClose,
+    /// Daylight 0 (night) .. 1 (day) for maps with the default light setting.
+    DayChanged {
+        day_time: f32,
+    },
     /// The whole quest log on entering the world.
     QuestList(Vec<UserQuestSummary>),
     QuestChanged(UserQuestSummary),

@@ -34,6 +34,10 @@ pub enum Blend {
     Alpha,
     /// Zircon's blended tiles/effects: `src * (1 - dst) + dst`.
     Screen,
+    /// Light blobs into the light target: `src * srcA + dst` (D3D `COLORFY`).
+    Add,
+    /// The light target over the scene: `dst * src` (D3D `LIGHTMAP`).
+    Multiply,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -89,6 +93,15 @@ pub struct Gpu {
 pub struct SpriteRenderer {
     pipeline_alpha: wgpu::RenderPipeline,
     pipeline_screen: wgpu::RenderPipeline,
+    pipeline_add: wgpu::RenderPipeline,
+    pipeline_multiply: wgpu::RenderPipeline,
+    /// Offscreen light accumulation target (page index, size, view).
+    light: Option<(u16, u32, u32, wgpu::TextureView)>,
+    light_sprite: Option<SpriteRegion>,
+    light_vertices: Vec<Vertex>,
+    light_calls: Vec<DrawCall>,
+    light_vertex_buffer: wgpu::Buffer,
+    light_vertex_capacity: usize,
     texture_layout: wgpu::BindGroupLayout,
     globals_bind_group: wgpu::BindGroup,
     globals_buffer: wgpu::Buffer,
@@ -345,6 +358,48 @@ impl SpriteRenderer {
             },
             "sprite-screen",
         );
+
+        let pipeline_add = make_pipeline(
+            wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+
+                    dst_factor: wgpu::BlendFactor::One,
+
+                    operation: wgpu::BlendOperation::Add,
+                },
+
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::SrcAlpha,
+
+                    dst_factor: wgpu::BlendFactor::One,
+
+                    operation: wgpu::BlendOperation::Add,
+                },
+            },
+            "sprite-add",
+        );
+
+        let pipeline_multiply = make_pipeline(
+            wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+
+                    dst_factor: wgpu::BlendFactor::Src,
+
+                    operation: wgpu::BlendOperation::Add,
+                },
+
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Zero,
+
+                    dst_factor: wgpu::BlendFactor::SrcAlpha,
+
+                    operation: wgpu::BlendOperation::Add,
+                },
+            },
+            "sprite-multiply",
+        );
         let globals_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("globals"),
             contents: bytemuck::bytes_of(&Globals {
@@ -378,6 +433,19 @@ impl SpriteRenderer {
         let mut r = SpriteRenderer {
             pipeline_alpha,
             pipeline_screen,
+            pipeline_add,
+            pipeline_multiply,
+            light: None,
+            light_sprite: None,
+            light_vertices: Vec::new(),
+            light_calls: Vec::new(),
+            light_vertex_buffer: gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("light-vertices"),
+                size: (1024 * std::mem::size_of::<Vertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            light_vertex_capacity: 1024,
             texture_layout,
             globals_bind_group,
             globals_buffer,
@@ -705,6 +773,8 @@ impl SpriteRenderer {
                 pass.set_pipeline(match call.blend {
                     Blend::Alpha => &self.pipeline_alpha,
                     Blend::Screen => &self.pipeline_screen,
+                    Blend::Add => &self.pipeline_add,
+                    Blend::Multiply => &self.pipeline_multiply,
                 });
                 pass.set_bind_group(1, &self.pages[call.page as usize].bind_group, &[]);
                 current = Some((call.page, call.blend));
@@ -716,6 +786,172 @@ impl SpriteRenderer {
         }
         self.vertices.clear();
         self.calls.clear();
+    }
+
+    // ---- light layer ------------------------------------------------------
+
+    /// Route the following draws into the light batch (until `end_light`).
+    pub fn begin_light(&mut self) {
+        std::mem::swap(&mut self.vertices, &mut self.light_vertices);
+        std::mem::swap(&mut self.calls, &mut self.light_calls);
+    }
+
+    pub fn end_light(&mut self) {
+        std::mem::swap(&mut self.vertices, &mut self.light_vertices);
+        std::mem::swap(&mut self.calls, &mut self.light_calls);
+    }
+
+    /// Flush the light batch into the light target's render pass (its own
+    /// vertex buffer: both batches are uploaded before the frame submits).
+    pub fn flush_light<'a>(&'a mut self, gpu: &Gpu, pass: &mut wgpu::RenderPass<'a>) {
+        if self.light_vertices.is_empty() {
+            return;
+        }
+        if self.light_vertices.len() > self.light_vertex_capacity {
+            self.light_vertex_capacity = self.light_vertices.len().next_power_of_two();
+            self.light_vertex_buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("light-vertices"),
+                size: (self.light_vertex_capacity * std::mem::size_of::<Vertex>()) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+        }
+        gpu.queue.write_buffer(
+            &self.light_vertex_buffer,
+            0,
+            bytemuck::cast_slice(&self.light_vertices),
+        );
+        gpu.queue.write_buffer(
+            &self.globals_buffer,
+            0,
+            bytemuck::bytes_of(&Globals {
+                screen: [
+                    gpu.config.width as f32 / self.scale,
+                    gpu.config.height as f32 / self.scale,
+                ],
+                _pad: [0.0; 2],
+            }),
+        );
+        pass.set_vertex_buffer(0, self.light_vertex_buffer.slice(..));
+        pass.set_bind_group(0, &self.globals_bind_group, &[]);
+        let mut current: Option<(u16, Blend)> = None;
+        for call in &self.light_calls {
+            if current != Some((call.page, call.blend)) {
+                pass.set_pipeline(match call.blend {
+                    Blend::Alpha => &self.pipeline_alpha,
+                    Blend::Screen => &self.pipeline_screen,
+                    Blend::Add => &self.pipeline_add,
+                    Blend::Multiply => &self.pipeline_multiply,
+                });
+                pass.set_bind_group(1, &self.pages[call.page as usize].bind_group, &[]);
+                current = Some((call.page, call.blend));
+            }
+            pass.draw(
+                call.first_vertex..call.first_vertex + call.vertex_count,
+                0..1,
+            );
+        }
+        self.light_vertices.clear();
+        self.light_calls.clear();
+    }
+
+    /// Make sure the light target matches the surface size; returns its view.
+    pub fn ensure_light_target(&mut self, gpu: &Gpu) -> wgpu::TextureView {
+        let (w, h) = (gpu.config.width.max(1), gpu.config.height.max(1));
+        if let Some((_, lw, lh, view)) = &self.light {
+            if *lw == w && *lh == h {
+                return view.clone();
+            }
+        }
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("light-target"),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: gpu.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("light-target"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        let page = Page {
+            texture,
+            bind_group,
+            allocator: AtlasAllocator::new(size2(1, 1)),
+        };
+        let index = match &self.light {
+            Some((i, _, _, _)) => {
+                self.pages[*i as usize] = page;
+                *i
+            }
+            None => {
+                self.pages.push(page);
+                (self.pages.len() - 1) as u16
+            }
+        };
+        self.light = Some((index, w, h, view.clone()));
+        view
+    }
+
+    /// The whole light target as a sprite (draw it with `Blend::Multiply`).
+    pub fn light_region(&self) -> Option<SpriteRegion> {
+        let (page, w, h, _) = self.light.as_ref()?;
+        Some(SpriteRegion {
+            page: *page,
+            width: *w,
+            height: *h,
+            u0: 0.0,
+            v0: 0.0,
+            u1: 1.0,
+            v1: 1.0,
+        })
+    }
+
+    /// Zircon's procedural light: a 512x384 elliptical gradient from
+    /// rgba(200,200,200,255) at the centre to transparent at the edge
+    /// (half the size of the C# 1024x768 bitmap; callers scale by 2).
+    pub fn light_sprite(&mut self, gpu: &Gpu) -> SpriteRegion {
+        if let Some(r) = self.light_sprite {
+            return r;
+        }
+        let (w, h) = (512u32, 384u32);
+        let mut rgba = vec![0u8; (w * h * 4) as usize];
+        let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+        for y in 0..h {
+            for x in 0..w {
+                let dx = (x as f32 + 0.5 - cx) / cx;
+                let dy = (y as f32 + 0.5 - cy) / cy;
+                let r = (dx * dx + dy * dy).sqrt();
+                let v = (1.0 - r).clamp(0.0, 1.0);
+                let o = ((y * w + x) * 4) as usize;
+                let c = (200.0 * v) as u8;
+                rgba[o] = c;
+                rgba[o + 1] = c;
+                rgba[o + 2] = c;
+                rgba[o + 3] = (255.0 * v) as u8;
+            }
+        }
+        let region = self.upload_rgba(gpu, w, h, &rgba);
+        self.light_sprite = Some(region);
+        region
     }
 
     /// Logical-to-physical scale (window scale factor). Draw calls use logical pixels.

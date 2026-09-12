@@ -73,6 +73,8 @@ impl World {
                 descriptor: MapDescriptor {
                     file: def.file_name.clone(),
                     name: def.description.clone(),
+                    light: def.light,
+                    music: def.music,
                 },
                 spawns,
                 objects: Vec::new(),

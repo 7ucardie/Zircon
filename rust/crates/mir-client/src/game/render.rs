@@ -258,6 +258,24 @@ impl Game {
             }
             self.draw_effects(&view, gpu, renderer, now);
 
+            // Light layer (Zircon LLayer): blobs into the light target,
+            // then the target multiplied over everything drawn so far.
+            let light_sprite = renderer.light_sprite(gpu);
+            renderer.begin_light();
+            self.draw_lights(&view, renderer, light_sprite, map, width, height);
+            renderer.end_light();
+            if let Some(light) = renderer.light_region() {
+                renderer.draw_scaled(
+                    light,
+                    0.0,
+                    0.0,
+                    width as f32,
+                    height as f32,
+                    white,
+                    Blend::Multiply,
+                );
+            }
+
             // Overlay: names, health bars, damage numbers.
             let ids: Vec<ObjectId> = self.objects.keys().copied().collect();
             for id in ids {
@@ -627,6 +645,87 @@ impl Game {
                     (dy + info.offset_y as i32) as f32,
                     [1.0, 1.0, 1.0, 1.0],
                     Blend::Alpha,
+                );
+            }
+        }
+    }
+}
+
+impl Game {
+    /// Zircon `MapControl.Light.OnClearTexture`: object lights (`0.1 +
+    /// light * 0.04` of the 1024x768 sprite, anchored at the cell's top
+    /// centre), then cell lights (`0.1 + light * 0.6`, cell centre).
+    fn draw_lights(
+        &self,
+        view: &View,
+        renderer: &mut SpriteRenderer,
+        sprite: SpriteRegion,
+        map: &MapFile,
+        width: i32,
+        height: i32,
+    ) {
+        // The sprite is half of Zircon's bitmap: scale twice as much.
+        let (sw, sh) = (1024.0f32, 768.0f32);
+        let blob =
+            |renderer: &mut SpriteRenderer, cx: f32, cy: f32, scale: f32, color: [f32; 4]| {
+                let (w, h) = (sw * scale, sh * scale);
+                renderer.draw_scaled(sprite, cx - w / 2.0, cy - h / 2.0, w, h, color, Blend::Add);
+            };
+        let user = self.user;
+        for o in self.objects.values() {
+            let is_user = Some(o.id) == user;
+            let mut light = o.light as f32;
+            let mut color = [1.0, 1.0, 1.0, 1.0];
+            if is_user {
+                light = light.max(3.0);
+                if o.light == 0 {
+                    color[3] = 120.0 / 255.0;
+                }
+            }
+            if light <= 0.0 || (o.dead && !is_user && !o.is_spell()) {
+                continue;
+            }
+            if let Appearance::Spell { effect } = &o.appearance {
+                color = match *effect {
+                    mir_proto::spell_effect::FIRE_WALL | mir_proto::spell_effect::BURNING_FIRE => {
+                        effects::FIRE
+                    }
+                    mir_proto::spell_effect::TEMPEST => effects::WIND,
+                    mir_proto::spell_effect::ICE_AURA => effects::ICE,
+                    _ => color,
+                };
+            }
+            let (dx, dy) = view.object_px(o);
+            if dx < -600 || dx > width + 600 || dy < -600 || dy > height + 600 {
+                continue;
+            }
+            let scale = 0.1 + light * 0.04;
+            blob(
+                renderer,
+                dx as f32 + CELL_W as f32 / 2.0,
+                dy as f32,
+                scale,
+                color,
+            );
+        }
+        let x_range = (view.ux - view.off_x - 15).max(0)
+            ..=(view.ux + view.off_x + 15).min(map.width as i32 - 1);
+        let y_range = (view.uy - view.off_y - 15).max(0)
+            ..=(view.uy + view.off_y + 15).min(map.height as i32 - 1);
+        for y in y_range {
+            for x in x_range.clone() {
+                let Some(cell) = map.cell(x, y) else { continue };
+                if cell.light == 0 {
+                    continue;
+                }
+                let (dx, dy) = view.cell_px(x, y);
+                let scale = 0.1 + cell.light as f32 * 0.6;
+                blob(
+                    renderer,
+                    dx as f32 + CELL_W as f32 / 2.0,
+                    dy as f32 + CELL_H as f32 / 2.0,
+                    scale,
+                    [1.0, 1.0, 1.0, 1.0],
                 );
             }
         }

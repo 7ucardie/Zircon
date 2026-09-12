@@ -413,6 +413,8 @@ pub struct Object {
     pub move_time: u64,
     pub attack_time: u64,
     pub cell_time: u64,
+    /// Light radius shown by the client (Zircon `MapObject.Light`).
+    pub light: u8,
     pub appearance: Appearance,
     /// Objects this one currently sees (players only).
     pub visible: HashSet<ObjectId>,
@@ -491,6 +493,7 @@ impl Object {
     pub fn state(&self) -> ObjectState {
         ObjectState {
             id: self.id,
+            light: self.light,
             appearance: self.appearance.clone(),
             location: self.location,
             direction: self.direction,
@@ -606,6 +609,8 @@ pub struct World {
     /// Seeded from `ZIRCON_SEED` when set (tests), otherwise from the OS.
     rng: rand::rngs::StdRng,
     pending_hits: Vec<PendingHit>,
+    /// Zircon `DayTime`: 0 night .. 1 day, broadcast on change.
+    pub day_time: f32,
     pub npc_store: NpcStore,
     pending_monster_spells: Vec<PendingMonsterSpell>,
     ai_profiles: HashMap<i32, ai_profile::AiProfile>,
@@ -695,6 +700,7 @@ impl World {
                 None => rand::SeedableRng::from_os_rng(),
             },
             pending_hits: Vec::new(),
+            day_time: 1.0,
             npc_store: NpcStore::default(),
             pending_monster_spells: Vec::new(),
             ai_profiles: HashMap::new(),
@@ -827,6 +833,7 @@ impl World {
         self.process_dashes();
         self.process_spells();
         self.process_monster_spells();
+        self.process_day_time();
 
         if now >= self.last_spawn_check + 1000 {
             self.last_spawn_check = now;
@@ -850,6 +857,44 @@ impl Object {
         match &self.kind {
             Kind::Monster(m) => m,
             _ => panic!("not a monster"),
+        }
+    }
+}
+
+/// Zircon `SEnvir.CalculateLights`: game minutes run `ZIRCON_DAY_CYCLE`
+/// (default 12) times faster than real ones; dawn 05:00-08:00 ramps up,
+/// dusk 17:00-20:00 ramps down.
+pub fn day_time_now() -> f32 {
+    let cycle: u64 = std::env::var("ZIRCON_DAY_CYCLE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(12);
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let minutes = (secs / 60 * cycle) % 1440;
+    let m = minutes as f32;
+    match minutes {
+        0..=299 => 0.0,
+        300..=479 => (m - 300.0) / 180.0,
+        480..=1019 => 1.0,
+        1020..=1199 => 1.0 - (m - 1020.0) / 180.0,
+        _ => 0.0,
+    }
+}
+
+impl World {
+    /// Recompute the daylight and tell everyone when it visibly changed.
+    fn process_day_time(&mut self) {
+        let next = day_time_now();
+        if (next * 255.0).round() == (self.day_time * 255.0).round() {
+            return;
+        }
+        self.day_time = next;
+        let players: Vec<ObjectId> = self.players().map(|o| o.id).collect();
+        for id in players {
+            self.send_to(id, ServerMessage::DayChanged { day_time: next });
         }
     }
 }

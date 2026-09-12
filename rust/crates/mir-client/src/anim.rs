@@ -109,6 +109,8 @@ pub struct ClientObject {
     pub hp: i32,
     pub max_hp: i32,
     pub dead: bool,
+    /// Light radius (Zircon `MapObject.Light`).
+    pub light: u8,
     pub action: Action,
     pub frame: Frame,
     pub frame_index: u32,
@@ -147,6 +149,7 @@ impl ClientObject {
             hp: state.hp,
             max_hp: state.max_hp,
             dead: state.dead,
+            light: state.light,
             action,
             frame,
             frame_index: 0,

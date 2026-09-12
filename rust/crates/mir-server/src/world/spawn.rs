@@ -86,6 +86,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            light: def.stat(stat::LIGHT).clamp(0, 255) as u8,
             appearance: Appearance::Monster {
                 name: def.name.clone(),
                 image: def.image,
@@ -236,6 +237,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            light: 0,
             appearance,
             visible: HashSet::new(),
             poisons: Vec::new(),
@@ -342,6 +344,7 @@ impl World {
             let obj = Object {
                 id,
                 kind: Kind::Npc(NpcData { info, entry_page }),
+                light: 10,
                 map,
                 location,
                 direction: Direction::Up,

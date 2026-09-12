@@ -8,6 +8,7 @@
 
 mod anim;
 mod assets;
+mod audio;
 mod client;
 mod effects;
 mod game;
@@ -133,6 +134,34 @@ impl App {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
+        // Light pass: darkness colour plus additive light blobs, multiplied
+        // over the world later in the scene pass (Zircon's LLayer).
+        {
+            let light_view = renderer.ensure_light_target(gpu);
+            let [r, g, b] = client.light_clear();
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("light"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &light_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: r as f64,
+                            g: g as f64,
+                            b: b as f64,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            renderer.flush_light(gpu, &mut pass);
+        }
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("scene"),

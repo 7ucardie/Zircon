@@ -49,6 +49,13 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            light: match effect {
+                spell_effect::FIRE_WALL
+                | spell_effect::TEMPEST
+                | spell_effect::ICE_AURA
+                | spell_effect::BURNING_FIRE => 15,
+                _ => 0,
+            },
             appearance: Appearance::Spell { effect },
             visible: HashSet::new(),
             poisons: Vec::new(),

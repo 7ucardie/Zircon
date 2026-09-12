@@ -111,6 +111,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            light: 0,
             appearance: Appearance::Player {
                 name: rec.name.clone(),
                 gender: rec.gender,
@@ -219,6 +220,8 @@ impl World {
         self.send_inventory(id);
         self.send_belt(id);
         self.send_quest_list(id);
+        let day_time = self.day_time;
+        self.send_to(id, ServerMessage::DayChanged { day_time });
         self.send_magics(id);
         Ok(id)
     }
@@ -527,6 +530,7 @@ impl World {
         } else {
             o.hp = o.hp.min(o.max_hp);
         }
+        o.light = g(stat::LIGHT).clamp(0, 255) as u8;
         let p = o.player_mut().unwrap();
         p.max_mp = base.mana + g(stat::MANA);
         if restore {

@@ -150,6 +150,19 @@ spawn table without opening a port. `--map <file>` forces a start map.
 `ZIRCON_SEED=n` seeds the server's random rolls (the tests use a fixed seed and
 ordered object maps, so a failing roll reproduces).
 
+## Light and sound
+
+The map is lit like Zircon's light layer: an offscreen target is cleared to
+the map's darkness (`MapInfo.Light`: day cycle from the server's daylight,
+night, twilight or full light; blood red while dead) and additive light
+blobs are added for lit objects (torch light from equipment, a minimum
+glow around your own character, NPCs, fire walls and other fields), then
+the target is multiplied over the world before names and UI are drawn.
+The server broadcasts the daylight (`ZIRCON_DAY_CYCLE` game days per real
+day, default 12). Sound plays through rodio: each map's music loops on
+entry; `ZIRCON_MUTE=1` silences everything (also used by the screenshot
+runs).
+
 ## NPC scripts
 
 Dialog pages run Zircon's checks and actions: levels, class, gold, items,

@@ -17,6 +17,8 @@ pub struct MapDef {
     pub description: String,
     pub minimum_level: i32,
     pub background: i32,
+    pub light: u8,
+    pub music: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -441,6 +443,8 @@ impl GameData {
                     description: c.str_or(r, "Description", "").to_string(),
                     minimum_level: i32_of(c, r, "MinimumLevel"),
                     background: i32_of(c, r, "Background"),
+                    light: i32_of(c, r, "Light") as u8,
+                    music: i32_of(c, r, "Music"),
                 };
                 (m.index, m)
             })
