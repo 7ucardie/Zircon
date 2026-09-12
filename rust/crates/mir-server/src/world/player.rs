@@ -93,6 +93,7 @@ impl World {
                 currencies: rec.currencies.iter().copied().collect(),
                 rebirth: rec.rebirth,
                 npc_roll: None,
+                quests: rec.quests.clone(),
             }),
             map,
             location,
@@ -212,6 +213,7 @@ impl World {
         ));
         self.send_inventory(id);
         self.send_belt(id);
+        self.send_quest_list(id);
         self.send_magics(id);
         Ok(id)
     }
@@ -263,6 +265,7 @@ impl World {
         rec.belt = p.belt.clone();
         rec.currencies = p.currencies.iter().map(|(k, v)| (*k, *v)).collect();
         rec.rebirth = p.rebirth;
+        rec.quests = p.quests.clone();
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;

@@ -521,6 +521,18 @@ fn handle_message(
             world.npc_sell(object, slots)
         }
         (Stage::InGame { object, .. }, ClientMessage::NpcClose) => world.npc_close(object),
+        (Stage::InGame { object, .. }, ClientMessage::QuestAccept { quest }) => {
+            world.quest_accept(object, quest)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::QuestComplete { quest, choice }) => {
+            world.quest_complete(object, quest, choice)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::QuestTrack { quest, track }) => {
+            world.quest_track(object, quest, track)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::QuestAbandon { quest }) => {
+            world.quest_abandon(object, quest)
+        }
         (stage, msg) => {
             tracing::debug!(conn, ?stage, ?msg, "message ignored in this stage");
         }

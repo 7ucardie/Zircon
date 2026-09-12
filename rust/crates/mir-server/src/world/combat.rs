@@ -939,6 +939,11 @@ impl World {
         self.monster_death_effects(id);
         if let Some(owner) = owner {
             self.gain_experience(owner, exp as u64);
+            let (def, map) = {
+                let o = &self.objects[&id];
+                (o.monster_ref().def, o.map)
+            };
+            self.quest_kill_progress(owner, def, map);
         }
         self.drop_loot(id, owner);
     }

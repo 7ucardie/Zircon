@@ -52,6 +52,22 @@ pub struct CharacterRecord {
     pub currencies: Vec<(i32, i64)>,
     #[serde(default)]
     pub rebirth: i32,
+    #[serde(default)]
+    pub quests: Vec<StoredQuest>,
+}
+
+/// Zircon `UserQuest` as persisted.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredQuest {
+    pub quest: i32,
+    pub completed: bool,
+    pub track: bool,
+    pub selected_reward: i32,
+    /// Unix seconds.
+    pub taken: u64,
+    pub completed_at: u64,
+    /// `(QuestTask index, amount)`.
+    pub tasks: Vec<(i32, i32)>,
 }
 
 impl CharacterRecord {
@@ -282,6 +298,7 @@ impl Accounts {
             belt: Vec::new(),
             currencies: Vec::new(),
             rebirth: 0,
+            quests: Vec::new(),
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;
@@ -343,6 +360,7 @@ pub fn test_character(name: &str) -> CharacterRecord {
         belt: Vec::new(),
         currencies: Vec::new(),
         rebirth: 0,
+        quests: Vec::new(),
     }
 }
 

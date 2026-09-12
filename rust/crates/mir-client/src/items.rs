@@ -47,9 +47,43 @@ impl MagicDef {
     }
 }
 
+/// `QuestInfo` as the client shows it.
+#[derive(Debug, Clone)]
+pub struct QuestDef {
+    pub index: i32,
+    pub name: String,
+    pub progress_text: String,
+    pub completed_text: String,
+    pub start_npc: i32,
+    pub finish_npc: i32,
+    pub tasks: Vec<QuestTaskDef>,
+    pub rewards: Vec<QuestRewardDef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuestTaskDef {
+    pub index: i32,
+    /// KillMonster 0, GainItem 1, Region 2.
+    pub task: i32,
+    pub item: i32,
+    pub description: String,
+    pub amount: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuestRewardDef {
+    pub index: i32,
+    pub item: i32,
+    pub amount: i32,
+    pub choice: bool,
+    pub class: u8,
+}
+
 pub struct ItemCatalog {
     items: HashMap<i32, ItemDef>,
     magics: HashMap<u16, MagicDef>,
+    quests: HashMap<i32, QuestDef>,
+    npc_names: HashMap<i32, String>,
 }
 
 pub fn stat_name(id: i32) -> Option<&'static str> {
@@ -107,7 +141,28 @@ impl ItemCatalog {
         ItemCatalog {
             items: HashMap::new(),
             magics: HashMap::new(),
+            quests: HashMap::new(),
+            npc_names: HashMap::new(),
         }
+    }
+
+    pub fn quest(&self, index: i32) -> Option<&QuestDef> {
+        self.quests.get(&index)
+    }
+
+    /// Display name of an NPC (the part after the last underscore).
+    pub fn npc_name(&self, index: i32) -> String {
+        self.npc_names
+            .get(&index)
+            .map(|n| n.rsplit('_').next().unwrap_or(n).to_string())
+            .unwrap_or_default()
+    }
+
+    /// Replace Zircon's `[PLAYERNAME]`, `[STARTNAME]`, `[FINISHNAME]` tags.
+    pub fn quest_text(&self, q: &QuestDef, text: &str, player: &str) -> String {
+        text.replace("[PLAYERNAME]", player)
+            .replace("[STARTNAME]", &self.npc_name(q.start_npc))
+            .replace("[FINISHNAME]", &self.npc_name(q.finish_npc))
     }
 
     pub fn magic(&self, magic: u16) -> Option<&MagicDef> {
@@ -209,7 +264,66 @@ impl ItemCatalog {
                 .collect(),
             None => HashMap::new(),
         };
-        Ok(ItemCatalog { items, magics })
+        let mut quests: HashMap<i32, QuestDef> = match db.collection("QuestInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| {
+                    let q = QuestDef {
+                        index: c.index(r),
+                        name: c.str_or(r, "QuestName", "").to_string(),
+                        progress_text: c.str_or(r, "ProgressText", "").to_string(),
+                        completed_text: c.str_or(r, "CompletedText", "").to_string(),
+                        start_npc: c.int_or(r, "StartNPC", 0) as i32,
+                        finish_npc: c.int_or(r, "FinishNPC", 0) as i32,
+                        tasks: Vec::new(),
+                        rewards: Vec::new(),
+                    };
+                    (q.index, q)
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+        if let Some(c) = db.collection("QuestTask") {
+            for r in &c.records {
+                if let Some(q) = quests.get_mut(&(c.int_or(r, "Quest", 0) as i32)) {
+                    q.tasks.push(QuestTaskDef {
+                        index: c.index(r),
+                        task: c.int_or(r, "Task", 0) as i32,
+                        item: c.int_or(r, "ItemParameter", 0) as i32,
+                        description: c.str_or(r, "MobDescription", "").to_string(),
+                        amount: c.int_or(r, "Amount", 0) as i32,
+                    });
+                }
+            }
+        }
+        if let Some(c) = db.collection("QuestReward") {
+            for r in &c.records {
+                if let Some(q) = quests.get_mut(&(c.int_or(r, "Quest", 0) as i32)) {
+                    q.rewards.push(QuestRewardDef {
+                        index: c.index(r),
+                        item: c.int_or(r, "Item", 0) as i32,
+                        amount: c.int_or(r, "Amount", 0) as i32,
+                        choice: c.bool_or(r, "Choice", false),
+                        class: c.int_or(r, "Class", 15) as u8,
+                    });
+                }
+            }
+        }
+        let npc_names = match db.collection("NPCInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| (c.index(r), c.str_or(r, "NPCName", "").to_string()))
+                .collect(),
+            None => HashMap::new(),
+        };
+        Ok(ItemCatalog {
+            items,
+            magics,
+            quests,
+            npc_names,
+        })
     }
 
     pub fn get(&self, index: i32) -> Option<&ItemDef> {

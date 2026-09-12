@@ -98,6 +98,7 @@ impl World {
         if self.try_travel(id) {
             return;
         }
+        self.quest_region_progress(id);
         self.events.push((
             id,
             ServerMessage::ObjectMove {

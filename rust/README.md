@@ -137,6 +137,18 @@ rebirth at level 86 + rebirths. `NPCRequirement` rows hide an NPC from
 players who do not meet them. Weapon refining, horses, marriage, fame and
 Lua script actions wait for their systems.
 
+## Quests
+
+NPC dialogs list the quests an NPC starts (`[Accept]`) or finishes
+(`[Complete]`, or "in progress"); the quest log opens with `L` and shows
+the progress text with Zircon's name tags filled in, each task's count and
+the class-filtered rewards. Requirements (level, class, other quests
+completed or not), kill and gather tasks (`QuestTaskMonsterDetails` with map
+filter and chance roll, capped at the task amount), region tasks, choice
+rewards, experience and currency rewards, daily/weekly/repeatable resets
+and abandon follow the C# rules; gather tasks credit on the kill instead of
+dropping a quest item to pick up.
+
 ## Monster AI
 
 `MonsterInfo.AI` selects a behaviour profile (`world/ai_profile.rs`, ported

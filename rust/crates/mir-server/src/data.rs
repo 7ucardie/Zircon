@@ -163,12 +163,68 @@ pub struct NpcRequirementDef {
     pub days: i32,
 }
 
+/// `QuestInfo` with its requirements, tasks and rewards.
+#[derive(Debug, Clone)]
+pub struct QuestDef {
+    pub index: i32,
+    pub name: String,
+    /// Zircon `QuestType`: General 0, Daily 1, Weekly 2, Repeatable 3, Story 4, Account 5.
+    pub quest_type: i32,
+    pub start_npc: i32,
+    pub finish_npc: i32,
+    pub requirements: Vec<QuestRequirementDef>,
+    pub tasks: Vec<QuestTaskDef>,
+    pub rewards: Vec<QuestRewardDef>,
+}
+
+/// `QuestRequirementType`: MinLevel 0, MaxLevel 1, NotAccepted 2,
+/// HaveCompleted 3, HaveNotCompleted 4, Class 5.
+#[derive(Debug, Clone)]
+pub struct QuestRequirementDef {
+    pub requirement: i32,
+    pub int1: i32,
+    pub quest: i32,
+    pub class: u8,
+}
+
+/// `QuestTaskType`: KillMonster 0, GainItem 1, Region 2.
+#[derive(Debug, Clone)]
+pub struct QuestTaskDef {
+    pub index: i32,
+    pub task: i32,
+    pub item: i32,
+    pub region: i32,
+    pub amount: i32,
+    pub monsters: Vec<QuestMonsterDef>,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuestMonsterDef {
+    pub monster: i32,
+    pub map: i32,
+    /// 1-in-`chance` per kill (0/1 = always).
+    pub chance: i32,
+    pub amount: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct QuestRewardDef {
+    pub index: i32,
+    pub item: i32,
+    pub amount: i32,
+    pub choice: bool,
+    pub bound: bool,
+    pub class: u8,
+}
+
 /// `CurrencyInfo`.
 #[derive(Debug, Clone)]
 pub struct CurrencyDef {
     pub index: i32,
     pub name: String,
     pub abbreviation: String,
+    /// The `ItemInfo` that represents this currency when dropped or rewarded.
+    pub drop_item: i32,
     pub exchange_rate: f64,
 }
 
@@ -178,6 +234,8 @@ pub struct ItemDef {
     pub name: String,
     /// Zircon `ItemType` value.
     pub item_type: u8,
+    /// Zircon `ItemEffect`: Experience 2, PickAxe 5 ...
+    pub effect: u8,
     /// `RequiredClass` flags (Warrior=1, Wizard=2, Taoist=4, Assassin=8).
     pub required_class: u8,
     /// `RequiredGender` flags (Male=1, Female=2).
@@ -333,6 +391,7 @@ pub struct GameData {
     pub safe_zones: Vec<SafeZoneDef>,
     pub guards: Vec<GuardDef>,
     pub currencies: Vec<CurrencyDef>,
+    pub quests: HashMap<i32, QuestDef>,
     pub base_stats: Vec<BaseStatDef>,
     pub npcs: Vec<NpcDef>,
     pub items: HashMap<i32, ItemDef>,
@@ -541,6 +600,7 @@ impl GameData {
                     index,
                     name: c.str_or(r, "ItemName", "").to_string(),
                     item_type: i32_of(c, r, "ItemType") as u8,
+                    effect: i32_of(c, r, "ItemEffect") as u8,
                     required_class: i32_of(c, r, "RequiredClass") as u8,
                     required_gender: i32_of(c, r, "RequiredGender") as u8,
                     required_type: i32_of(c, r, "RequiredType") as u8,
@@ -743,11 +803,87 @@ impl GameData {
                     index: c.index(r),
                     name: c.str_or(r, "Name", "").to_string(),
                     abbreviation: c.str_or(r, "Abbreviation", "").to_string(),
+                    drop_item: i32_of(c, r, "DropItem"),
                     exchange_rate: c.float_or(r, "ExchangeRate", 1.0),
                 })
                 .collect(),
             None => Vec::new(),
         };
+        let mut quests: HashMap<i32, QuestDef> = match db.collection("QuestInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| {
+                    let q = QuestDef {
+                        index: c.index(r),
+                        name: c.str_or(r, "QuestName", "").to_string(),
+                        quest_type: i32_of(c, r, "QuestType"),
+                        start_npc: i32_of(c, r, "StartNPC"),
+                        finish_npc: i32_of(c, r, "FinishNPC"),
+                        requirements: Vec::new(),
+                        tasks: Vec::new(),
+                        rewards: Vec::new(),
+                    };
+                    (q.index, q)
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+        if let Some(c) = db.collection("QuestRequirement") {
+            for r in &c.records {
+                if let Some(q) = quests.get_mut(&i32_of(c, r, "Quest")) {
+                    q.requirements.push(QuestRequirementDef {
+                        requirement: i32_of(c, r, "Requirement"),
+                        int1: i32_of(c, r, "IntParameter1"),
+                        quest: i32_of(c, r, "QuestParameter"),
+                        class: i32_of(c, r, "Class") as u8,
+                    });
+                }
+            }
+        }
+        if let Some(c) = db.collection("QuestTask") {
+            for r in &c.records {
+                if let Some(q) = quests.get_mut(&i32_of(c, r, "Quest")) {
+                    q.tasks.push(QuestTaskDef {
+                        index: c.index(r),
+                        task: i32_of(c, r, "Task"),
+                        item: i32_of(c, r, "ItemParameter"),
+                        region: i32_of(c, r, "RegionParameter"),
+                        amount: i32_of(c, r, "Amount"),
+                        monsters: Vec::new(),
+                    });
+                }
+            }
+        }
+        if let Some(c) = db.collection("QuestTaskMonsterDetails") {
+            for r in &c.records {
+                let task = i32_of(c, r, "Task");
+                for q in quests.values_mut() {
+                    if let Some(t) = q.tasks.iter_mut().find(|t| t.index == task) {
+                        t.monsters.push(QuestMonsterDef {
+                            monster: i32_of(c, r, "Monster"),
+                            map: i32_of(c, r, "Map"),
+                            chance: i32_of(c, r, "Chance"),
+                            amount: i32_of(c, r, "Amount"),
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(c) = db.collection("QuestReward") {
+            for r in &c.records {
+                if let Some(q) = quests.get_mut(&i32_of(c, r, "Quest")) {
+                    q.rewards.push(QuestRewardDef {
+                        index: c.index(r),
+                        item: i32_of(c, r, "Item"),
+                        amount: i32_of(c, r, "Amount"),
+                        choice: c.bool_or(r, "Choice", false),
+                        bound: c.bool_or(r, "Bound", false),
+                        class: c.int_or(r, "Class", 15) as u8,
+                    });
+                }
+            }
+        }
         if let Some(c) = db.collection("NPCRequirement") {
             for r in &c.records {
                 let npc = i32_of(c, r, "NPC");
@@ -771,6 +907,7 @@ impl GameData {
             safe_zones,
             guards,
             currencies,
+            quests,
             base_stats,
             npcs,
             items,

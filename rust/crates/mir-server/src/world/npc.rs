@@ -109,6 +109,7 @@ impl World {
                     dialog_type: def.dialog_type,
                     goods,
                     sell_types: def.types.clone(),
+                    quests: self.npc_quests(id, npc),
                 },
             );
             return;

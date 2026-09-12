@@ -156,4 +156,82 @@ impl World {
             .map(|p| p.bag.gold)
             .unwrap_or(0)
     }
+
+    /// Test helper: put an NPC of `info` next to the player and open its
+    /// dialog so quest accept/complete pass the "at the NPC" gate.
+    #[cfg(test)]
+    pub fn test_open_npc(&mut self, id: ObjectId, info: i32) -> ObjectId {
+        let (map, loc) = {
+            let o = &self.objects[&id];
+            (o.map, o.location)
+        };
+        let npc = self.alloc_id();
+        let obj = Object {
+            id: npc,
+            kind: Kind::Npc(NpcData {
+                info,
+                entry_page: 0,
+            }),
+            map,
+            location: loc.step(Direction::Up, 1),
+            direction: Direction::Down,
+            hp: 1,
+            max_hp: 1,
+            dead: false,
+            stats: CombatStats::ZERO,
+            action_time: 0,
+            move_time: 0,
+            attack_time: 0,
+            cell_time: 0,
+            appearance: Appearance::Npc {
+                name: "Tester".into(),
+                image: 0,
+            },
+            visible: HashSet::new(),
+            poisons: Vec::new(),
+            heal: None,
+        };
+        self.insert_object(obj);
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.npc = Some((npc, 0));
+        }
+        npc
+    }
+
+    #[cfg(test)]
+    pub fn test_quest_kill(&mut self, id: ObjectId, monster_def: i32, map: i32) {
+        self.quest_kill_progress(id, monster_def, map);
+    }
+
+    #[cfg(test)]
+    pub fn test_quests(&self, id: ObjectId) -> Vec<crate::accounts::StoredQuest> {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .map(|p| p.quests.clone())
+            .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub fn test_npc_quests(&self, id: ObjectId, npc: ObjectId) -> Vec<mir_proto::NpcQuest> {
+        self.npc_quests(id, npc)
+    }
+
+    #[cfg(test)]
+    pub fn test_currency_total(&self, id: ObjectId) -> i64 {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .map(|p| p.currencies.values().sum())
+            .unwrap_or(0)
+    }
+
+    #[cfg(test)]
+    pub fn test_experience(&self, id: ObjectId) -> u64 {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .map(|p| p.experience)
+            .unwrap_or(0)
+    }
 }

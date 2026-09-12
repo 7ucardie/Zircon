@@ -1309,3 +1309,102 @@ fn npc_data_lists_and_currencies_round_trip() {
     // Unknown currency names pass the check like Zircon's `continue`.
     assert!(world.test_npc_check(me, &check(17, 0, "Moonstones", 1, 0)));
 }
+
+#[test]
+fn quest_accept_progress_and_complete() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    // "Curing the Poison Pt. 1": quest 9 at NPC 13, level 20, ten venoms from
+    // monster 20 at a 1-in-2 roll, rewards item 801 x352.
+    let Some(def) = world.data.quests.get(&9).cloned() else {
+        return;
+    };
+    let mut rec = test_character("Seeker");
+    rec.level = 20;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    let msgs = drain(&mut world);
+    assert!(
+        msgs.iter()
+            .any(|m| matches!(m, ServerMessage::QuestList(_))),
+        "quest log sent on entry"
+    );
+    let npc = world.test_open_npc(me, def.start_npc);
+    let offered = world.test_npc_quests(me, npc);
+    assert!(
+        offered.iter().any(|q| q.quest == 9 && q.state == 0),
+        "quest offered: {offered:?}"
+    );
+    world.quest_accept(me, 9);
+    assert!(world
+        .test_quests(me)
+        .iter()
+        .any(|q| q.quest == 9 && !q.completed));
+    assert!(
+        matches!(drain(&mut world).last(), Some(ServerMessage::QuestChanged(q)) if q.quest == 9)
+    );
+    // Not offered twice.
+    assert!(!world
+        .test_npc_quests(me, npc)
+        .iter()
+        .any(|q| q.quest == 9 && q.state == 0));
+    // Kills credit the gather task (chance rolls; 200 kills is plenty).
+    let task = def.tasks[0].clone();
+    let monster = task.monsters[0].monster;
+    let map = world.objects[&me].map;
+    for _ in 0..200 {
+        world.test_quest_kill(me, monster, map);
+    }
+    let q = world
+        .test_quests(me)
+        .into_iter()
+        .find(|q| q.quest == 9)
+        .unwrap();
+    let amount = q
+        .tasks
+        .iter()
+        .find(|(t, _)| *t == task.index)
+        .map(|(_, a)| *a)
+        .unwrap_or(0);
+    assert_eq!(amount, task.amount, "task capped at the required amount");
+    drain(&mut world);
+    // Completing at the finish NPC grants the reward and marks it done.
+    let finish = if def.finish_npc == def.start_npc {
+        npc
+    } else {
+        world.test_open_npc(me, def.finish_npc)
+    };
+    assert!(world
+        .test_npc_quests(me, finish)
+        .iter()
+        .any(|q| q.quest == 9 && q.state == 2));
+    let gold_before = world.test_gold(me);
+    let reward = def.rewards[0].clone();
+    let reward_def = world.data.items[&reward.item].clone();
+    let exp_before = world.test_experience(me);
+    world.quest_complete(me, 9, 0);
+    let q = world
+        .test_quests(me)
+        .into_iter()
+        .find(|q| q.quest == 9)
+        .unwrap();
+    assert!(q.completed, "quest completed");
+    if reward_def.effect == 2 {
+        assert_eq!(world.test_experience(me), exp_before + reward.amount as u64);
+    } else if reward.item == world.data.gold_item {
+        assert_eq!(world.test_gold(me), gold_before + reward.amount as u64);
+    } else if reward_def.item_type == 34 {
+        assert!(
+            world.test_currency_total(me) >= reward.amount as i64,
+            "currency reward credited"
+        );
+    } else {
+        assert!(
+            world.test_slot_of(me, reward.item).is_some(),
+            "reward item in the bag"
+        );
+    }
+    // Requirement HaveNotCompleted now blocks a second run.
+    assert!(!world.test_npc_quests(me, npc).iter().any(|q| q.quest == 9));
+}

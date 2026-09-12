@@ -24,6 +24,7 @@ pub struct NpcDialog {
     pub dialog_type: i32,
     pub goods: Vec<Good>,
     pub sell_types: Vec<u8>,
+    pub quests: Vec<mir_proto::NpcQuest>,
     pub selected_good: Option<usize>,
     pub last_button: u64,
     /// First visible goods row (Zircon scrolls by pixels; we scroll by rows).
@@ -38,6 +39,7 @@ impl NpcDialog {
         dialog_type: i32,
         goods: Vec<Good>,
         sell_types: Vec<u8>,
+        quests: Vec<mir_proto::NpcQuest>,
     ) -> NpcDialog {
         NpcDialog {
             npc,
@@ -46,6 +48,7 @@ impl NpcDialog {
             dialog_type,
             goods,
             sell_types,
+            quests,
             selected_good: None,
             last_button: 0,
             goods_scroll: 0,
@@ -121,6 +124,8 @@ pub struct WindowState {
     pub inventory_open: bool,
     pub character_open: bool,
     pub skills_open: bool,
+    pub quests_open: bool,
+    pub quest_scroll: f32,
     /// The belt is shown by default (Zircon `BeltDialog`, toggled with Z).
     pub belt_open: bool,
     /// Bag slot under the mouse this frame (for belt binding with digit keys).
@@ -145,6 +150,8 @@ impl Default for WindowState {
             inventory_open: false,
             character_open: false,
             skills_open: false,
+            quests_open: false,
+            quest_scroll: 0.0,
             belt_open: true,
             hover_inventory: None,
             revive_button: None,
@@ -174,6 +181,8 @@ pub struct Bag<'a> {
     pub belt: &'a [BeltLink],
     pub use_item_time: u64,
     pub dead: bool,
+    pub quests: &'a [mir_proto::UserQuestSummary],
+    pub player_name: &'a str,
 }
 
 /// The few player facts windows need.
@@ -342,13 +351,122 @@ impl WindowState {
         self.hover_inventory = None;
         let _ = height;
 
+        // ---- Quest log (L) ----
+        if self.quests_open {
+            let win = Rect::new(width as f32 - 380.0 - 10.0, 30.0, 380.0, 460.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+                self.quest_scroll = (self.quest_scroll - c.input.wheel * 18.0).max(0.0);
+            }
+            let closed = c.window(win, "Quests", false);
+            let mut entries: Vec<String> = Vec::new();
+            let mut colors: Vec<[u8; 4]> = Vec::new();
+            let mut push = |text: String, col: [u8; 4]| {
+                entries.push(text);
+                colors.push(col);
+            };
+            if bag.quests.is_empty() {
+                push(
+                    "No quests. Talk to NPCs to find some.".into(),
+                    [200, 200, 200, 255],
+                );
+            }
+            let mut sorted: Vec<&mir_proto::UserQuestSummary> = bag.quests.iter().collect();
+            sorted.sort_by_key(|q| (q.completed, q.quest));
+            for q in sorted {
+                let Some(def) = bag.catalog.quest(q.quest) else {
+                    continue;
+                };
+                let title_col = if q.completed {
+                    [120, 120, 120, 255]
+                } else {
+                    [255, 255, 0, 255]
+                };
+                push(
+                    format!("{}{}", def.name, if q.completed { " (done)" } else { "" }),
+                    title_col,
+                );
+                let text = if q.completed {
+                    bag.catalog
+                        .quest_text(def, &def.completed_text, bag.player_name)
+                } else {
+                    bag.catalog
+                        .quest_text(def, &def.progress_text, bag.player_name)
+                };
+                for line in wrap_text(c, &text, 340.0, 12) {
+                    push(line, [220, 220, 220, 255]);
+                }
+                if !q.completed {
+                    for t in &def.tasks {
+                        let have = q
+                            .tasks
+                            .iter()
+                            .find(|(ti, _)| *ti == t.index)
+                            .map(|(_, a)| *a)
+                            .unwrap_or(0);
+                        let what = if !t.description.is_empty() {
+                            t.description.clone()
+                        } else if t.item != 0 {
+                            bag.catalog.name(t.item)
+                        } else {
+                            match t.task {
+                                2 => "Visit the area".to_string(),
+                                _ => "Kills".to_string(),
+                            }
+                        };
+                        let col = if have >= t.amount {
+                            [80, 255, 80, 255]
+                        } else {
+                            [255, 200, 120, 255]
+                        };
+                        push(format!("  {what}: {have}/{}", t.amount), col);
+                    }
+                    let rewards: Vec<String> = def
+                        .rewards
+                        .iter()
+                        .filter(|r| r.class & (1 << bag.stats.class) != 0)
+                        .map(|r| {
+                            format!(
+                                "{}{} x{}",
+                                if r.choice { "(choice) " } else { "" },
+                                bag.catalog.name(r.item),
+                                r.amount
+                            )
+                        })
+                        .collect();
+                    if !rewards.is_empty() {
+                        push(
+                            format!("  Reward: {}", rewards.join(", ")),
+                            [160, 200, 255, 255],
+                        );
+                    }
+                }
+                push(String::new(), [0, 0, 0, 0]);
+            }
+            let max_scroll = (entries.len() as f32 * 18.0 - 400.0).max(0.0);
+            self.quest_scroll = self.quest_scroll.min(max_scroll);
+            let top = win.y + 40.0;
+            for (i, (line, col)) in entries.iter().zip(&colors).enumerate() {
+                let y = top + i as f32 * 18.0 - self.quest_scroll;
+                if y < top - 1.0 || y + 18.0 > win.y + win.h - 10.0 {
+                    continue;
+                }
+                if !line.is_empty() {
+                    c.text.draw(line, 12, win.x + 20.0, y, *col);
+                }
+            }
+            if closed {
+                self.quests_open = false;
+            }
+        }
+
         // ---- NPC dialog (top-left, Zircon chrome 380/381/382) ----
         let mut npc_height = 0.0;
         if let Some(d) = &mut self.npc {
             // Lay out text to find the needed height.
             let text_w = 350.0;
             let (lines, _) = layout_parts(c, &d.parts, text_w);
-            let text_h = lines.len() as f32 * 18.0;
+            let text_h = (lines.len() + d.quests.len()) as f32 * 18.0;
             let overflow = text_h - 140.0 - 64.0 + 35.0 + 45.0;
             let rows = if overflow > 0.0 {
                 ((overflow / 20.0) as usize).min(6)
@@ -396,6 +514,47 @@ impl WindowState {
                         None => c.text.draw(word, 13, x, y, [255, 255, 255, 255]),
                     }
                     x += w;
+                }
+                y += 18.0;
+            }
+            // Quest lines (Zircon shows them as links under the text).
+            for q in &d.quests {
+                let (label, col) = match q.state {
+                    0 => (format!("[Accept] {}", q.name), [255, 255, 0, 255]),
+                    2 => (format!("[Complete] {}", q.name), [80, 255, 80, 255]),
+                    _ => (format!("(In progress) {}", q.name), [180, 180, 180, 255]),
+                };
+                let w = c.text.width(&label, 13);
+                let hit = Rect::new(15.0, y, w, 18.0).contains(mouse.0, mouse.1);
+                let col = if hit && q.state != 1 {
+                    [255, 60, 60, 255]
+                } else {
+                    col
+                };
+                c.text.draw(&label, 13, 15.0, y, col);
+                if hit && c.input.lmb_released && c.now >= d.last_button + 300 {
+                    d.last_button = c.now;
+                    match q.state {
+                        0 => out.push(ClientMessage::QuestAccept { quest: q.quest }),
+                        2 => {
+                            // First reward that offers a choice for this class, if any.
+                            let choice = bag
+                                .catalog
+                                .quest(q.quest)
+                                .and_then(|def| {
+                                    def.rewards
+                                        .iter()
+                                        .find(|r| r.choice && r.class & (1 << bag.stats.class) != 0)
+                                        .map(|r| r.index)
+                                })
+                                .unwrap_or(0);
+                            out.push(ClientMessage::QuestComplete {
+                                quest: q.quest,
+                                choice,
+                            });
+                        }
+                        _ => {}
+                    }
                 }
                 y += 18.0;
             }
@@ -1141,4 +1300,27 @@ fn layout_parts(c: &mut Ctx, parts: &[DialogPart], max_w: f32) -> (Vec<Line>, f3
         }
     }
     (lines, max_w)
+}
+
+/// Greedy word wrap at `max_w` pixels for `size` text.
+fn wrap_text(c: &mut Ctx, text: &str, max_w: f32, size: u32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let candidate = if current.is_empty() {
+            word.to_string()
+        } else {
+            format!("{current} {word}")
+        };
+        if c.text.width(&candidate, size) > max_w && !current.is_empty() {
+            lines.push(std::mem::take(&mut current));
+            current = word.to_string();
+        } else {
+            current = candidate;
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }

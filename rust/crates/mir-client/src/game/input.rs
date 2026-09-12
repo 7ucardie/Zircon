@@ -62,6 +62,7 @@ impl Game {
                 'q' | 'c' => self.windows.character_open = !self.windows.character_open,
                 'e' | 's' => self.windows.skills_open = !self.windows.skills_open,
                 'z' => self.windows.belt_open = !self.windows.belt_open,
+                'l' => self.windows.quests_open = !self.windows.quests_open,
                 _ => {}
             }
         }

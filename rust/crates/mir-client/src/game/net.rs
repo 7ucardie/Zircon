@@ -215,6 +215,33 @@ impl Game {
                 }
             }
             ServerMessage::Magics(list) => self.magics = list,
+            ServerMessage::QuestList(list) => self.quests = list,
+            ServerMessage::QuestChanged(q) => {
+                let was_done = self
+                    .quests
+                    .iter()
+                    .find(|x| x.quest == q.quest)
+                    .map(|x| x.completed)
+                    .unwrap_or(false);
+                let name = self
+                    .catalog
+                    .quest(q.quest)
+                    .map(|d| d.name.clone())
+                    .unwrap_or_else(|| format!("Quest {}", q.quest));
+                let text = if q.completed && !was_done {
+                    format!("Quest completed: {name}")
+                } else if !self.quests.iter().any(|x| x.quest == q.quest) {
+                    format!("Quest accepted: {name}")
+                } else {
+                    format!("Quest updated: {name}")
+                };
+                match self.quests.iter_mut().find(|x| x.quest == q.quest) {
+                    Some(x) => *x = q,
+                    None => self.quests.push(q),
+                }
+                self.say(text, now);
+            }
+            ServerMessage::QuestCancelled { quest } => self.quests.retain(|q| q.quest != quest),
             ServerMessage::BeltLinks(links) => {
                 for l in links {
                     if let Some(slot) = self.belt.get_mut(l.slot as usize) {
@@ -483,6 +510,7 @@ impl Game {
                 dialog_type,
                 goods,
                 sell_types,
+                quests,
             } => {
                 self.windows.npc = Some(NpcDialog::new(
                     npc,
@@ -491,6 +519,7 @@ impl Game {
                     dialog_type,
                     goods,
                     sell_types,
+                    quests,
                 ));
             }
             ServerMessage::NpcClose => self.windows.npc = None,

@@ -271,6 +271,7 @@ pub struct PlayerData {
     pub rebirth: i32,
     /// Zircon `NPCVals["ROLLRESULT"]`.
     pub npc_roll: Option<i32>,
+    pub quests: Vec<crate::accounts::StoredQuest>,
 }
 
 /// Zircon `GameNPCList` rows: named lists/values NPC scripts read and write,
@@ -602,6 +603,7 @@ mod monster_ai;
 mod movement;
 mod npc;
 mod player;
+mod quests;
 mod skills;
 mod spawn;
 mod spells;

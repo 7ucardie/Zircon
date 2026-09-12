@@ -26,6 +26,7 @@ impl Game {
                 input,
                 character,
                 magics,
+                quests,
                 toggles,
                 cooldowns,
                 belt,
@@ -34,6 +35,10 @@ impl Game {
                 user,
                 ..
             } = self;
+            let player_name = character
+                .as_ref()
+                .map(|c| c.name.clone())
+                .unwrap_or_default();
             let dead = user
                 .and_then(|u| objects.get(&u))
                 .map(|o| o.dead)
@@ -73,6 +78,8 @@ impl Game {
                 belt,
                 use_item_time: *use_item_time,
                 dead,
+                quests,
+                player_name: &player_name,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -247,7 +254,7 @@ impl Game {
         if self.debug {
             let (pages, sprites) = renderer.stats();
             let dbg = format!(
-                "{} | {:.0} fps | {} objects | {} sprites / {} pages | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, Z belt, ` hide",
+                "{} | {:.0} fps | {} objects | {} sprites / {} pages | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, L quests, Z belt, ` hide",
                 self.status,
                 fps,
                 self.objects.len(),

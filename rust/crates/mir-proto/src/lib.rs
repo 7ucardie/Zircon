@@ -318,6 +318,26 @@ pub struct Good {
     pub price: u64,
 }
 
+/// A quest an NPC can start or finish for the player (Zircon quest lines
+/// in the dialog). `state`: 0 available, 1 in progress, 2 ready to complete.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NpcQuest {
+    pub quest: i32,
+    pub name: String,
+    pub state: u8,
+}
+
+/// Zircon `ClientUserQuest`: one entry of the quest log.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UserQuestSummary {
+    pub quest: i32,
+    pub track: bool,
+    pub completed: bool,
+    pub selected_reward: i32,
+    /// `(QuestTask index, amount)`.
+    pub tasks: Vec<(i32, i32)>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Weights {
     pub bag: i32,
@@ -953,6 +973,21 @@ pub enum ClientMessage {
     StartGame {
         id: u32,
     },
+    QuestAccept {
+        quest: i32,
+    },
+    QuestComplete {
+        quest: i32,
+        /// `QuestReward` index when the quest offers a choice.
+        choice: i32,
+    },
+    QuestTrack {
+        quest: i32,
+        track: bool,
+    },
+    QuestAbandon {
+        quest: i32,
+    },
     /// Leave the map and return to the character list.
     Logout,
     Turn {
@@ -1225,8 +1260,16 @@ pub enum ServerMessage {
         goods: Vec<Good>,
         /// Item types this shop buys.
         sell_types: Vec<u8>,
+        /// Quests this NPC starts or finishes for the player.
+        quests: Vec<NpcQuest>,
     },
     NpcClose,
+    /// The whole quest log on entering the world.
+    QuestList(Vec<UserQuestSummary>),
+    QuestChanged(UserQuestSummary),
+    QuestCancelled {
+        quest: i32,
+    },
     Chat {
         text: String,
     },

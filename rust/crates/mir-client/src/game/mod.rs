@@ -70,6 +70,8 @@ pub struct Game {
     windows_open_last_frame: bool,
     pending_messages: Vec<ClientMessage>,
     magics: Vec<MagicSummary>,
+    /// Quest log (Zircon `ClientUserQuest`).
+    quests: Vec<mir_proto::UserQuestSummary>,
     /// Stance skills currently on (Thrusting, Half Moon).
     toggles: HashSet<u16>,
     /// Slaying's power attack is charged.
@@ -183,6 +185,7 @@ impl Game {
             windows_open_last_frame: false,
             pending_messages: Vec::new(),
             magics: Vec::new(),
+            quests: Vec::new(),
             toggles: HashSet::new(),
             slaying_ready: false,
             cooldowns: StdHashMap::new(),
