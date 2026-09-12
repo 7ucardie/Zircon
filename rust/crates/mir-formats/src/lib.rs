@@ -1,9 +1,12 @@
-//! Readers for the Legend of Mir 3 "Zircon" asset formats.
+//! Readers and writers for the Legend of Mir 3 "Zircon" asset formats.
 //!
 //! - [`zl`]: `.Zl` sprite libraries (DXT-compressed images with offsets and shadows)
 //! - [`map`]: `.map` tile maps (48x32 cell grid, three tile layers, walk flags)
 //! - [`mirdb`]: `System.db` static game content written by the C# MirDB ORM
 //! - [`dxt`]: DXT1/DXT5 block decoders
+//!
+//! `.map` and MirDB files round-trip byte for byte through their `parse` /
+//! `to_bytes` pairs; `save` writes a timestamped backup first.
 
 pub mod dxt;
 pub mod map;
@@ -48,13 +51,6 @@ impl<'a> Cursor<'a> {
     }
     pub fn seek(&mut self, pos: usize) {
         self.pos = pos;
-    }
-    pub fn skip(&mut self, n: usize) -> Result<()> {
-        if self.pos + n > self.data.len() {
-            return Err(FormatError::Eof(self.pos));
-        }
-        self.pos += n;
-        Ok(())
     }
     pub fn bytes(&mut self, n: usize) -> Result<&'a [u8]> {
         if self.pos + n > self.data.len() {
@@ -121,5 +117,113 @@ impl<'a> Cursor<'a> {
         let len = self.varint()? as usize;
         let b = self.bytes(len)?;
         Ok(String::from_utf8_lossy(b).into_owned())
+    }
+}
+
+/// Little-endian byte builder mirroring [`Cursor`].
+#[derive(Default)]
+pub(crate) struct Writer {
+    pub data: Vec<u8>,
+}
+
+impl Writer {
+    pub fn u8(&mut self, v: u8) {
+        self.data.push(v);
+    }
+    pub fn i8(&mut self, v: i8) {
+        self.u8(v as u8);
+    }
+    pub fn bool(&mut self, v: bool) {
+        self.u8(v as u8);
+    }
+    pub fn u16(&mut self, v: u16) {
+        self.data.extend_from_slice(&v.to_le_bytes());
+    }
+    pub fn i16(&mut self, v: i16) {
+        self.u16(v as u16);
+    }
+    pub fn u32(&mut self, v: u32) {
+        self.data.extend_from_slice(&v.to_le_bytes());
+    }
+    pub fn i32(&mut self, v: i32) {
+        self.u32(v as u32);
+    }
+    pub fn u64(&mut self, v: u64) {
+        self.data.extend_from_slice(&v.to_le_bytes());
+    }
+    pub fn i64(&mut self, v: i64) {
+        self.u64(v as u64);
+    }
+    pub fn f32(&mut self, v: f32) {
+        self.u32(v.to_bits());
+    }
+    pub fn f64(&mut self, v: f64) {
+        self.u64(v.to_bits());
+    }
+    pub fn bytes(&mut self, b: &[u8]) {
+        self.data.extend_from_slice(b);
+    }
+    /// .NET BinaryWriter 7-bit encoded int.
+    pub fn varint(&mut self, mut v: u32) {
+        while v >= 0x80 {
+            self.u8((v as u8) | 0x80);
+            v >>= 7;
+        }
+        self.u8(v as u8);
+    }
+    /// .NET BinaryWriter string: 7-bit byte length, UTF-8 bytes.
+    pub fn string(&mut self, s: &str) {
+        self.varint(s.len() as u32);
+        self.bytes(s.as_bytes());
+    }
+}
+
+/// Write `bytes` to `path`, first copying an existing file to
+/// `<path>.bak-<unix seconds>` so a bad save is one rename away from undone.
+/// Returns the backup path when one was made.
+pub fn save_with_backup(
+    path: impl AsRef<std::path::Path>,
+    bytes: &[u8],
+) -> Result<Option<std::path::PathBuf>> {
+    let path = path.as_ref();
+    let backup = if path.exists() {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let name = format!(
+            "{}.bak-{stamp}",
+            path.file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        );
+        let bak = path.with_file_name(name);
+        std::fs::copy(path, &bak)?;
+        Some(bak)
+    } else {
+        None
+    };
+    let tmp = path.with_extension("tmp-save");
+    std::fs::write(&tmp, bytes)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(backup)
+}
+
+#[cfg(test)]
+mod writer_tests {
+    use super::*;
+
+    #[test]
+    fn varint_and_string_round_trip() {
+        let mut w = Writer::default();
+        for v in [0u32, 1, 127, 128, 300, 16_383, 16_384, 1 << 30] {
+            w.varint(v);
+        }
+        w.string("héllo");
+        let mut c = Cursor::new(&w.data);
+        for v in [0u32, 1, 127, 128, 300, 16_383, 16_384, 1 << 30] {
+            assert_eq!(c.varint().unwrap(), v);
+        }
+        assert_eq!(c.string().unwrap(), "héllo");
     }
 }

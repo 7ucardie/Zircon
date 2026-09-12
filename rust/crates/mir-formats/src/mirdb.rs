@@ -1,4 +1,4 @@
-//! Reader for Zircon's MirDB files (`System.db`).
+//! Reader and writer for Zircon's MirDB files (`System.db`).
 //!
 //! The format is self-describing:
 //! ```text
@@ -15,7 +15,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::{Cursor, FormatError, Result};
+use crate::{Cursor, FormatError, Result, Writer};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -93,7 +93,10 @@ pub struct Property {
 
 #[derive(Debug, Clone)]
 pub struct Mapping {
+    /// Normalised type name (`Library.SystemModels.*`).
     pub type_name: String,
+    /// The name exactly as stored in the file, written back on save.
+    pub stored_type_name: String,
     pub properties: Vec<Property>,
 }
 
@@ -197,7 +200,8 @@ impl MirDb {
         }
         let mut mappings = Vec::with_capacity(mapping_count as usize);
         for _ in 0..mapping_count {
-            let mut type_name = c.string()?;
+            let stored_type_name = c.string()?;
+            let mut type_name = stored_type_name.clone();
             if type_name.contains("Server.DBModels") {
                 type_name = type_name.replace("Server.DBModels", "Library.SystemModels");
             }
@@ -210,6 +214,7 @@ impl MirDb {
             }
             mappings.push(Mapping {
                 type_name,
+                stored_type_name,
                 properties,
             });
         }
@@ -257,6 +262,217 @@ impl MirDb {
         self.collections
             .iter()
             .find(|c| c.short_name() == short_name)
+    }
+
+    pub fn collection_mut(&mut self, short_name: &str) -> Option<&mut Collection> {
+        self.collections
+            .iter_mut()
+            .find(|c| c.short_name() == short_name)
+    }
+
+    /// Re-encode the database; `parse(to_bytes())` is byte-identical for a
+    /// file the C# ORM wrote.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut out = Writer::default();
+        out.i32(self.collections.len() as i32);
+        for c in &self.collections {
+            out.string(&c.mapping.stored_type_name);
+            out.i32(c.mapping.properties.len() as i32);
+            for p in &c.mapping.properties {
+                out.string(&p.name);
+                out.string(&p.type_name);
+            }
+        }
+        for c in &self.collections {
+            let mut blob = Writer::default();
+            blob.i32(c.next_index);
+            blob.i32(c.records.len() as i32);
+            for r in &c.records {
+                if r.values.len() != c.mapping.properties.len() {
+                    return Err(FormatError::Other(format!(
+                        "{}: record has {} values for {} properties",
+                        c.mapping.type_name,
+                        r.values.len(),
+                        c.mapping.properties.len()
+                    )));
+                }
+                let mut raw = Writer::default();
+                for (p, v) in c.mapping.properties.iter().zip(&r.values) {
+                    write_value(&mut raw, &p.type_name, v).map_err(|e| {
+                        FormatError::Other(format!(
+                            "{}.{} ({}): {e}",
+                            c.mapping.type_name, p.name, p.type_name
+                        ))
+                    })?;
+                }
+                blob.i32(raw.data.len() as i32);
+                blob.bytes(&raw.data);
+            }
+            out.i32(blob.data.len() as i32);
+            out.bytes(&blob.data);
+        }
+        Ok(out.data)
+    }
+
+    /// Save with a timestamped backup of the previous file.
+    pub fn save(&self, path: impl AsRef<Path>) -> Result<Option<std::path::PathBuf>> {
+        crate::save_with_backup(path, &self.to_bytes()?)
+    }
+}
+
+fn type_mismatch(type_name: &str, v: &Value) -> FormatError {
+    FormatError::Other(format!("cannot store {v:?} as {type_name}"))
+}
+
+fn write_value(w: &mut Writer, type_name: &str, v: &Value) -> Result<()> {
+    match (type_name, v) {
+        ("System.Boolean", Value::Bool(b)) => w.bool(*b),
+        ("System.Byte", _) => w.u8(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))? as u8),
+        ("System.SByte", _) => w.i8(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))? as i8),
+        ("System.Int16", _) => w.i16(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))? as i16),
+        ("System.UInt16", _) => {
+            w.u16(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))? as u16)
+        }
+        ("System.Int32", _) => w.i32(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))? as i32),
+        ("System.UInt32", _) => {
+            w.u32(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))? as u32)
+        }
+        ("System.Int64", _) => w.i64(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))?),
+        ("System.UInt64", _) => {
+            w.u64(v.as_i64().ok_or_else(|| type_mismatch(type_name, v))? as u64)
+        }
+        ("System.Single", Value::Float(f)) => w.f32(*f as f32),
+        ("System.Single", _) => {
+            w.f32(v.as_f64().ok_or_else(|| type_mismatch(type_name, v))? as f32)
+        }
+        ("System.Double", Value::Float(f)) => w.f64(*f),
+        ("System.Double", _) => w.f64(v.as_f64().ok_or_else(|| type_mismatch(type_name, v))?),
+        ("System.Decimal", Value::Decimal(lo, mid, hi, flags)) => {
+            w.u32(*lo);
+            w.u32(*mid);
+            w.u32(*hi);
+            w.u32(*flags);
+        }
+        ("System.Char", Value::Str(s)) => {
+            let ch = s.chars().next().unwrap_or('\0');
+            let mut buf = [0u8; 4];
+            w.bytes(ch.encode_utf8(&mut buf).as_bytes());
+        }
+        ("System.String", Value::Str(s)) => w.string(s),
+        ("System.DateTime", Value::DateTime(t)) => w.i64(*t),
+        ("System.TimeSpan", Value::TimeSpan(t)) => w.i64(*t),
+        ("System.Drawing.Point", Value::Point(x, y)) => {
+            w.i32(*x);
+            w.i32(*y);
+        }
+        ("System.Drawing.Size", Value::Size(x, y)) => {
+            w.i32(*x);
+            w.i32(*y);
+        }
+        ("System.Drawing.Color", Value::Color(c)) => w.u32(*c),
+        ("System.Byte[]", Value::Bytes(b)) => {
+            w.i32(b.len() as i32);
+            w.bytes(b);
+        }
+        ("System.Int32[]", Value::IntArray(a)) => match a {
+            None => w.bool(false),
+            Some(a) => {
+                w.bool(true);
+                w.i32(a.len() as i32);
+                for v in a {
+                    w.i32(*v);
+                }
+            }
+        },
+        ("System.Drawing.Point[]", Value::PointArray(a)) => match a {
+            None => w.bool(false),
+            Some(a) => {
+                w.bool(true);
+                w.i32(a.len() as i32);
+                for (x, y) in a {
+                    w.i32(*x);
+                    w.i32(*y);
+                }
+            }
+        },
+        ("System.Collections.BitArray", Value::BitArray(a)) => match a {
+            None => w.bool(false),
+            Some(a) => {
+                w.bool(true);
+                w.i32(a.len() as i32);
+                w.bytes(a);
+            }
+        },
+        ("Library.Stats", Value::Stats(a)) => match a {
+            None => w.bool(false),
+            Some(a) => {
+                w.bool(true);
+                w.i32(a.len() as i32);
+                for (k, v) in a {
+                    w.i32(*k);
+                    w.i32(*v);
+                }
+            }
+        },
+        _ => return Err(type_mismatch(type_name, v)),
+    }
+    Ok(())
+}
+
+impl Collection {
+    /// Set a property on a record by name; false when the property is unknown.
+    pub fn set(&self, record: &mut Record, name: &str, value: Value) -> bool {
+        match self.property_index(name) {
+            Some(i) if i < record.values.len() => {
+                record.values[i] = value;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Append a record whose `Index` is the collection's next index (like the
+    /// C# ORM); other values come from `values` (missing ones default).
+    pub fn push_record(&mut self, values: Vec<(&str, Value)>) -> i32 {
+        let index = self.next_index;
+        self.next_index += 1;
+        let mut record = Record {
+            values: self
+                .mapping
+                .properties
+                .iter()
+                .map(|p| default_value(&p.type_name))
+                .collect(),
+        };
+        self.set(&mut record, "Index", Value::Int(index as i64));
+        for (name, v) in values {
+            self.set(&mut record, name, v);
+        }
+        self.records.push(record);
+        index
+    }
+}
+
+/// The value an unset property gets (mirrors .NET defaults).
+pub fn default_value(type_name: &str) -> Value {
+    match type_name {
+        "System.Boolean" => Value::Bool(false),
+        "System.Byte" | "System.UInt16" | "System.UInt32" | "System.UInt64" => Value::UInt(0),
+        "System.SByte" | "System.Int16" | "System.Int32" | "System.Int64" => Value::Int(0),
+        "System.Single" | "System.Double" => Value::Float(0.0),
+        "System.Decimal" => Value::Decimal(0, 0, 0, 0),
+        "System.Char" | "System.String" => Value::Str(String::new()),
+        "System.DateTime" => Value::DateTime(0),
+        "System.TimeSpan" => Value::TimeSpan(0),
+        "System.Drawing.Point" => Value::Point(0, 0),
+        "System.Drawing.Size" => Value::Size(0, 0),
+        "System.Drawing.Color" => Value::Color(0),
+        "System.Byte[]" => Value::Bytes(Vec::new()),
+        "System.Int32[]" => Value::IntArray(None),
+        "System.Drawing.Point[]" => Value::PointArray(None),
+        "System.Collections.BitArray" => Value::BitArray(None),
+        "Library.Stats" => Value::Stats(None),
+        _ => Value::Int(0),
     }
 }
 
@@ -426,6 +642,59 @@ mod tests {
         // width 4: bits 1 and 6 -> (1,0) and (2,1)
         let bits = [0b0100_0010u8];
         assert_eq!(region_points(Some(&bits), None, 4), vec![(1, 0), (2, 1)]);
+    }
+
+    #[test]
+    fn system_db_round_trips_byte_identical() {
+        let Some(assets) = std::env::var_os("ZIRCON_ASSETS") else {
+            eprintln!("ZIRCON_ASSETS not set; skipping");
+            return;
+        };
+        let path = Path::new(&assets).join("../Database/System.db");
+        let data = std::fs::read(path).unwrap();
+        let db = MirDb::parse(&data).unwrap();
+        let back = db.to_bytes().unwrap();
+        assert_eq!(back.len(), data.len());
+        assert!(back == data, "System.db changed on round trip");
+    }
+
+    #[test]
+    fn edited_records_survive_a_save() {
+        let Some(assets) = std::env::var_os("ZIRCON_ASSETS") else {
+            eprintln!("ZIRCON_ASSETS not set; skipping");
+            return;
+        };
+        let path = Path::new(&assets).join("../Database/System.db");
+        let mut db = MirDb::load(path).unwrap();
+        let items = db.collection_mut("ItemInfo").unwrap();
+        let mut first = items.records[0].clone();
+        assert!(items.set(&mut first, "Price", Value::Int(12_345)));
+        items.records[0] = first;
+        let new_index = items.push_record(vec![
+            ("ItemName", Value::Str("Test Blade".into())),
+            ("Price", Value::Int(7)),
+        ]);
+        let bytes = db.to_bytes().unwrap();
+        let again = MirDb::parse(&bytes).unwrap();
+        let items = again.collection("ItemInfo").unwrap();
+        assert_eq!(items.int_or(&items.records[0], "Price", 0), 12_345);
+        let added = items.records.last().unwrap();
+        assert_eq!(items.index(added), new_index);
+        assert_eq!(items.str_or(added, "ItemName", ""), "Test Blade");
+        assert_eq!(items.next_index, new_index + 1);
+    }
+
+    #[test]
+    fn save_makes_a_backup() {
+        let dir = std::env::temp_dir().join(format!("mirdb-save-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("x.map");
+        let m = crate::MapFile::blank(4, 4);
+        assert!(m.save(&path).unwrap().is_none());
+        let bak = m.save(&path).unwrap().expect("a backup on overwrite");
+        assert!(bak.exists());
+        assert_eq!(std::fs::read(&bak).unwrap(), m.to_bytes());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

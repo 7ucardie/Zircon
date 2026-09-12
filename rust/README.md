@@ -128,6 +128,14 @@ spawn table without opening a port. `--map <file>` forces a start map.
 `ZIRCON_SEED=n` seeds the server's random rolls (the tests use a fixed seed and
 ordered object maps, so a failing roll reproduces).
 
+## Editing content
+
+`mir-formats` now writes as well as reads: `MirDb::save`, `MapFile::save` and
+`ZlBuilder::save` re-encode `System.db`, `.map` and `.Zl` files (the shipped
+files round-trip byte for byte in the tests) and leave a `.bak-<timestamp>`
+copy of the previous file. New sprites go in through `ZlBuilder::push_rgba`
+(DXT1/DXT5 encoding). The editor itself is planned in `docs/EDITOR_PLAN.md`.
+
 ## Docker
 
 ```

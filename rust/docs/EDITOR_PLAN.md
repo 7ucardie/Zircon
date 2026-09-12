@@ -1,6 +1,7 @@
 # Editor and content-generation plan
 
-Status: proposal (2026-09-12). Nothing below exists yet in `rust/`.
+Status: Phase 1 (writers) landed 2026-09-12 in `mir-formats`; phases 2-4 are
+proposals.
 
 ## What exists today
 
@@ -23,7 +24,16 @@ consumes: `System.db` records, `.map` tiles/flags, `.Zl` sprites, and can
 generate new content (maps, monsters, items) with procedural generators and
 AI assistance, always validating against the game's rules before saving.
 
-## Phase 1: writers (foundation)
+## Phase 1: writers (foundation) — done
+
+Landed: `MirDb::to_bytes/save` (byte-identical on the shipped `System.db`),
+`Collection::set/push_record`, `MapFile::to_bytes/save/blank/cell_mut` with
+raw-byte retention (all 248 shipped maps byte-identical), `dxt::encode`
+(DXT1 with 1-bit alpha, DXT5) and `ZlBuilder` (raw copy of existing images
+plus `push_rgba` import; small shipped libraries byte-identical), and
+`save_with_backup` writing `<file>.bak-<unix seconds>` before every save.
+
+Original plan:
 
 1. `mir-formats::mirdb` write support. `System.db` is self-describing (type
    mapping, then per-collection `next_index`, `count`, and raw records), so a

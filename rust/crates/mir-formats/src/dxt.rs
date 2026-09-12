@@ -1,4 +1,4 @@
-//! CPU decoders for DXT1 (BC1) and DXT5 (BC3) block-compressed images.
+//! CPU decoders and encoders for DXT1 (BC1) and DXT5 (BC3) block-compressed images.
 //!
 //! The `.Zl` libraries store every sprite as raw DXT blocks. Decoding on the CPU
 //! keeps the GPU side format-agnostic (plain RGBA8 textures everywhere) and the
@@ -140,6 +140,178 @@ pub fn decode(data: &[u8], width: u32, height: u32, dxt5: bool) -> Vec<u8> {
     out
 }
 
+/// Pack 8-bit RGB into 5:6:5.
+#[inline]
+fn to565(p: [u8; 3]) -> u16 {
+    (((p[0] as u16) >> 3) << 11) | (((p[1] as u16) >> 2) << 5) | ((p[2] as u16) >> 3)
+}
+
+fn dist(a: [u8; 3], b: [u8; 3]) -> u32 {
+    (0..3)
+        .map(|i| {
+            let d = a[i] as i32 - b[i] as i32;
+            (d * d) as u32
+        })
+        .sum()
+}
+
+/// Encode 16 RGBA pixels as one DXT1 colour block. With `one_bit_alpha`,
+/// pixels below 50 % alpha use the transparent palette entry (3-colour mode).
+/// Endpoints are the bounding box of the opaque colours; good enough for
+/// sprites and fully deterministic.
+fn encode_bc1_block(px: &[[u8; 4]; 16], out: &mut [u8; 8], one_bit_alpha: bool) {
+    let opaque: Vec<[u8; 3]> = px
+        .iter()
+        .filter(|p| !one_bit_alpha || p[3] >= 128)
+        .map(|p| [p[0], p[1], p[2]])
+        .collect();
+    let transparent = one_bit_alpha && opaque.len() < 16;
+    let (lo, hi) = if opaque.is_empty() {
+        ([0, 0, 0], [0, 0, 0])
+    } else {
+        let mut lo = [255u8; 3];
+        let mut hi = [0u8; 3];
+        for c in &opaque {
+            for i in 0..3 {
+                lo[i] = lo[i].min(c[i]);
+                hi[i] = hi[i].max(c[i]);
+            }
+        }
+        (lo, hi)
+    };
+    let (mut c0, mut c1) = (to565(hi), to565(lo));
+    // Opaque blocks need c0 > c1 (4-colour mode); transparent ones c0 <= c1.
+    if transparent {
+        if c0 > c1 {
+            std::mem::swap(&mut c0, &mut c1);
+        }
+    } else if c0 < c1 {
+        std::mem::swap(&mut c0, &mut c1);
+    }
+    let p0 = rgb565(c0);
+    let p1 = rgb565(c1);
+    let mut palette = [[0u8; 3]; 4];
+    palette[0] = p0;
+    palette[1] = p1;
+    let colours = if c0 > c1 {
+        for i in 0..3 {
+            palette[2][i] = ((2 * p0[i] as u32 + p1[i] as u32) / 3) as u8;
+            palette[3][i] = ((p0[i] as u32 + 2 * p1[i] as u32) / 3) as u8;
+        }
+        4
+    } else {
+        for i in 0..3 {
+            palette[2][i] = ((p0[i] as u32 + p1[i] as u32) / 2) as u8;
+        }
+        3
+    };
+    let mut indices = 0u32;
+    for (i, p) in px.iter().enumerate() {
+        let idx = if transparent && p[3] < 128 {
+            3
+        } else {
+            let c = [p[0], p[1], p[2]];
+            (0..colours)
+                .min_by_key(|k| dist(palette[*k], c))
+                .unwrap_or(0) as u32
+        };
+        indices |= idx << (2 * i);
+    }
+    out[0..2].copy_from_slice(&c0.to_le_bytes());
+    out[2..4].copy_from_slice(&c1.to_le_bytes());
+    out[4..8].copy_from_slice(&indices.to_le_bytes());
+}
+
+/// Encode 16 RGBA pixels as one DXT5 block (8-alpha interpolation, 4-colour
+/// palette regardless of endpoint order).
+fn encode_bc3_block(px: &[[u8; 4]; 16], out: &mut [u8; 16]) {
+    let a_max = px.iter().map(|p| p[3]).max().unwrap_or(0);
+    let a_min = px.iter().map(|p| p[3]).min().unwrap_or(0);
+    // a0 > a1 selects the 8-step ramp; equal endpoints make every index 0.
+    let (a0, a1) = (a_max as u32, a_min as u32);
+    let mut alphas = [a0 as u8; 8];
+    if a0 > a1 {
+        alphas[1] = a1 as u8;
+        for i in 1..7 {
+            alphas[i + 1] = (((7 - i as u32) * a0 + i as u32 * a1) / 7) as u8;
+        }
+    }
+    let mut bits = 0u64;
+    for (i, p) in px.iter().enumerate() {
+        let idx = if a0 > a1 {
+            (0..8)
+                .min_by_key(|k| (alphas[*k] as i32 - p[3] as i32).abs())
+                .unwrap_or(0) as u64
+        } else {
+            0
+        };
+        bits |= idx << (3 * i);
+    }
+    out[0] = a0 as u8;
+    out[1] = a1 as u8;
+    for i in 0..6 {
+        out[2 + i] = (bits >> (8 * i)) as u8;
+    }
+    // Colour: opaque bounding box over every pixel (alpha lives in its own block).
+    let mut colour = [0u8; 8];
+    let mut solid = *px;
+    for p in &mut solid {
+        p[3] = 255;
+    }
+    encode_bc1_block(&solid, &mut colour, false);
+    out[8..16].copy_from_slice(&colour);
+}
+
+/// Encode tightly packed RGBA8 of `width` x `height` pixels as DXT1 or DXT5
+/// blocks covering the 4-aligned dimensions (the padding pixels are
+/// transparent black). Output is what [`decode`] expects.
+pub fn encode(rgba: &[u8], width: u32, height: u32, dxt5: bool) -> Vec<u8> {
+    let bw = width.div_ceil(4);
+    let bh = height.div_ceil(4);
+    let block_size = if dxt5 { 16 } else { 8 };
+    let mut out = vec![0u8; (bw * bh * block_size) as usize];
+    let mut pixels = [[0u8; 4]; 16];
+    for by in 0..bh {
+        for bx in 0..bw {
+            for py in 0..4 {
+                for px in 0..4 {
+                    let (x, y) = (bx * 4 + px, by * 4 + py);
+                    pixels[(py * 4 + px) as usize] = if x < width && y < height {
+                        let o = ((y * width + x) * 4) as usize;
+                        [rgba[o], rgba[o + 1], rgba[o + 2], rgba[o + 3]]
+                    } else {
+                        [0, 0, 0, 0]
+                    };
+                }
+            }
+            let offset = ((by * bw + bx) * block_size) as usize;
+            if dxt5 {
+                let mut block = [0u8; 16];
+                encode_bc3_block(&pixels, &mut block);
+                out[offset..offset + 16].copy_from_slice(&block);
+            } else {
+                let mut block = [0u8; 8];
+                encode_bc1_block(&pixels, &mut block, true);
+                out[offset..offset + 8].copy_from_slice(&block);
+            }
+        }
+    }
+    out
+}
+
+/// Mean absolute per-channel difference of two RGBA buffers (a quality gauge
+/// for lossy re-encoding).
+pub fn mean_abs_diff(a: &[u8], b: &[u8]) -> f64 {
+    if a.is_empty() || a.len() != b.len() {
+        return f64::INFINITY;
+    }
+    a.iter()
+        .zip(b)
+        .map(|(x, y)| (*x as i32 - *y as i32).unsigned_abs() as f64)
+        .sum::<f64>()
+        / a.len() as f64
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,5 +350,53 @@ mod tests {
         let px = decode(&block, 4, 4, true);
         assert_eq!(px[3], 0);
         assert_eq!(&px[0..3], &[255, 255, 255]);
+    }
+
+    fn gradient(w: u32, h: u32) -> Vec<u8> {
+        let mut v = Vec::with_capacity((w * h * 4) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                // Smooth shading with a sparse transparent pattern, like a sprite.
+                let a = if (x + y) % 7 == 0 {
+                    0
+                } else {
+                    255 - (x * 4) as u8
+                };
+                v.extend_from_slice(&[(x * 6) as u8, (y * 6) as u8, 128, a]);
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn dxt5_encode_decode_is_close() {
+        let (w, h) = (12, 8);
+        let src = gradient(w, h);
+        let enc = encode(&src, w, h, true);
+        assert_eq!(enc.len(), 3 * 2 * 16);
+        let dec = decode(&enc, w, h, true);
+        assert!(
+            mean_abs_diff(&src, &dec) < 6.0,
+            "{}",
+            mean_abs_diff(&src, &dec)
+        );
+        // Fully transparent pixels stay fully transparent.
+        assert_eq!(dec[3], src[3]);
+    }
+
+    #[test]
+    fn dxt1_encode_keeps_one_bit_alpha() {
+        let (w, h) = (8, 4);
+        let src = gradient(w, h);
+        let enc = encode(&src, w, h, false);
+        assert_eq!(enc.len(), 2 * 8);
+        let dec = decode(&enc, w, h, false);
+        for i in 0..(w * h) as usize {
+            let (sa, da) = (src[i * 4 + 3], dec[i * 4 + 3]);
+            assert_eq!(sa >= 128, da == 255, "pixel {i}");
+        }
+        let solid = [10u8, 200, 30, 255].repeat(16);
+        let dec = decode(&encode(&solid, 4, 4, false), 4, 4, false);
+        assert!(mean_abs_diff(&solid, &dec) < 3.0);
     }
 }
