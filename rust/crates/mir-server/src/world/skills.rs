@@ -29,6 +29,10 @@ impl World {
             magic_type::HALF_MOON => p.half_moon_on = on,
             magic_type::DESTRUCTIVE_SURGE => p.surge_on = on,
             magic_type::FLAME_SPLASH => p.flame_splash_on = on,
+            magic_type::DEMONIC_RECOVERY => {
+                self.demonic_recovery(id);
+                return;
+            }
             m if magic_type::is_charge(m) => {
                 self.charge_toggle(id, m);
                 return;

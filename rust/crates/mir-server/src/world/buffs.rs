@@ -84,6 +84,8 @@ impl World {
         let mut expired = Vec::new();
         let mut drains = Vec::new();
         let mut conversions = Vec::new();
+        let mut repulses = Vec::new();
+        let mut swords = Vec::new();
         for o in self.players() {
             if let Some(p) = o.player() {
                 for b in &p.buffs {
@@ -96,6 +98,10 @@ impl World {
                         } else {
                             drains.push((o.id, b.stats.cloak_damage));
                         }
+                    } else if b.kind == buff_type::DRAGON_REPULSE && now >= b.tick_at {
+                        repulses.push((o.id, b.stats.pool));
+                    } else if b.kind == buff_type::ELEMENTAL_SWORDS && now >= b.tick_at {
+                        swords.push((o.id, b.stats.pool));
                     } else if b.kind == buff_type::DARK_CONVERSION && now >= b.tick_at {
                         // Dark Conversion: MP into twice the HP every 2 s.
                         if b.stats.pool > p.mp {
@@ -123,6 +129,38 @@ impl World {
                 .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
             let stats = self.player_stats(&self.objects[&id]);
             self.send_to(id, ServerMessage::StatsChanged(stats));
+        }
+        for (id, power) in repulses {
+            if let Some(b) = self
+                .objects
+                .get_mut(&id)
+                .and_then(|o| o.player_mut())
+                .and_then(|p| {
+                    p.buffs
+                        .iter_mut()
+                        .find(|b| b.kind == buff_type::DRAGON_REPULSE)
+                })
+            {
+                b.tick_at = now + 500;
+            }
+            self.dragon_repulse_tick(id, power);
+        }
+        for (id, power) in swords {
+            if let Some(b) = self
+                .objects
+                .get_mut(&id)
+                .and_then(|o| o.player_mut())
+                .and_then(|p| {
+                    p.buffs
+                        .iter_mut()
+                        .find(|b| b.kind == buff_type::ELEMENTAL_SWORDS)
+                })
+            {
+                b.tick_at = now + 5000;
+            }
+            if self.elemental_swords_tick(id, power) {
+                self.buff_consume_stack(id, buff_type::ELEMENTAL_SWORDS);
+            }
         }
         for (id, amount) in conversions {
             let (hp, max_hp) = {

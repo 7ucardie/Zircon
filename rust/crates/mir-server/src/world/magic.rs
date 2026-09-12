@@ -205,6 +205,23 @@ impl World {
                 pending.push(pm(now + 500, None, loc, true))
             }
             magic_type::RENOUNCE => pending.push(pm(now + 600, None, loc, true)),
+            // ---- Wave five ----
+            mm if magic_wave5::handled(mm) => {
+                if !self.wave5_cast(
+                    id,
+                    magic,
+                    target,
+                    location,
+                    direction,
+                    loc,
+                    now,
+                    &mut pending,
+                    &mut targets,
+                    &mut locations,
+                ) {
+                    cast_ok = false;
+                }
+            }
             // ---- Wave four ----
             mm if magic_wave4::handled(mm) => {
                 if !self.wave4_cast(
@@ -602,7 +619,26 @@ impl World {
                 | magic_type::RAGING_WIND
                 | magic_type::DARK_CONVERSION
         ) {
-            self.buff_remove(id, buff_type::CLOAK);
+            let stealth = self.objects[&id]
+                .player()
+                .and_then(|p| p.magics.iter().find(|m| m.magic == magic_type::STEALTH))
+                .map(|m| m.power_range(&self.data.magics[&m.magic]).0);
+            let stacks = self.buff_stacks(id, buff_type::THE_NEW_BEGINNING);
+            let keep = match stealth {
+                Some(power) if stacks > 0 && self.objects[&id].has_buff(buff_type::CLOAK) => {
+                    if self.rng.random_range(0..100) > power {
+                        self.buff_consume_stack(id, buff_type::THE_NEW_BEGINNING);
+                    } else {
+                        self.level_magic(id, magic_type::STEALTH);
+                    }
+                    self.level_magic(id, magic_type::THE_NEW_BEGINNING);
+                    true
+                }
+                _ => false,
+            };
+            if !keep {
+                self.buff_remove(id, buff_type::CLOAK);
+            }
             self.buff_remove(id, buff_type::TRANSPARENCY);
         }
         // Pay, set timers (Zircon: consume even when the spell fizzles).
@@ -846,13 +882,24 @@ impl World {
                         let (pmin, pmax) = um.power_range(def);
                         (pmin, pmax, (c.stats.min_sc, c.stats.max_sc))
                     };
-                    let healing = self.roll_range(pmin, pmax) + self.roll_range(sc.0, sc.1);
+                    let empowered = self.objects[&pm.caster]
+                        .player()
+                        .and_then(|p| {
+                            p.magics
+                                .iter()
+                                .find(|m| m.magic == magic_type::EMPOWERED_HEALING)
+                        })
+                        .map(|m| (m.level as i32, m.power_range(&self.data.magics[&m.magic]).0));
+                    let (bonus, cap) = empowered
+                        .map(|(l, p)| (p, 30 + (1 + l) * 30))
+                        .unwrap_or((0, 30));
+                    let healing = self.roll_range(pmin, pmax) + self.roll_range(sc.0, sc.1) + bonus;
                     if healing <= 0 {
                         continue;
                     }
                     self.objects.get_mut(&t).unwrap().heal = Some(HealBuff {
                         pool: healing,
-                        cap: 30,
+                        cap,
                         next_tick: self.now,
                     });
                     self.level_magic(pm.caster, pm.magic);
@@ -1197,12 +1244,22 @@ impl World {
                 }
                 magic_type::REFLECT_DAMAGE => {
                     let level = self.magic_level(pm.caster, pm.magic);
+                    let aug = self.objects[&pm.caster]
+                        .player()
+                        .and_then(|p| {
+                            p.magics
+                                .iter()
+                                .find(|m| m.magic == magic_type::AUGMENT_REFLECT_DAMAGE)
+                        })
+                        .map(|m| (m.level as i32, m.power_range(&self.data.magics[&m.magic]).0));
+                    let (extra_secs, extra_pct) =
+                        aug.map(|(l, p)| (5 + l as u64 * 5, p)).unwrap_or((0, 0));
                     self.buff_add(
                         pm.caster,
                         buff_type::REFLECT_DAMAGE,
-                        (15 + level as u64 * 10) * 1000,
+                        (15 + level as u64 * 10 + extra_secs) * 1000,
                         BuffStats {
-                            reflect: 5 + level * 3,
+                            reflect: 5 + level * 3 + extra_pct,
                             ..BuffStats::default()
                         },
                     );
@@ -1266,9 +1323,23 @@ impl World {
                         .and_then(|p| p.magics.iter().find(|m| m.magic == pm.magic))
                         .map(|m| m.level as i32)
                         .unwrap_or(0);
-                    let secs = (60 + level * 30) as u64;
+                    let mut secs = (60 + level * 30) as u64;
                     let amount = 5 + level * 5;
                     if pm.magic == magic_type::DEFIANCE {
+                        // Augment Defiance: less DC loss and a longer hold.
+                        let mut offence = 20;
+                        if self.objects[&pm.caster]
+                            .player()
+                            .map(|p| {
+                                p.magics
+                                    .iter()
+                                    .any(|m| m.magic == magic_type::AUGMENT_DEFIANCE)
+                            })
+                            .unwrap_or(false)
+                        {
+                            offence = (20 - level * 5).max(0);
+                            secs += (10 + level * 10) as u64;
+                        }
                         self.buff_remove(pm.caster, buff_type::MIGHT);
                         self.buff_add(
                             pm.caster,
@@ -1277,7 +1348,7 @@ impl World {
                             BuffStats {
                                 phys_def_pct: amount,
                                 mag_def_pct: amount,
-                                dc_pct: -20,
+                                dc_pct: -offence,
                                 ..BuffStats::default()
                             },
                         );
@@ -1373,6 +1444,8 @@ impl World {
                         self.level_magic(pm.caster, pm.magic);
                     }
                 }
+                // ---- Wave five ----
+                mm if magic_wave5::handled(mm) => self.wave5_land(&pm, cmap, cloc),
                 // ---- Wave four ----
                 mm if magic_wave4::handled(mm) => self.wave4_land(&pm, cmap, cloc),
                 // ---- Assassin wave 3 ----
@@ -1486,7 +1559,16 @@ impl World {
                         continue;
                     };
                     let level = self.magic_level(pm.caster, pm.magic);
-                    for _ in 0..(level + 1) {
+                    let extra = self.objects[&pm.caster]
+                        .player()
+                        .and_then(|p| {
+                            p.magics
+                                .iter()
+                                .find(|m| m.magic == magic_type::ART_OF_SHADOWS)
+                        })
+                        .map(|m| m.power_range(&self.data.magics[&m.magic]).0)
+                        .unwrap_or(0);
+                    for _ in 0..(level + 1 + extra) {
                         let mut spot = None;
                         for _ in 0..25 {
                             let p = Point::new(

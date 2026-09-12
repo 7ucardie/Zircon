@@ -78,7 +78,9 @@ impl World {
                     // Charged power attacks: consumed by the swing they were armed for.
                     magic_type::FLAMING_SWORD
                     | magic_type::DRAGON_RISE
-                    | magic_type::BLADE_STORM => {
+                    | magic_type::BLADE_STORM
+                    | magic_type::DEFENSIVE_BLOW
+                    | magic_type::OFFENSIVE_BLOW => {
                         if attack_magic == Some(m)
                             && p.charge
                                 .map(|(c, until)| c == m && self.now < until)
@@ -87,6 +89,17 @@ impl World {
                             p.charge = None;
                             toggles.push((m, false));
                             valid = Some(m);
+                            magics.push(m);
+                        }
+                    }
+                    // Augments ride along with the skill they modify.
+                    magic_type::AUGMENT_DESTRUCTIVE_SURGE => {
+                        if attack_magic == Some(magic_type::DESTRUCTIVE_SURGE) {
+                            magics.push(m);
+                        }
+                    }
+                    magic_type::DRAGON_WAVE => {
+                        if attack_magic == Some(magic_type::FLAME_SPLASH) {
                             magics.push(m);
                         }
                     }
@@ -283,7 +296,20 @@ impl World {
                     })
                     .collect();
                 let mut picked = Vec::new();
-                while !dirs.is_empty() && picked.len() < 4 {
+                // Dragon Wave at level 3 sweeps every direction.
+                let max_dirs = if self
+                    .objects
+                    .get(&id)
+                    .and_then(|o| o.player())
+                    .and_then(|p| p.magics.iter().find(|m| m.magic == magic_type::DRAGON_WAVE))
+                    .map(|m| m.level >= 3)
+                    .unwrap_or(false)
+                {
+                    8
+                } else {
+                    4
+                };
+                while !dirs.is_empty() && picked.len() < max_dirs {
                     let i = self.rng.random_range(0..dirs.len());
                     picked.push(dirs.swap_remove(i));
                 }
@@ -512,9 +538,12 @@ impl World {
                         magic_type::FLAMING_SWORD
                         | magic_type::DRAGON_RISE
                         | magic_type::BLADE_STORM
-                        | magic_type::SWIFT_BLADE => {
+                        | magic_type::SWIFT_BLADE
+                        | magic_type::OFFENSIVE_BLOW => {
                             power = power * mp / 100;
                         }
+                        magic_type::AUGMENT_DESTRUCTIVE_SURGE => power += mp,
+                        magic_type::DRAGON_WAVE => power += power * mp / 100,
                         magic_type::DESTRUCTIVE_SURGE | magic_type::FLAME_SPLASH
                             if !hit.primary =>
                         {
@@ -667,6 +696,29 @@ impl World {
                 let dealt = self.damage(tid, hit.attacker, power, hit.element, false);
                 if dealt > 0 && !attacker_is_player {
                     self.monster_hit_poison(hit.attacker, tid);
+                }
+                // Offensive Blow: shove the target Level + 3 cells; a
+                // successful shove also paralyses and silences for 3 s.
+                if dealt > 0 && hit.magics.contains(&magic_type::OFFENSIVE_BLOW) {
+                    let level = self.magic_level(hit.attacker, magic_type::OFFENSIVE_BLOW);
+                    let dir = self.objects[&hit.attacker].direction;
+                    let clevel = self.level_of(&self.objects[&hit.attacker]);
+                    if self.push_allowed(tid, clevel, level)
+                        && self.push_back(tid, dir, level + 3) > 0
+                    {
+                        for kind in [poison_kind::PARALYSIS, poison_kind::SILENCED] {
+                            self.apply_poison(
+                                tid,
+                                Poison {
+                                    kind,
+                                    value: 0,
+                                    ticks_left: 0,
+                                    next_tick: self.now + 3000,
+                                    owner: Some(hit.attacker),
+                                },
+                            );
+                        }
+                    }
                 }
                 if dealt > 0 && attacker_is_player {
                     // Bloody Flower life steal on the primary hit (cap 750, 1500 with a lotus).

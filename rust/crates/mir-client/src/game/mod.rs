@@ -418,6 +418,8 @@ fn buff_icon(kind: u16) -> u32 {
         buff_type::DARK_CONVERSION => 90,
         buff_type::LIFE_STEAL => 90,
         buff_type::SPIRITUALISM => 92,
+        buff_type::DRAGON_REPULSE => 98,
+        buff_type::ELEMENTAL_SWORDS => 96,
         buff_type::MAGIC_SHIELD => 100,
         buff_type::HEAL => 78,
         buff_type::MAGIC_RESISTANCE => 92,

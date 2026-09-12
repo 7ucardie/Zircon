@@ -624,6 +624,7 @@ mod combat;
 mod inventory;
 mod magic;
 mod magic_wave4;
+mod magic_wave5;
 mod maps;
 mod monster_ai;
 mod movement;

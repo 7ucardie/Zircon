@@ -644,15 +644,24 @@ pub mod magic_type {
     }
     /// Wave-four directional swings: the mouse picks the facing.
     pub fn is_directional(m: u16) -> bool {
-        matches!(m, SEISMIC_SLAM | FLASH_OF_LIGHT)
+        matches!(
+            m,
+            SEISMIC_SLAM | FLASH_OF_LIGHT | CRUSHING_WAVE | ICE_AURA | THUNDER_KICK
+        )
     }
     /// Stance skills switched with a hotkey and applied on melee swings.
     pub fn is_toggle(m: u16) -> bool {
-        matches!(m, THRUSTING | HALF_MOON | DESTRUCTIVE_SURGE | FLAME_SPLASH)
+        matches!(
+            m,
+            THRUSTING | HALF_MOON | DESTRUCTIVE_SURGE | FLAME_SPLASH | DEMONIC_RECOVERY
+        )
     }
     /// Warrior power attacks charged with a hotkey for 12 s (Zircon `Toggle`).
     pub fn is_charge(m: u16) -> bool {
-        matches!(m, FLAMING_SWORD | DRAGON_RISE | BLADE_STORM)
+        matches!(
+            m,
+            FLAMING_SWORD | DRAGON_RISE | BLADE_STORM | DEFENSIVE_BLOW | OFFENSIVE_BLOW
+        )
     }
     /// Assassin lotus combo: the hotkey arms the next swing.
     pub fn is_lotus(m: u16) -> bool {
@@ -676,6 +685,11 @@ pub mod magic_type {
                 | HEMORRHAGE
                 | PARASITE
                 | NEUTRALIZE
+                | FIRE_BOUNCE
+                | LIGHTNING_STRIKE
+                | BINDING_TALISMAN
+                | BRAIN_STORM
+                | IMPROVED_EXPLOSIVE_TALISMAN
                 | ICE_BOLT
                 | FLAMING_DAGGERS
                 | SHREDDING
@@ -726,6 +740,13 @@ pub mod magic_type {
                 | ABYSS
                 | NEUTRALIZE
                 | PARASITE
+                | FIRE_BOUNCE
+                | LIGHTNING_STRIKE
+                | DANCE_OF_SWALLOW
+                | HUNDRED_FIST
+                | BINDING_TALISMAN
+                | BRAIN_STORM
+                | IMPROVED_EXPLOSIVE_TALISMAN
         )
     }
     /// Spells cast on a ground cell.
@@ -736,6 +757,8 @@ pub mod magic_type {
                 | ICE_RAIN
                 | ASTEROID
                 | LIFE_STEAL
+                | BURNING_FIRE
+                | DARK_SOUL_PRISON
                 | MAGIC_RESISTANCE
                 | RESILIENCE
                 | MASS_HEAL
@@ -778,6 +801,10 @@ pub mod magic_type {
                 | SUPERIOR_MAGIC_SHIELD
                 | DARK_CONVERSION
                 | SPIRITUALISM
+                | SUMMON_DEMONIC_CREATURE
+                | DEMON_EXPLOSION
+                | DRAGON_REPULSE
+                | ELEMENTAL_SWORDS
                 | MAGIC_SHIELD
                 | DEFIANCE
                 | MIGHT
@@ -921,6 +948,22 @@ pub mod magic_type {
                 | DARK_CONVERSION
                 | LIFE_STEAL
                 | SPIRITUALISM
+                | CRUSHING_WAVE
+                | FIRE_BOUNCE
+                | LIGHTNING_STRIKE
+                | ICE_AURA
+                | BURNING_FIRE
+                | DARK_SOUL_PRISON
+                | SUMMON_DEMONIC_CREATURE
+                | DEMON_EXPLOSION
+                | THUNDER_KICK
+                | DANCE_OF_SWALLOW
+                | HUNDRED_FIST
+                | DRAGON_REPULSE
+                | ELEMENTAL_SWORDS
+                | BINDING_TALISMAN
+                | BRAIN_STORM
+                | IMPROVED_EXPLOSIVE_TALISMAN
         )
     }
 }
@@ -958,6 +1001,8 @@ pub mod buff_type {
     pub const CONCENTRATION: u16 = 408;
     pub const THE_NEW_BEGINNING: u16 = 409;
     pub const DARK_CONVERSION: u16 = 410;
+    pub const DRAGON_REPULSE: u16 = 106;
+    pub const ELEMENTAL_SWORDS: u16 = 107;
     /// Buffs other players can see (Zircon `visible: true`).
     pub fn is_visible(b: u16) -> bool {
         matches!(
@@ -986,6 +1031,9 @@ pub mod spell_effect {
     pub const FIRE_WALL: u8 = 2;
     pub const TEMPEST: u8 = 3;
     pub const TRAP_OCTAGON: u8 = 5;
+    pub const ICE_AURA: u8 = 11;
+    pub const BURNING_FIRE: u8 = 12;
+    pub const DARK_SOUL_PRISON: u8 = 13;
     pub const POISONOUS_CLOUD: u8 = 7;
 }
 
@@ -1001,6 +1049,12 @@ pub mod effect {
     pub const KARMA: u8 = 8;
     pub const PUPPET: u8 = 9;
     pub const FLASH_OF_LIGHT: u8 = 10;
+    pub const BOUNCE: u8 = 11;
+    pub const DEMON_EXPLOSION: u8 = 12;
+    pub const DANCE_OF_SWALLOW: u8 = 13;
+    pub const HUNDRED_FIST: u8 = 14;
+    pub const ELEMENTAL_SWORD: u8 = 15;
+    pub const BURNING_FIRE: u8 = 16;
 }
 
 /// A buff as the client sees it.

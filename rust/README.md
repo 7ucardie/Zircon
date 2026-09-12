@@ -112,6 +112,18 @@ and the original effect sprites:
   buffs Invincibility, Evasion, Raging Wind, Concentration, The New
   Beginning, Judgement Of Heaven, Superior Magic Shield, Dark Conversion,
   Spiritualism.
+- Wave five: Defensive Blow and Offensive Blow (12 s charges; the latter
+  shoves, paralyses and silences), Crushing Wave (12-cell line with
+  flanks), Fire Bounce and Lightning Strike (bounce to nearby monsters),
+  Ice Aura (paralysing field on the line), Burning Fire (mines), Dark Soul
+  Prison (dark field), Summon Demonic Creature, Demon Explosion and Demonic
+  Recovery, Thunder Kick (push then strike), Dance Of Swallow (blink
+  behind and strike), Hundred Fist (straight dash and shove), Dragon
+  Repulse (6 s repelling channel paid in HP and MP), Elemental Swords
+  (five auto-firing swords), Binding Talisman and Brain Storm, Improved
+  Explosive Talisman; augments Augment Defiance, Augment Reflect Damage,
+  Augment Destructive Surge, Advanced Potion Mastery, Empowered Healing,
+  Stealth, Art Of Shadows, Dragon Wave.
 
 Buff icons with their remaining time sit top-right. Other skills show in the
 window but cannot be cast yet.

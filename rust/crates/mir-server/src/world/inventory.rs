@@ -193,6 +193,27 @@ impl World {
                     let (hb, mb) = (roll(), roll());
                     health += health * hb / 100;
                     mana += mana * mb / 100;
+                    // Advanced Potion Mastery stacks another percent on top.
+                    let advanced = self.objects[&id]
+                        .player()
+                        .and_then(|p| {
+                            p.magics
+                                .iter()
+                                .find(|m| m.magic == magic_type::ADVANCED_POTION_MASTERY)
+                        })
+                        .map(|m| m.power_range(&self.data.magics[&m.magic]).0)
+                        .unwrap_or(0);
+                    health += health * advanced / 100;
+                    mana += mana * advanced / 100;
+                    // Vitality: bigger potions below 30 % HP.
+                    let (vitality, low) = {
+                        let o = &self.objects[&id];
+                        let p = o.player().unwrap();
+                        (p.vitality, o.hp * 100 / o.max_hp.max(1) < 30)
+                    };
+                    if low && vitality > 0 {
+                        health += health * vitality / 100;
+                    }
                     let missing = {
                         let o = &self.objects[&id];
                         let p = o.player().unwrap();

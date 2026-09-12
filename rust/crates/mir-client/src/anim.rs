@@ -52,6 +52,10 @@ pub fn spell_frame(effect: u8) -> Frame {
         mir_proto::spell_effect::TEMPEST => Frame::new(920, 10, 150),
         mir_proto::spell_effect::TRAP_OCTAGON => Frame::new(640, 10, 100),
         mir_proto::spell_effect::POISONOUS_CLOUD => Frame::new(400, 15, 100),
+        // Placeholders until the exact Zircon field art is mapped.
+        mir_proto::spell_effect::ICE_AURA => Frame::new(640, 10, 100),
+        mir_proto::spell_effect::BURNING_FIRE => Frame::new(920, 5, 150),
+        mir_proto::spell_effect::DARK_SOUL_PRISON => Frame::new(400, 15, 100),
         _ => Frame::new(0, 1, 3_600_000),
     }
 }

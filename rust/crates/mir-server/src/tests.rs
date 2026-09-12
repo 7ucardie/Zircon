@@ -323,9 +323,11 @@ fn learn(world: &mut World, me: ObjectId, magic_name: &str) -> u16 {
 
 fn nearest_chicken(world: &World, me: ObjectId) -> ObjectId {
     let loc = world.objects[&me].location;
+    let map = world.objects[&me].map;
     world
         .objects
         .values()
+        .filter(|o| o.map == map)
         .filter(|o| {
             !o.dead
                 && matches!(&o.appearance, Appearance::Monster { name, .. } if name == "Chicken")
@@ -1480,4 +1482,120 @@ fn wave_four_bursts_and_buffs() {
     world.test_damage(me, victim, 50);
     let (php1, _, _) = world.test_hp(me);
     assert_eq!(php0, php1, "invincible");
+}
+
+#[test]
+fn wave_five_dance_of_swallow_and_thunder_kick() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let has_book = |world: &World, name: &str| {
+        world
+            .data
+            .magics
+            .values()
+            .find(|m| m.name == name)
+            .map(|def| {
+                world
+                    .data
+                    .items
+                    .values()
+                    .any(|i| i.item_type == 14 && i.shape == def.index)
+            })
+            .unwrap_or(false)
+    };
+    // Assassin at the warrior start (chickens): Dance Of Swallow blinks next
+    // to the target and strikes it.
+    let scout = world.add_player(1, 1, &test_character("Scout2")).unwrap();
+    let (scout_map, scout_loc) = (world.objects[&scout].map, world.objects[&scout].location);
+    world.remove_object(scout);
+    let mut rec = test_character("Swallow");
+    rec.class = mir_proto::Class::Assassin;
+    rec.level = 60;
+    rec.map = world.data.maps[&scout_map].file_name.clone();
+    rec.location = scout_loc;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    if !has_book(&world, "Dance Of Swallow") {
+        eprintln!("book missing; skipping");
+        return;
+    }
+    let dance = learn(&mut world, me, "Dance Of Swallow");
+    let mut now = 3000;
+    world.tick(now);
+    drain(&mut world);
+    let victim = nearest_chicken(&world, me);
+    let loc = world.objects[&me].location;
+    let map = world.objects[&me].map;
+    let cell = Direction::ALL
+        .iter()
+        .map(|d| loc.step(*d, 5))
+        .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+        .unwrap();
+    world.teleport(victim, cell);
+    let (hp0, _, _) = world.test_hp(victim);
+    world.cast(
+        me,
+        dance,
+        Direction::from_points(loc, cell),
+        Some(victim),
+        cell,
+    );
+    for _ in 0..8 {
+        now += 100;
+        world.teleport(victim, cell);
+        world.tick(now);
+    }
+    assert_eq!(
+        world.objects[&me].location.distance(cell),
+        1,
+        "blinked next to the chicken"
+    );
+    let (hp1, _, dead) = world.test_hp(victim);
+    assert!(dead || hp1 < hp0, "Dance Of Swallow hit: {hp0} -> {hp1}");
+    // Thunder Kick (taoist) shoves the chicken in front of the caster.
+    let mut rec = test_character("Kicker");
+    rec.class = mir_proto::Class::Taoist;
+    rec.level = 60;
+    rec.map = world.data.maps[&scout_map].file_name.clone();
+    rec.location = scout_loc;
+    let tao = world.add_player(2, 2, &rec).unwrap();
+    world.tick(now);
+    drain(&mut world);
+    if !has_book(&world, "Thunder Kick") {
+        return;
+    }
+    let kick = learn(&mut world, tao, "Thunder Kick");
+    let victim = nearest_chicken(&world, tao);
+    let tloc = world.objects[&tao].location;
+    let dir = Direction::ALL
+        .iter()
+        .copied()
+        .find(|d| {
+            (1..=4).all(|i| {
+                let p = tloc.step(*d, i);
+                world.maps[&map].file.is_walkable(p.x, p.y)
+            })
+        })
+        .unwrap();
+    let front = tloc.step(dir, 1);
+    world.teleport(victim, front);
+    let mut pushed = false;
+    for _ in 0..30 {
+        now += 3000;
+        world.tick(now);
+        world.teleport(victim, front);
+        world.cast(tao, kick, dir, None, front);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        if world.objects[&victim].location != front {
+            pushed = true;
+            break;
+        }
+        world.test_refill_mp(tao);
+    }
+    assert!(pushed, "Thunder Kick pushed the chicken");
 }

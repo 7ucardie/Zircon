@@ -2,16 +2,14 @@
 
 Extracted 2026-09-12. Wave four (commit after d06b2d4) implemented the
 passives, self bursts, single-target spells, cell areas and self buffs
-listed in the README; still open: Crushing Wave, Defensive/Offensive Blow,
-Elemental Swords, Shuriken, Hundred Fist, augments (Defiance, Reflect
-Damage, Destructive Surge, Advanced Potion Mastery), Fire Bounce, Lightning
-Strike, Elemental Hurricane, Mirror Image, Frost Bite, Tornado, Ice Aura,
-Burning/Shocked, Empowered Healing, Improved Explosive Talisman, Cursed
-Doll, Thunder Kick, Soul Resonance, taoist augments, Summon Demonic
-Creature, Demon Explosion, Infection, Demonic Recovery, Dark Soul Prison,
-Corpse Exploder, Summon Dead, Binding Talisman, Brain Storm, Dance Of
-Swallow, Dragon Repulse, Stealth, Art Of Shadows, Dragon Blood, Magic
-Combustion, Chain, Dragon Wave, Burning Fire, Chain Of Fire.
+listed in the README; wave five added the charges, lines, bounces,
+fields, summons, kicks, dashes, channels and augments. Still open:
+Shuriken, Elemental Hurricane, Mirror Image, Frost Bite, Tornado,
+Burning/Shocked, Cursed Doll, Soul Resonance, the taoist extra-target
+augments, Infection, Corpse Exploder, Summon Dead (needs corpse targeting
+on the client), Dragon Blood, Magic Combustion (PvP), Chain, Chain Of Fire.
+Field art for Ice Aura, Burning Fire and Dark Soul Prison uses placeholder
+frames on the client.
 Originally: 98 magics implemented in Rust; 92 missing with C#
 code (Warrior 17, Wizard 18, Taoist 28, Assassin 29); 5 dead enum entries
 (FlameArt 137, UnityWithNature 247, SupremeHealing 351, Unused 438,

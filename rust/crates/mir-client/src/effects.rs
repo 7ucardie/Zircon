@@ -11,6 +11,7 @@ pub const MAGIC_EX2: u16 = 244;
 pub const MAGIC_EX3: u16 = 245;
 pub const MAGIC_EX4: u16 = 246;
 pub const MAGIC_EX5: u16 = 247;
+pub const MAGIC_EX6: u16 = 248;
 pub const MAGIC_EX7: u16 = 249;
 
 pub const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
@@ -241,6 +242,11 @@ pub fn object_effect(kind: u8, id: ObjectId, cell: Point, now: u64) -> Option<Ef
         e::KARMA => Effect::at(MAGIC_EX4, 1800, 10, 100, WHITE, Anchor::Object(id), now),
         e::PUPPET => Effect::at(MAGIC_EX4, 820, 8, 100, FIRE, Anchor::Cell(cell), now),
         e::FLASH_OF_LIGHT => Effect::at(MAGIC_EX4, 2300, 8, 60, WHITE, Anchor::Object(id), now),
+        e::BOUNCE => Effect::at(MAGIC, 1800, 10, 100, FIRE, Anchor::Object(id), now),
+        e::DEMON_EXPLOSION => Effect::at(MAGIC_EX2, 1160, 10, 100, DARK, Anchor::Object(id), now),
+        e::DANCE_OF_SWALLOW => Effect::at(MAGIC_EX4, 2300, 8, 60, WHITE, Anchor::Object(id), now),
+        e::HUNDRED_FIST => Effect::at(MAGIC_EX, 1270, 3, 100, WHITE, Anchor::Object(id), now),
+        e::ELEMENTAL_SWORD => Effect::at(MAGIC, 1350, 6, 100, WHITE, Anchor::Object(id), now),
         _ => return None,
     })
 }
@@ -248,6 +254,15 @@ pub fn object_effect(kind: u8, id: ObjectId, cell: Point, now: u64) -> Option<Ef
 /// Effects triggered by `MapEffect` on a cell.
 pub fn map_effect(kind: u8, cell: Point, now: u64) -> Vec<Effect> {
     match kind {
+        mir_proto::effect::BURNING_FIRE => vec![Effect::at(
+            MAGIC_EX6,
+            900,
+            10,
+            60,
+            FIRE,
+            Anchor::Cell(cell),
+            now,
+        )],
         mir_proto::effect::FIRE_WALL_SMOKE => vec![
             Effect::at(
                 PROG_USE,
@@ -333,6 +348,15 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         magic_type::CELESTIAL_LIGHT => (MAGIC_EX2, 280, 8, 100, HOLY, false),
         magic_type::WRAITH_GRIP => (MAGIC_EX4, 1460, 15, 60, WHITE, false),
         magic_type::INVINCIBILITY => (MAGIC_EX5, 400, 10, 100, WHITE, false),
+        magic_type::CRUSHING_WAVE => (MAGIC_EX6, 100, 6, 100, LIGHTNING, false),
+        magic_type::FIRE_BOUNCE => (MAGIC, 1560, 9, 65, FIRE, false),
+        magic_type::LIGHTNING_STRIKE => (MAGIC_EX6, 400, 8, 100, LIGHTNING, false),
+        magic_type::DRAGON_REPULSE => (MAGIC_EX4, 1000, 10, 60, LIGHTNING, false),
+        magic_type::THUNDER_KICK => (MAGIC_EX2, 1190, 10, 100, WHITE, false),
+        magic_type::BINDING_TALISMAN => (MAGIC_EX5, 3500, 4, 100, WHITE, false),
+        magic_type::BRAIN_STORM => (MAGIC_EX5, 4600, 10, 100, WHITE, false),
+        magic_type::SUMMON_DEMONIC_CREATURE => (MAGIC, 740, 10, 60, DARK, false),
+        magic_type::IMPROVED_EXPLOSIVE_TALISMAN => (MAGIC_EX2, 980, 6, 80, DARK, false),
         magic_type::EVASION => (MAGIC_EX4, 2500, 12, 70, WHITE, false),
         magic_type::RAGING_WIND => (MAGIC_EX4, 2600, 12, 70, WHITE, false),
         magic_type::CONCENTRATION => (MAGIC_EX5, 300, 15, 100, WHITE, false),
@@ -578,6 +602,61 @@ pub fn payload(
                     .push(Effect::at(MAGIC_EX4, 1420, 14, 100, WHITE, a, now));
                 out.effects
                     .push(Effect::at(MAGIC_EX4, 1440, 14, 100, WHITE, a, now));
+            }
+        }
+        magic_type::CRUSHING_WAVE => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX6, 300, 9, 150, LIGHTNING, a, now));
+            }
+        }
+        magic_type::DARK_SOUL_PRISON => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX6, 600, 9, 100, DARK, a, now));
+            }
+        }
+        magic_type::BURNING_FIRE => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX6, 900, 10, 60, FIRE, a, now));
+            }
+        }
+        magic_type::FIRE_BOUNCE
+        | magic_type::LIGHTNING_STRIKE
+        | magic_type::BINDING_TALISMAN
+        | magic_type::BRAIN_STORM
+        | magic_type::IMPROVED_EXPLOSIVE_TALISMAN
+        | magic_type::HUNDRED_FIST => {
+            let (lib, start, count, col, hit) = match magic {
+                magic_type::FIRE_BOUNCE => (MAGIC, 1640, 6, FIRE, (MAGIC, 1800, 10)),
+                magic_type::LIGHTNING_STRIKE => (MAGIC_EX6, 500, 8, LIGHTNING, (MAGIC_EX6, 500, 8)),
+                magic_type::BINDING_TALISMAN => (MAGIC_EX5, 3600, 1, WHITE, (MAGIC_EX5, 3600, 1)),
+                magic_type::BRAIN_STORM => (MAGIC_EX5, 3200, 5, WHITE, (MAGIC_EX5, 3400, 15)),
+                magic_type::IMPROVED_EXPLOSIVE_TALISMAN => {
+                    (MAGIC_EX2, 980, 6, DARK, (MAGIC_EX2, 1160, 10))
+                }
+                _ => (MAGIC_EX, 1270, 3, WHITE, (MAGIC_EX, 1270, 3)),
+            };
+            for a in anchors {
+                out.projectiles.push((
+                    caster_cell,
+                    a,
+                    Projectile {
+                        library: lib,
+                        start,
+                        count,
+                        delay_ms: 100,
+                        color: col,
+                        from: caster_cell,
+                        to: a,
+                        started: now,
+                        duration: 0,
+                        dir16: 0,
+                        dir_stride: 10,
+                        explode: Some((hit.0, hit.1, hit.2, 100, col)),
+                    },
+                ));
             }
         }
         magic_type::SEISMIC_SLAM => {

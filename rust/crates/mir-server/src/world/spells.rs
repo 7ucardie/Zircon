@@ -122,6 +122,71 @@ impl World {
                         self.magic_attack(owner, v, magic, element::FIRE, 60);
                     }
                 }
+                spell_effect::ICE_AURA => {
+                    // Everyone standing in the aura is paralysed for the tick.
+                    let level = self.magic_level(owner, magic);
+                    let victims: Vec<ObjectId> = self.maps[&map]
+                        .objects_at(loc)
+                        .iter()
+                        .copied()
+                        .filter(|v| self.objects[&owner].hostile_to(&self.objects[v]))
+                        .collect();
+                    let freq = match &self.objects[&sid].kind {
+                        Kind::Spell(s) => s.tick_frequency,
+                        _ => 2000,
+                    };
+                    for v in victims {
+                        self.apply_poison(
+                            v,
+                            Poison {
+                                kind: poison_kind::PARALYSIS,
+                                value: (3 + level) * 2,
+                                ticks_left: 0,
+                                next_tick: now + freq,
+                                owner: Some(owner),
+                            },
+                        );
+                    }
+                }
+                spell_effect::BURNING_FIRE => {
+                    // A mine: the first hostile to step in sets it off.
+                    let stepped = self.maps[&map]
+                        .objects_at(loc)
+                        .iter()
+                        .any(|v| self.objects[&owner].hostile_to(&self.objects[v]));
+                    if stepped {
+                        let victims: Vec<ObjectId> = self
+                            .on_map(map)
+                            .filter(|o| !o.dead && o.location.distance(loc) <= 1)
+                            .filter(|o| self.objects[&owner].hostile_to(o))
+                            .map(|o| o.id)
+                            .collect();
+                        for v in victims {
+                            self.magic_attack(owner, v, magic, element::FIRE, 100);
+                        }
+                        self.events.push((
+                            sid,
+                            ServerMessage::MapEffect {
+                                effect: effect::BURNING_FIRE,
+                                location: loc,
+                            },
+                        ));
+                        self.remove_object(sid);
+                        continue;
+                    }
+                }
+                spell_effect::DARK_SOUL_PRISON => {
+                    // Radius-3 dark field around the prison's centre.
+                    let victims: Vec<ObjectId> = self
+                        .on_map(map)
+                        .filter(|o| !o.dead && o.location.distance(loc) <= 3)
+                        .filter(|o| self.objects[&owner].hostile_to(o))
+                        .map(|o| o.id)
+                        .collect();
+                    for v in victims {
+                        self.magic_attack(owner, v, magic, element::DARK, 40);
+                    }
+                }
                 spell_effect::TEMPEST => {
                     let victims: Vec<ObjectId> = self.maps[&map]
                         .objects_at(loc)
