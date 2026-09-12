@@ -55,6 +55,14 @@ the wheel. When you die a Revive button returns you to town at once; the
 server forces it after ten minutes. The backquote key toggles the debug line,
 `F12` saves a screenshot.
 
+Chat follows Zircon's prefixes: `Enter` opens the chat bar, `Enter` sends
+and `Esc` closes it. Plain text talks to players in view range (with a
+bubble over your head), `/name text` whispers, `!text` shouts to the whole
+map (level 2, once per 10 s), `!@text` shouts to every player (level 33,
+once per 30 s) and `!!text` goes to your group. Lines are coloured by kind
+(white talk, yellow shout, green whispers, cyan group, orange global, red
+system); `ZIRCON_AUTO_CHAT=text` says something two seconds after entry.
+
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's

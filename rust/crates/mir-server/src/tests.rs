@@ -1599,3 +1599,62 @@ fn wave_five_dance_of_swallow_and_thunder_kick() {
     }
     assert!(pushed, "Thunder Kick pushed the chicken");
 }
+
+#[test]
+fn chat_routes_local_shout_and_whisper() {
+    use mir_proto::ChatKind;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let bob = world.add_player(2, 2, &test_character("Bob")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let said = |world: &mut World| -> Vec<(world::ConnId, ChatKind, String)> {
+        world
+            .outgoing
+            .drain(..)
+            .filter_map(|o| match o {
+                Outgoing::To(c, ServerMessage::Say { kind, text, .. }) => Some((c, kind, text)),
+                _ => None,
+            })
+            .collect()
+    };
+    let conn_of = |world: &World, id: ObjectId| world.objects[&id].player().unwrap().conn;
+    let (ca, cb) = (conn_of(&world, alice), conn_of(&world, bob));
+
+    // Local talk reaches both (same start cell area) with a bubble id.
+    world.chat(alice, "hello".into());
+    let lines = said(&mut world);
+    assert!(lines
+        .iter()
+        .any(|(c, k, t)| *c == cb && *k == ChatKind::Normal && t == "Alice: hello"));
+    assert!(lines.iter().any(|(c, _, _)| *c == ca));
+
+    // Shout needs level 2: a fresh character is level 1.
+    world.chat(alice, "!hey".into());
+    let lines = said(&mut world);
+    assert!(lines
+        .iter()
+        .all(|(c, k, _)| *c == ca && *k == ChatKind::System));
+
+    // Whisper by name, case-insensitive; unknown names fail politely.
+    world.chat(bob, "/alice psst".into());
+    let lines = said(&mut world);
+    assert!(lines
+        .iter()
+        .any(|(c, k, t)| *c == ca && *k == ChatKind::WhisperIn && t == "Bob=> psst"));
+    assert!(lines
+        .iter()
+        .any(|(c, k, _)| *c == cb && *k == ChatKind::WhisperOut));
+    world.chat(bob, "/nobody hi".into());
+    let lines = said(&mut world);
+    assert!(lines
+        .iter()
+        .any(|(c, k, _)| *c == cb && *k == ChatKind::System));
+
+    // Group chat without a group is silently dropped.
+    world.chat(bob, "!!team".into());
+    assert!(said(&mut world).is_empty());
+}

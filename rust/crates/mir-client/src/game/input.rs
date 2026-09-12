@@ -55,6 +55,7 @@ impl Game {
         height: i32,
         conn: Option<&Connection>,
     ) {
+        self.chat_keys(conn);
         // Keyboard shortcuts (Zircon defaults: Tab pick up, W bag, Q character).
         for ch in self.input.text.chars() {
             match ch.to_ascii_lowercase() {

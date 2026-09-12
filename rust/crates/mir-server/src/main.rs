@@ -510,6 +510,7 @@ fn handle_message(
             world.item_drop(object, slot, count)
         }
         (Stage::InGame { object, .. }, ClientMessage::PickUp) => world.pick_up(object),
+        (Stage::InGame { object, .. }, ClientMessage::Chat { text }) => world.chat(object, text),
         (Stage::InGame { object, .. }, ClientMessage::NpcCall { id }) => world.npc_call(object, id),
         (Stage::InGame { object, .. }, ClientMessage::NpcButton { button }) => {
             world.npc_button(object, button)

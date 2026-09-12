@@ -290,6 +290,9 @@ pub struct PlayerData {
     pub rebirth: i32,
     /// Zircon `NPCVals["ROLLRESULT"]`.
     pub npc_roll: Option<i32>,
+    /// Zircon `ShoutExpiry` / `Account.GlobalShoutExpiry`.
+    pub shout_time: u64,
+    pub global_shout_time: u64,
     pub quests: Vec<crate::accounts::StoredQuest>,
     /// Passive skill stats (Zircon `GetPassiveStats` and combat checks).
     pub def_mastery: i32,
@@ -625,6 +628,7 @@ pub struct World {
 
 mod ai_profile;
 mod buffs;
+mod chat;
 mod combat;
 mod inventory;
 mod magic;

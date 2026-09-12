@@ -320,6 +320,17 @@ impl Game {
                     [255, 255, 255, 220]
                 };
                 let name_y = if o.dead { dy + 21 } else { dy - 6 };
+                if let Some((line, t)) = &o.bubble {
+                    if now < t + 5000 {
+                        text.draw_centered(
+                            line,
+                            12,
+                            dx as f32 + 24.0,
+                            name_y as f32 - 16.0,
+                            [255, 255, 255, 255],
+                        );
+                    }
+                }
                 let my_pet = o.pet_owner().is_some() && o.pet_owner() == self.user_name();
                 text.draw_centered(
                     &o.display_name(),

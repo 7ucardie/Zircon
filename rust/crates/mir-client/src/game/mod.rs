@@ -24,7 +24,7 @@ use crate::items::{ItemCatalog, ItemDef};
 use crate::net::Connection;
 use crate::sound_table;
 use crate::text::TextLayer;
-use crate::ui::{Ctx, Input};
+use crate::ui::{Ctx, Input, Rect, TextBox};
 use crate::windows::{Bag, NpcDialog, WindowState};
 use mir_formats::monster_table::monster_sprite;
 use mir_proto::Grid;
@@ -62,7 +62,12 @@ pub struct Game {
     attack_time: u64,
     animation: u32,
     animation_time: u64,
-    chat: Vec<(String, u64)>,
+    /// Chat lines: text, time, colour.
+    chat: Vec<(String, u64, [u8; 4])>,
+    /// Zircon's chat bar: Enter opens it, Enter sends, Escape closes.
+    chat_box: TextBox,
+    chat_open: bool,
+    auto_chat_done: bool,
     hovered: Option<ObjectId>,
     pub debug: bool,
     pub input: Input,
@@ -242,6 +247,9 @@ impl Game {
             animation: 0,
             animation_time: 0,
             chat: Vec::new(),
+            chat_box: TextBox::new(Rect::new(0.0, 0.0, 10.0, 22.0), 200),
+            chat_open: false,
+            auto_chat_done: false,
             hovered: None,
             debug: true,
         }
@@ -268,10 +276,53 @@ impl Game {
     }
 
     fn say(&mut self, text: String, now: u64) {
+        self.say_colored(text, now, [255, 255, 200, 255]);
+    }
+
+    fn say_colored(&mut self, text: String, now: u64, color: [u8; 4]) {
         tracing::info!("{text}");
-        self.chat.push((text, now));
-        if self.chat.len() > 8 {
+        self.chat.push((text, now, color));
+        if self.chat.len() > 12 {
             self.chat.remove(0);
+        }
+    }
+
+    /// Chat bar keys: Enter opens the box, Enter sends, Escape closes; while
+    /// it is open the keyboard belongs to it.
+    fn chat_keys(&mut self, conn: Option<&Connection>) {
+        if self.chat_open {
+            for c in self.input.text.chars() {
+                if !c.is_control() && self.chat_box.text.chars().count() < self.chat_box.max_len {
+                    self.chat_box.text.push(c);
+                }
+            }
+            if self.input.backspace {
+                self.chat_box.text.pop();
+            }
+            if self.input.enter {
+                let text = std::mem::take(&mut self.chat_box.text);
+                self.chat_open = false;
+                if !text.trim().is_empty() {
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::Chat { text });
+                    }
+                }
+            }
+            if self.input.escape {
+                self.chat_open = false;
+                self.chat_box.text.clear();
+            }
+            self.input.text.clear();
+            self.input.backspace = false;
+            self.input.enter = false;
+            self.input.escape = false;
+            self.input.tab = false;
+            self.input.digit = None;
+            self.input.fkey = None;
+        } else if self.input.enter {
+            self.chat_open = true;
+            self.chat_box.focused = true;
+            self.input.enter = false;
         }
     }
 
@@ -365,6 +416,16 @@ impl Game {
         {
             if now > 3000 && self.use_item_time == 0 {
                 self.belt_key(slot, now, conn);
+            }
+        }
+        // ZIRCON_AUTO_CHAT=text says it once, 2 s after entering the world.
+        if let Ok(text) = std::env::var("ZIRCON_AUTO_CHAT") {
+            if now > 2000 && !self.auto_chat_done && self.user.is_some() {
+                self.auto_chat_done = true;
+                if let Some(c) = conn {
+                    c.send(ClientMessage::Chat { text });
+                }
+                self.chat_open = true;
             }
         }
         self.handle_input(now, width, height, conn);

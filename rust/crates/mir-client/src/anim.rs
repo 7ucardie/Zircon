@@ -125,6 +125,8 @@ pub struct ClientObject {
     pub poisoned: bool,
     /// Visible buffs (Zircon `VisibleBuffs`): Magic Shield etc.
     pub visible_buffs: Vec<u16>,
+    /// Last local chat line and when it was said (overhead bubble).
+    pub bubble: Option<(String, u64)>,
 }
 
 impl ClientObject {
@@ -161,6 +163,7 @@ impl ClientObject {
             damage: Vec::new(),
             poisoned: false,
             visible_buffs: Vec::new(),
+            bubble: None,
         }
     }
 

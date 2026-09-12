@@ -93,6 +93,8 @@ impl World {
                 currencies: rec.currencies.iter().copied().collect(),
                 rebirth: rec.rebirth,
                 npc_roll: None,
+                shout_time: 0,
+                global_shout_time: 0,
                 quests: rec.quests.clone(),
                 def_mastery: 0,
                 phys_immunity: 0,

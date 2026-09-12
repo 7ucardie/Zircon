@@ -348,6 +348,19 @@ pub struct Weights {
     pub max_hand: i32,
 }
 
+/// Zircon `MessageType` (chat line colour and routing).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChatKind {
+    Normal,
+    Shout,
+    WhisperIn,
+    WhisperOut,
+    Group,
+    Global,
+    System,
+    Guild,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Action {
     Standing,
@@ -1303,6 +1316,11 @@ pub enum ClientMessage {
     },
     /// Pick up whatever lies on or next to the player.
     PickUp,
+    /// Chat text; prefixes route it (`/name` whisper, `!!` group, `!` shout,
+    /// `!@` global).
+    Chat {
+        text: String,
+    },
     /// Return to town while dead (Zircon `C.TownRevive`).
     TownRevive,
     NpcCall {
@@ -1534,7 +1552,14 @@ pub enum ServerMessage {
     QuestCancelled {
         quest: i32,
     },
+    /// System / status line (Zircon `MessageType.System`).
     Chat {
+        text: String,
+    },
+    /// Someone spoke; `id` set for local talk shows a bubble over them.
+    Say {
+        id: Option<ObjectId>,
+        kind: ChatKind,
         text: String,
     },
     Pong {
