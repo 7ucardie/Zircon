@@ -62,12 +62,29 @@ prices, and every map exit from `MovementInfo` (with level requirements).
 
 Skills: learn them from books (right-click in the bag), open the skill window
 with `E`, hover a skill and press `F1`-`F11` to bind it, then press the key to
-cast. Implemented: Swordsmanship, Spirit Sword and Willow Dance (passives),
-Slaying (charged power attack), Thrusting and Half Moon (stances hitting extra
-cells), Fire Ball, Ice Bolt, Thunder Bolt, Repulsion, Heal (heal over time),
-Poison Dust (green/red poison), Flaming Daggers and Shredding, with Zircon's
-power, cost, cooldown and skill-experience rules and the original effect
-sprites. Other skills show in the window but cannot be cast yet.
+cast. Implemented with Zircon's power, cost, cooldown, skill-experience rules
+and the original effect sprites:
+
+- Warrior: Swordsmanship, Potion Mastery, Slaying, Thrusting, Half Moon,
+  Shoulder Dash (dash that shoves weaker monsters aside), Flaming Sword,
+  Dragon Rise and Blade Storm (12 s charges consumed by the next swing),
+  Destructive Surge (stance hitting all eight neighbours), Defiance and Might
+  (self buffs, mutually exclusive).
+- Wizard: Fire Ball, Lightning Ball, Ice Bolt, Gust Blast, Repulsion,
+  Teleportation, Adamantine Fire Ball, Thunder Bolt, Ice Blades (slow),
+  Cyclone, Scorched Earth, Lightning Beam, Frozen Earth, Blow Earth (lines
+  of 8 cells with 30 % flanks), Fire Wall (burning cells for 20-60 s), Magic
+  Shield (halves damage, drains with hits).
+- Taoist: Heal, Spirit Sword, Poison Dust, Explosive Talisman (uses a
+  talisman), Evil Slayer and Greater Evil Slayer (holy talisman bonus), Magic
+  Resistance and Resilience (area buffs costing talismans), Mass Heal.
+- Assassin: Willow Dance, Vine Tree Dance, Discipline, Bloody Flower (life
+  steal), Poisonous Cloud (agility cloud), Full Bloom, White Lotus and Red
+  Lotus (press the key to arm the next swing; each opens the next in the
+  chain), Flaming Daggers, Shredding.
+
+Buff icons with their remaining time sit top-right. Other skills show in the
+window but cannot be cast yet.
 
 Developer automation (also used for visual checks):
 `ZIRCON_SCREENSHOT=out.png:5` saves a frame after 5 s and exits;
@@ -78,7 +95,8 @@ warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
 `ZIRCON_AUTOCLASS=wizard|taoist|assassin` picks the auto-created class;
 `ZIRCON_OPEN_SKILLS=1` opens the skill window; `ZIRCON_AUTO_CAST=<F key>`
-casts that key's spell at the nearest monster; `ZIRCON_AUTO_BELT=1` links every
+casts that key's spell at the nearest monster (`m<id>` casts by magic id, e.g.
+`m216` for Fire Wall); `ZIRCON_AUTO_BELT=1` links every
 consumable type in the bag to the belt and `ZIRCON_AUTO_USE=<slot>` presses
 that belt key once. Server side, `ZIRCON_DEV_LEVEL=n` starts new characters at
 level n, `ZIRCON_DEV_SKILLS=1` grants every class skill the level allows, and

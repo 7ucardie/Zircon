@@ -35,9 +35,22 @@ pub fn player_frame(action: Action) -> Frame {
         Action::Attack2 => Frame::new(800, 6, 100),
         Action::Cast1 => Frame::new(560, 5, 120),
         Action::Cast2 => Frame::new(640, 5, 120),
+        Action::Attack5 => Frame::new(880, 10, 60),
+        Action::Attack6 => Frame::new(960, 10, 60),
+        Action::Dash => Frame::new(1120, 6, 50),
+        Action::Stance => Frame::new(400, 3, 200),
         Action::Struck => Frame::new(1840, 3, 100),
         Action::Die => Frame::new(1920, 10, 100),
         Action::Dead => Frame::new(1929, 1, 1000),
+    }
+}
+
+/// Spell objects (`Client/Models/SpellObject.cs`): looping floor animations.
+pub fn spell_frame(effect: u8) -> Frame {
+    match effect {
+        mir_proto::spell_effect::FIRE_WALL => Frame::new(920, 5, 150),
+        mir_proto::spell_effect::POISONOUS_CLOUD => Frame::new(400, 15, 100),
+        _ => Frame::new(0, 1, 3_600_000),
     }
 }
 
@@ -58,7 +71,14 @@ pub fn monster_frame(action: Action) -> Frame {
     match action {
         Action::Standing => Frame::new(0, 4, 500),
         Action::Walking | Action::Running => Frame::new(80, 6, 100),
-        Action::Attack | Action::Attack2 | Action::Cast1 | Action::Cast2 => Frame::new(160, 6, 100),
+        Action::Attack
+        | Action::Attack2
+        | Action::Attack5
+        | Action::Attack6
+        | Action::Cast1
+        | Action::Cast2
+        | Action::Stance => Frame::new(160, 6, 100),
+        Action::Dash => Frame::new(80, 6, 100),
         Action::Struck => Frame::new(240, 2, 100),
         Action::Die => Frame::new(320, 10, 100),
         Action::Dead => Frame::new(329, 1, 1000),
@@ -95,6 +115,8 @@ pub struct ClientObject {
     /// Floating damage numbers: (value, time shown).
     pub damage: Vec<(i32, u64)>,
     pub poisoned: bool,
+    /// Visible buffs (Zircon `VisibleBuffs`): Magic Shield etc.
+    pub visible_buffs: Vec<u16>,
 }
 
 impl ClientObject {
@@ -109,6 +131,7 @@ impl ClientObject {
             Appearance::Monster { .. } => monster_frame(action),
             Appearance::Npc { image, .. } => npc_frame(*image),
             Appearance::Item { .. } => Frame::new(0, 1, 3_600_000),
+            Appearance::Spell { effect } => spell_frame(*effect),
         };
         ClientObject {
             id: state.id,
@@ -128,7 +151,12 @@ impl ClientObject {
             health_time: 0,
             damage: Vec::new(),
             poisoned: false,
+            visible_buffs: Vec::new(),
         }
+    }
+
+    pub fn is_spell(&self) -> bool {
+        matches!(self.appearance, Appearance::Spell { .. })
     }
 
     pub fn is_player(&self) -> bool {
@@ -152,7 +180,7 @@ impl ClientObject {
             Appearance::Player { name, .. } => name,
             Appearance::Monster { name, .. } => name,
             Appearance::Npc { name, .. } => name,
-            Appearance::Item { .. } => "",
+            Appearance::Item { .. } | Appearance::Spell { .. } => "",
         }
     }
 
@@ -162,6 +190,7 @@ impl ClientObject {
             Appearance::Monster { .. } => monster_frame(action),
             Appearance::Npc { image, .. } => npc_frame(*image),
             Appearance::Item { .. } => Frame::new(0, 1, 3_600_000),
+            Appearance::Spell { effect } => spell_frame(*effect),
         }
     }
 
@@ -232,7 +261,11 @@ impl ClientObject {
 
         // Smooth movement (Config.SmoothMove = true): remaining offset back toward origin.
         self.moving_offset = (0, 0);
-        if matches!(self.action, Action::Walking | Action::Running) && self.move_distance > 0 {
+        if matches!(
+            self.action,
+            Action::Walking | Action::Running | Action::Dash
+        ) && self.move_distance > 0
+        {
             let sum = self.frame.sum() as f32;
             let t = (now.saturating_sub(self.frame_start) as f32).min(sum);
             let r = (sum - t) / sum;
@@ -285,6 +318,7 @@ impl ClientObject {
             // NPCs never face a direction: index = image * 100 + frame.
             Appearance::Npc { image, .. } => self.frame_index + *image as u32 * 100,
             Appearance::Item { .. } => 0,
+            Appearance::Spell { .. } => self.frame.start + self.frame_index,
         }
     }
 

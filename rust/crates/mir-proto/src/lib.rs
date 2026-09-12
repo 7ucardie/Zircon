@@ -184,6 +184,8 @@ pub enum Appearance {
         /// `NPCInfo.Image`; sprite index = image * 100 + frame in NPC.Zl.
         image: u16,
     },
+    /// A spell object on a cell (fire wall, cloud); drawn on the floor.
+    Spell { effect: u8 },
     /// An item lying on the ground.
     Item {
         /// `ItemInfo.Index`.
@@ -336,6 +338,14 @@ pub enum Action {
     Cast1,
     /// Zircon `Combat2`: targeted spell cast.
     Cast2,
+    /// Zircon `Combat5`: Dragon Rise / one-handed lotus swing.
+    Attack5,
+    /// Zircon `Combat6`: Blade Storm.
+    Attack6,
+    /// Zircon `Combat8`: Shoulder Dash step.
+    Dash,
+    /// Zircon `Combat15`: self-buff stance cast.
+    Stance,
     Struck,
     Die,
     Dead,
@@ -360,14 +370,46 @@ pub mod magic_type {
     pub const SLAYING: u16 = 102;
     pub const THRUSTING: u16 = 103;
     pub const HALF_MOON: u16 = 104;
+    pub const SHOULDER_DASH: u16 = 105;
+    pub const FLAMING_SWORD: u16 = 106;
+    pub const DRAGON_RISE: u16 = 107;
+    pub const BLADE_STORM: u16 = 108;
+    pub const DESTRUCTIVE_SURGE: u16 = 109;
+    pub const DEFIANCE: u16 = 111;
+    pub const MIGHT: u16 = 113;
     pub const FIRE_BALL: u16 = 201;
+    pub const LIGHTNING_BALL: u16 = 202;
     pub const ICE_BOLT: u16 = 203;
+    pub const GUST_BLAST: u16 = 204;
     pub const REPULSION: u16 = 205;
+    pub const TELEPORTATION: u16 = 207;
+    pub const ADAMANTINE_FIRE_BALL: u16 = 208;
     pub const THUNDER_BOLT: u16 = 209;
+    pub const ICE_BLADES: u16 = 210;
+    pub const CYCLONE: u16 = 211;
+    pub const SCORCHED_EARTH: u16 = 212;
+    pub const LIGHTNING_BEAM: u16 = 213;
+    pub const FROZEN_EARTH: u16 = 214;
+    pub const BLOW_EARTH: u16 = 215;
+    pub const FIRE_WALL: u16 = 216;
+    pub const MAGIC_SHIELD: u16 = 219;
     pub const HEAL: u16 = 300;
     pub const SPIRIT_SWORD: u16 = 301;
     pub const POISON_DUST: u16 = 302;
+    pub const EXPLOSIVE_TALISMAN: u16 = 303;
+    pub const EVIL_SLAYER: u16 = 304;
+    pub const MAGIC_RESISTANCE: u16 = 306;
+    pub const GREATER_EVIL_SLAYER: u16 = 308;
+    pub const RESILIENCE: u16 = 309;
+    pub const MASS_HEAL: u16 = 313;
     pub const WILLOW_DANCE: u16 = 401;
+    pub const VINE_TREE_DANCE: u16 = 402;
+    pub const DISCIPLINE: u16 = 403;
+    pub const POISONOUS_CLOUD: u16 = 404;
+    pub const FULL_BLOOM: u16 = 405;
+    pub const WHITE_LOTUS: u16 = 407;
+    pub const RED_LOTUS: u16 = 410;
+    pub const BLOODY_FLOWER: u16 = 426;
     pub const FLAMING_DAGGERS: u16 = 454;
     pub const SHREDDING: u16 = 455;
 
@@ -375,16 +417,81 @@ pub mod magic_type {
     pub fn is_passive(m: u16) -> bool {
         matches!(
             m,
-            SWORDSMANSHIP | POTION_MASTERY | SLAYING | SPIRIT_SWORD | WILLOW_DANCE
+            SWORDSMANSHIP
+                | POTION_MASTERY
+                | SLAYING
+                | SPIRIT_SWORD
+                | WILLOW_DANCE
+                | VINE_TREE_DANCE
+                | DISCIPLINE
+                | BLOODY_FLOWER
         )
     }
     /// Stance skills switched with a hotkey and applied on melee swings.
     pub fn is_toggle(m: u16) -> bool {
-        matches!(m, THRUSTING | HALF_MOON)
+        matches!(m, THRUSTING | HALF_MOON | DESTRUCTIVE_SURGE)
+    }
+    /// Warrior power attacks charged with a hotkey for 12 s (Zircon `Toggle`).
+    pub fn is_charge(m: u16) -> bool {
+        matches!(m, FLAMING_SWORD | DRAGON_RISE | BLADE_STORM)
+    }
+    /// Assassin lotus combo: the hotkey arms the next swing.
+    pub fn is_lotus(m: u16) -> bool {
+        matches!(m, FULL_BLOOM | WHITE_LOTUS | RED_LOTUS)
     }
     /// Spells with the projectile cast animation (Zircon `Combat1`).
     pub fn is_projectile_cast(m: u16) -> bool {
-        matches!(m, FIRE_BALL | ICE_BOLT | FLAMING_DAGGERS | SHREDDING)
+        matches!(
+            m,
+            FIRE_BALL
+                | ICE_BOLT
+                | FLAMING_DAGGERS
+                | SHREDDING
+                | LIGHTNING_BALL
+                | GUST_BLAST
+                | ADAMANTINE_FIRE_BALL
+                | ICE_BLADES
+                | EXPLOSIVE_TALISMAN
+                | EVIL_SLAYER
+                | GREATER_EVIL_SLAYER
+                | MAGIC_RESISTANCE
+                | RESILIENCE
+        )
+    }
+    /// Spells that fly at or strike a chosen monster.
+    pub fn needs_target(m: u16) -> bool {
+        matches!(
+            m,
+            FIRE_BALL
+                | ICE_BOLT
+                | THUNDER_BOLT
+                | POISON_DUST
+                | FLAMING_DAGGERS
+                | SHREDDING
+                | LIGHTNING_BALL
+                | GUST_BLAST
+                | ADAMANTINE_FIRE_BALL
+                | ICE_BLADES
+                | CYCLONE
+                | EXPLOSIVE_TALISMAN
+                | EVIL_SLAYER
+                | GREATER_EVIL_SLAYER
+        )
+    }
+    /// Spells cast on a ground cell.
+    pub fn needs_cell(m: u16) -> bool {
+        matches!(m, FIRE_WALL | MAGIC_RESISTANCE | RESILIENCE | MASS_HEAL)
+    }
+    /// Spells that only use the facing direction.
+    pub fn is_line(m: u16) -> bool {
+        matches!(
+            m,
+            SCORCHED_EARTH | LIGHTNING_BEAM | FROZEN_EARTH | BLOW_EARTH
+        )
+    }
+    /// Self buffs cast facing down (Zircon `Combat15`).
+    pub fn is_stance_cast(m: u16) -> bool {
+        matches!(m, DEFIANCE | MIGHT)
     }
     /// Spells the prototype can cast.
     pub fn is_castable(m: u16) -> bool {
@@ -398,8 +505,72 @@ pub mod magic_type {
                 | POISON_DUST
                 | FLAMING_DAGGERS
                 | SHREDDING
+                | SHOULDER_DASH
+                | DEFIANCE
+                | MIGHT
+                | LIGHTNING_BALL
+                | GUST_BLAST
+                | TELEPORTATION
+                | ADAMANTINE_FIRE_BALL
+                | ICE_BLADES
+                | CYCLONE
+                | SCORCHED_EARTH
+                | LIGHTNING_BEAM
+                | FROZEN_EARTH
+                | BLOW_EARTH
+                | FIRE_WALL
+                | MAGIC_SHIELD
+                | EXPLOSIVE_TALISMAN
+                | EVIL_SLAYER
+                | MAGIC_RESISTANCE
+                | GREATER_EVIL_SLAYER
+                | RESILIENCE
+                | MASS_HEAL
+                | POISONOUS_CLOUD
         )
     }
+}
+
+/// Zircon `BuffType` values used by the prototype.
+pub mod buff_type {
+    pub const DEFIANCE: u16 = 100;
+    pub const MIGHT: u16 = 101;
+    pub const MAGIC_SHIELD: u16 = 201;
+    pub const HEAL: u16 = 300;
+    pub const MAGIC_RESISTANCE: u16 = 302;
+    pub const RESILIENCE: u16 = 303;
+    pub const POISONOUS_CLOUD: u16 = 400;
+    pub const FULL_BLOOM: u16 = 401;
+    pub const WHITE_LOTUS: u16 = 402;
+    pub const RED_LOTUS: u16 = 403;
+    /// Buffs other players can see (Zircon `visible: true`).
+    pub fn is_visible(b: u16) -> bool {
+        matches!(b, MAGIC_SHIELD | MAGIC_RESISTANCE | RESILIENCE)
+    }
+}
+
+/// Zircon `SpellEffect` values.
+pub mod spell_effect {
+    pub const FIRE_WALL: u8 = 2;
+    pub const POISONOUS_CLOUD: u8 = 7;
+}
+
+/// Zircon `Effect` values sent with `ObjectEffect` / `MapEffect`.
+pub mod effect {
+    pub const TELEPORT_OUT: u8 = 1;
+    pub const TELEPORT_IN: u8 = 2;
+    pub const FULL_BLOOM: u8 = 3;
+    pub const WHITE_LOTUS: u8 = 4;
+    pub const RED_LOTUS: u8 = 5;
+    pub const FIRE_WALL_SMOKE: u8 = 6;
+}
+
+/// A buff as the client sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BuffSummary {
+    pub kind: u16,
+    /// Milliseconds left; `u64::MAX` for permanent.
+    pub remaining_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -706,6 +877,40 @@ pub enum ServerMessage {
     },
     ObjectDie {
         id: ObjectId,
+    },
+    /// One Shoulder Dash step (Zircon `S.ObjectDash`); sent to the dasher too.
+    ObjectDash {
+        id: ObjectId,
+        direction: Direction,
+        /// Cell the dasher now stands on.
+        location: Point,
+        distance: u8,
+        magic: u16,
+    },
+    /// A one-off effect on an object (teleport in/out, lotus hits).
+    ObjectEffect {
+        id: ObjectId,
+        effect: u8,
+        location: Point,
+    },
+    /// A one-off effect on a cell (fire wall smoke).
+    MapEffect {
+        location: Point,
+        effect: u8,
+    },
+    BuffAdd(BuffSummary),
+    BuffRemove {
+        kind: u16,
+    },
+    BuffTime {
+        kind: u16,
+        remaining_ms: u64,
+    },
+    /// A visible buff started or ended on someone (Zircon `ObjectBuffAdd/Remove`).
+    ObjectBuff {
+        id: ObjectId,
+        kind: u16,
+        on: bool,
     },
     ObjectRevive {
         id: ObjectId,

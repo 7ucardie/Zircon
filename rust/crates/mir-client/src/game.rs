@@ -26,7 +26,7 @@ use crate::net::Connection;
 use crate::text::TextLayer;
 use crate::ui::{Ctx, Input};
 use crate::windows::{Bag, NpcDialog, WindowState};
-use mir_proto::{magic_type, MagicSummary};
+use mir_proto::{buff_type, magic_type, MagicSummary};
 use std::collections::{HashMap as StdHashMap, HashSet};
 
 pub const CELL_W: i32 = 48;
@@ -87,6 +87,12 @@ pub struct Game {
     belt: Vec<BeltLink>,
     /// Zircon `GameScene.UseItemTime`: no consumable before this.
     use_item_time: u64,
+    /// Own buffs: (kind, client time it ends; MAX = never).
+    buffs: Vec<(u16, u64)>,
+    /// A charged warrior power attack waiting for the next swing.
+    charged: Option<u16>,
+    /// Lotus skill armed for the next swing (Zircon `User.AttackMagic`).
+    armed_lotus: Option<u16>,
 }
 
 struct View {
@@ -181,6 +187,9 @@ impl Game {
             pending_payloads: Vec::new(),
             belt: (0..MAX_BELT as u8).map(BeltLink::empty).collect(),
             use_item_time: 0,
+            buffs: Vec::new(),
+            charged: None,
+            armed_lotus: None,
             character: None,
             status: String::new(),
             map: None,
@@ -368,11 +377,7 @@ impl Game {
                 if let Some(o) = self.objects.get_mut(&id) {
                     let location = o.queue.back().map(|q| q.location).unwrap_or(o.location);
                     o.enqueue(Queued {
-                        action: if attack_magic == Some(magic_type::HALF_MOON) {
-                            Action::Attack2
-                        } else {
-                            Action::Attack
-                        },
+                        action: attack_action(attack_magic),
                         direction,
                         location,
                         distance: 0,
@@ -396,11 +401,7 @@ impl Game {
                 if Some(id) != self.user {
                     if let Some(o) = self.objects.get_mut(&id) {
                         o.enqueue(Queued {
-                            action: if magic_type::is_projectile_cast(magic) {
-                                Action::Cast1
-                            } else {
-                                Action::Cast2
-                            },
+                            action: cast_action(magic),
                             direction,
                             location,
                             distance: 0,
@@ -443,11 +444,83 @@ impl Game {
             ServerMessage::MagicToggle { magic, on } => {
                 if magic == magic_type::SLAYING {
                     self.slaying_ready = on;
+                } else if magic_type::is_charge(magic) {
+                    if on {
+                        self.charged = Some(magic);
+                    } else if self.charged == Some(magic) {
+                        self.charged = None;
+                    }
+                } else if magic_type::is_lotus(magic) {
+                    if !on && self.armed_lotus == Some(magic) {
+                        self.armed_lotus = None;
+                    }
                 } else if on {
                     self.toggles.insert(magic);
                 } else {
                     self.toggles.remove(&magic);
                 }
+            }
+            ServerMessage::BuffAdd(b) => {
+                self.buffs.retain(|(k, _)| *k != b.kind);
+                let until = if b.remaining_ms == u64::MAX {
+                    u64::MAX
+                } else {
+                    now + b.remaining_ms
+                };
+                self.buffs.push((b.kind, until));
+            }
+            ServerMessage::BuffRemove { kind } => self.buffs.retain(|(k, _)| *k != kind),
+            ServerMessage::BuffTime { kind, remaining_ms } => {
+                if let Some(b) = self.buffs.iter_mut().find(|(k, _)| *k == kind) {
+                    b.1 = now + remaining_ms;
+                }
+            }
+            ServerMessage::ObjectBuff { id, kind, on } => {
+                if let Some(o) = self.objects.get_mut(&id) {
+                    o.visible_buffs.retain(|k| *k != kind);
+                    if on {
+                        o.visible_buffs.push(kind);
+                    }
+                }
+            }
+            ServerMessage::ObjectDash {
+                id,
+                direction,
+                location,
+                distance,
+                ..
+            } => {
+                let from = location.step(direction.rotate(4), distance as i32);
+                if Some(id) == self.user {
+                    self.goal = None;
+                    self.action_time = now + 300;
+                    self.move_time = now + 300;
+                }
+                if let Some(o) = self.objects.get_mut(&id) {
+                    let pending_end = o.queue.back().map(|q| q.location);
+                    if pending_end.is_none() && o.moving_offset == (0, 0) && o.location != from {
+                        o.location = from;
+                    }
+                    o.enqueue(Queued {
+                        action: Action::Dash,
+                        direction,
+                        location,
+                        distance: distance.max(1) as i32,
+                    });
+                }
+            }
+            ServerMessage::ObjectEffect {
+                id,
+                effect,
+                location,
+            } => {
+                if let Some(e) = effects::object_effect(effect, id, location, now) {
+                    self.effects.push(e);
+                }
+            }
+            ServerMessage::MapEffect { location, effect } => {
+                self.effects
+                    .extend(effects::map_effect(effect, location, now));
             }
             ServerMessage::ObjectPoisoned { id, poisoned } => {
                 if let Some(o) = self.objects.get_mut(&id) {
@@ -679,11 +752,9 @@ impl Game {
         }
         self.advance_effects(now, width, height);
         self.hovered = self.hit_test(width, height);
-        // Developer automation: ZIRCON_AUTO_CAST=<F key> casts at the nearest monster.
-        if let Some(f) = std::env::var("ZIRCON_AUTO_CAST")
-            .ok()
-            .and_then(|v| v.parse::<u8>().ok())
-        {
+        // Developer automation: ZIRCON_AUTO_CAST=<F key> (or m<magic id>) casts
+        // at the nearest monster, with the mouse over it for cell casts.
+        if let Ok(v) = std::env::var("ZIRCON_AUTO_CAST") {
             if now >= self.magic_time {
                 let nearest = self.user().and_then(|u| {
                     self.objects
@@ -695,8 +766,17 @@ impl Game {
                         .map(|o| o.id)
                 });
                 if let Some(t) = nearest {
+                    let view = View::new(width, height, self.user());
+                    if let Some(o) = self.objects.get(&t) {
+                        let (px, py) = view.object_px(o);
+                        self.mouse = (px as f32 + 24.0, py as f32 + 16.0);
+                    }
                     self.hovered = Some(t);
-                    self.function_key(f, now, width, height, conn);
+                    if let Some(id) = v.strip_prefix('m').and_then(|s| s.parse::<u16>().ok()) {
+                        self.use_skill(id, now, width, height, conn);
+                    } else if let Ok(f) = v.parse::<u8>() {
+                        self.function_key(f, now, width, height, conn);
+                    }
                 }
             }
         }
@@ -771,6 +851,14 @@ impl Game {
                 let (library, shape) = monster_sprite(*image)?;
                 Some((library, o.sprite_index(shape)))
             }
+            Appearance::Spell { effect } => {
+                let library = match *effect {
+                    mir_proto::spell_effect::FIRE_WALL => effects::MAGIC,
+                    mir_proto::spell_effect::POISONOUS_CLOUD => effects::MAGIC_EX4,
+                    _ => return None,
+                };
+                Some((library, o.sprite_index(0)))
+            }
             Appearance::Npc { .. } => Some((lib::NPC, o.sprite_index(0))),
             Appearance::Item { info, .. } => {
                 let image = self.catalog.get(*info).map(|d| d.image).unwrap_or(0);
@@ -797,7 +885,7 @@ impl Game {
         let ids: Vec<ObjectId> = self.objects.keys().copied().collect();
         for id in ids {
             let o = &self.objects[&id];
-            if Some(id) == self.user || o.dead {
+            if Some(id) == self.user || o.dead || o.is_spell() {
                 continue;
             }
             let Some((library, index)) = self.body_sprite(o) else {
@@ -926,8 +1014,9 @@ impl Game {
                         let direction = Direction::from_points(user_loc, target.location);
                         self.action_time = now + ATTACK_TIME;
                         self.attack_time = now + ATTACK_DELAY;
-                        // Zircon priority: Slaying, then Thrusting, then Half Moon (last wins).
-                        let mut attack_magic = None;
+                        // Zircon `UserObject` priority: lotus arm, Slaying,
+                        // stances, Destructive Surge, then charged power attacks.
+                        let mut attack_magic = self.armed_lotus;
                         if self.slaying_ready {
                             attack_magic = Some(magic_type::SLAYING);
                         }
@@ -937,11 +1026,13 @@ impl Game {
                         if self.toggles.contains(&magic_type::HALF_MOON) {
                             attack_magic = Some(magic_type::HALF_MOON);
                         }
-                        let action = if attack_magic == Some(magic_type::HALF_MOON) {
-                            Action::Attack2
-                        } else {
-                            Action::Attack
-                        };
+                        if self.toggles.contains(&magic_type::DESTRUCTIVE_SURGE) {
+                            attack_magic = Some(magic_type::DESTRUCTIVE_SURGE);
+                        }
+                        if let Some(c) = self.charged {
+                            attack_magic = Some(c);
+                        }
+                        let action = attack_action(attack_magic);
                         if let Some(u) = self.user_mut() {
                             u.queue.clear();
                             u.enqueue(Queued {
@@ -1061,13 +1152,27 @@ impl Game {
             }
             return;
         }
-        let Some(m) = self.magics.iter().find(|m| m.key == f).cloned() else {
+        let Some(magic) = self.magics.iter().find(|m| m.key == f).map(|m| m.magic) else {
             return;
         };
-        let Some(def) = self.catalog.magic(m.magic).cloned() else {
+        self.use_skill(magic, now, width, height, conn);
+    }
+
+    /// Use a learned skill: toggle, charge, arm or cast it.
+    fn use_skill(
+        &mut self,
+        magic: u16,
+        now: u64,
+        width: i32,
+        height: i32,
+        conn: Option<&Connection>,
+    ) {
+        let Some(m) = self.magics.iter().find(|m| m.magic == magic).cloned() else {
             return;
         };
-        let magic = m.magic;
+        let Some(def) = self.catalog.magic(magic).cloned() else {
+            return;
+        };
         if magic_type::is_passive(magic) {
             self.say(format!("{} works on its own.", def.name), now);
             return;
@@ -1076,6 +1181,23 @@ impl Game {
             let on = !self.toggles.contains(&magic);
             if let Some(c) = conn {
                 c.send(ClientMessage::MagicToggle { magic, on });
+            }
+            return;
+        }
+        if magic_type::is_charge(magic) {
+            if def.cost(m.level) > self.stats.mp {
+                self.say("Not enough mana.".into(), now);
+                return;
+            }
+            if let Some(c) = conn {
+                c.send(ClientMessage::MagicToggle { magic, on: true });
+            }
+            return;
+        }
+        if magic_type::is_lotus(magic) {
+            if self.armed_lotus != Some(magic) {
+                self.armed_lotus = Some(magic);
+                self.say(format!("{} is ready.", def.name), now);
             }
             return;
         }
@@ -1116,34 +1238,75 @@ impl Game {
         let view = View::new(width, height, Some(user));
         let mouse_cell = view.cell_at(self.mouse.0, self.mouse.1);
         let hovered = self.hovered.and_then(|id| self.objects.get(&id));
+        if magic == magic_type::MAGIC_SHIELD
+            && self
+                .buffs
+                .iter()
+                .any(|(k, _)| *k == buff_type::MAGIC_SHIELD)
+        {
+            self.say("You are already shielded.".into(), now);
+            return;
+        }
+        let self_cast = matches!(
+            magic,
+            magic_type::TELEPORTATION
+                | magic_type::MAGIC_SHIELD
+                | magic_type::DEFIANCE
+                | magic_type::MIGHT
+                | magic_type::POISONOUS_CLOUD
+                | magic_type::SHOULDER_DASH
+        );
         let target = match magic {
             magic_type::HEAL => hovered
                 .filter(|o| o.is_player())
                 .map(|o| o.id)
                 .or(self.user),
-            magic_type::REPULSION => None,
-            _ => hovered.filter(|o| o.is_monster() && !o.dead).map(|o| o.id),
+            m if magic_type::needs_target(m) => {
+                hovered.filter(|o| o.is_monster() && !o.dead).map(|o| o.id)
+            }
+            _ => None,
         };
-        let target_loc = target
-            .and_then(|t| self.objects.get(&t))
-            .map(|o| o.location)
-            .unwrap_or(mouse_cell);
+        // Ground casts and lines use the mouse cell; self casts the own cell.
+        let target_loc = if self_cast {
+            user_loc
+        } else {
+            target
+                .and_then(|t| self.objects.get(&t))
+                .map(|o| o.location)
+                .unwrap_or(mouse_cell)
+        };
         if target_loc.distance(user_loc) > mir_proto::MAGIC_RANGE {
             self.say("Too far away.".into(), now);
             return;
         }
-        let direction = if target_loc == user_loc {
+        let direction = if magic_type::is_stance_cast(magic) {
+            Direction::Down
+        } else if magic == magic_type::SHOULDER_DASH || magic_type::is_line(magic) {
+            if mouse_cell == user_loc {
+                user.direction
+            } else {
+                Direction::from_points(user_loc, mouse_cell)
+            }
+        } else if target_loc == user_loc {
             user.direction
         } else {
             Direction::from_points(user_loc, target_loc)
         };
         self.magic_time = now + mir_proto::MAGIC_DELAY;
         self.action_time = now + 600;
-        let action = if magic_type::is_projectile_cast(magic) {
-            Action::Cast1
-        } else {
-            Action::Cast2
-        };
+        if magic == magic_type::SHOULDER_DASH {
+            // No cast animation: the server streams dash steps.
+            if let Some(c) = conn {
+                c.send(ClientMessage::Magic {
+                    magic,
+                    direction,
+                    target: None,
+                    location: user_loc,
+                });
+            }
+            return;
+        }
+        let action = cast_action(magic);
         if let Some(u) = self.user_mut() {
             u.queue.clear();
             u.enqueue(Queued {
@@ -1192,7 +1355,7 @@ impl Game {
                 self.projectiles.push(p);
             }
         }
-        self.effects.retain(|e| e.frame(now).is_some());
+        self.effects.retain(|e| !e.finished(now));
         let mut arrived = Vec::new();
         self.projectiles.retain(|p| {
             if p.progress(now) >= 1.0 {
@@ -1226,7 +1389,26 @@ impl Game {
     }
 
     fn draw_effects(&mut self, view: &View, gpu: &Gpu, renderer: &mut SpriteRenderer, now: u64) {
-        let effects = self.effects.clone();
+        // Looping Magic Shield rings.
+        let shielded: Vec<ObjectId> = self
+            .objects
+            .values()
+            .filter(|o| !o.dead && o.visible_buffs.contains(&buff_type::MAGIC_SHIELD))
+            .map(|o| o.id)
+            .collect();
+        let mut effects = self.effects.clone();
+        for id in shielded {
+            effects.push(Effect {
+                library: effects::MAGIC,
+                start: effects::shield_frame(now),
+                count: 1,
+                delay_ms: 1000,
+                color: effects::WIND,
+                anchor: Anchor::Object(id),
+                direction: None,
+                started: now,
+            });
+        }
         for e in effects {
             let Some(frame) = e.frame(now) else { continue };
             let Some((dx, dy)) = self.anchor_px(view, e.anchor) else {
@@ -1516,6 +1698,9 @@ impl Game {
                 if dx < -100 || dx > width + 100 || dy < -150 || dy > height + 100 {
                     continue;
                 }
+                if o.is_spell() {
+                    continue;
+                }
                 if o.is_item() {
                     if let Appearance::Item { info, count } = &o.appearance {
                         let mut label = self.catalog.name(*info);
@@ -1622,6 +1807,33 @@ impl Game {
             return;
         };
         let (dx, dy) = view.object_px(o);
+        if o.is_spell() {
+            let color = match &o.appearance {
+                Appearance::Spell { effect } if *effect == mir_proto::spell_effect::FIRE_WALL => {
+                    [1.0, 1.0, 1.0, 0.55]
+                }
+                _ => [139.0 / 255.0, 69.0 / 255.0, 19.0 / 255.0, 1.0],
+            };
+            if let Some(info) = self.assets.info(library, index) {
+                if let Some(r) = Self::sprite(
+                    &mut self.assets,
+                    renderer,
+                    gpu,
+                    library,
+                    index,
+                    Surface::Image,
+                ) {
+                    renderer.draw(
+                        r,
+                        (dx + info.offset_x as i32) as f32,
+                        (dy + info.offset_y as i32) as f32,
+                        color,
+                        Blend::Screen,
+                    );
+                }
+            }
+            return;
+        }
         if o.is_item() {
             if let Some(info) = self.assets.info(library, index) {
                 let x = dx + (CELL_W - info.width as i32) / 2;
@@ -2040,6 +2252,27 @@ impl Game {
             text.draw(line, 13, 12.0, y, [255, 255, 200, 255]);
             y += 17.0;
         }
+        // Own buffs: Zircon `BuffDialog` icons (CBIcon), top-right, 27 px pitch.
+        let buffs = self.buffs.clone();
+        for (i, (kind, until)) in buffs.iter().enumerate() {
+            let icon = buff_icon(*kind);
+            let x = width as f32 - 30.0 - (i % 6) as f32 * 27.0;
+            let y = 6.0 + (i / 6) as f32 * 27.0;
+            if let Some(r) = Self::sprite(&mut self.assets, renderer, gpu, 21, icon, Surface::Image)
+            {
+                renderer.draw(r, x, y, white, Blend::Alpha);
+            }
+            if *until != u64::MAX {
+                let secs = until.saturating_sub(now).div_ceil(1000);
+                text.draw(
+                    &secs.to_string(),
+                    10,
+                    x + 2.0,
+                    y + 14.0,
+                    [255, 255, 255, 230],
+                );
+            }
+        }
         if self.debug {
             let (pages, sprites) = renderer.stats();
             let dbg = format!(
@@ -2062,5 +2295,46 @@ impl Game {
                 );
             }
         }
+    }
+}
+
+/// Zircon `Functions.GetAttackAnimation` for the swings we know.
+fn attack_action(magic: Option<u16>) -> Action {
+    match magic {
+        Some(magic_type::HALF_MOON) | Some(magic_type::DESTRUCTIVE_SURGE) => Action::Attack2,
+        Some(magic_type::DRAGON_RISE)
+        | Some(magic_type::FULL_BLOOM)
+        | Some(magic_type::WHITE_LOTUS)
+        | Some(magic_type::RED_LOTUS) => Action::Attack5,
+        Some(magic_type::BLADE_STORM) => Action::Attack6,
+        _ => Action::Attack,
+    }
+}
+
+/// Zircon `Functions.GetMagicAnimation`.
+fn cast_action(magic: u16) -> Action {
+    if magic_type::is_stance_cast(magic) {
+        Action::Stance
+    } else if magic_type::is_projectile_cast(magic) {
+        Action::Cast1
+    } else {
+        Action::Cast2
+    }
+}
+
+/// Zircon `BuffDialog` icon index in `CBIcons.Zl`.
+fn buff_icon(kind: u16) -> u32 {
+    match kind {
+        buff_type::DEFIANCE => 97,
+        buff_type::MIGHT => 96,
+        buff_type::MAGIC_SHIELD => 100,
+        buff_type::HEAL => 78,
+        buff_type::MAGIC_RESISTANCE => 92,
+        buff_type::RESILIENCE => 91,
+        buff_type::POISONOUS_CLOUD => 98,
+        buff_type::FULL_BLOOM => 162,
+        buff_type::WHITE_LOTUS => 163,
+        buff_type::RED_LOTUS => 164,
+        _ => 73,
     }
 }

@@ -955,6 +955,226 @@ mod tests {
     }
 
     #[test]
+    fn wizard_fire_wall_burns_a_chicken_standing_in_it() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Pyro");
+        rec.class = mir_proto::Class::Wizard;
+        rec.level = 24;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let fire_wall = learn(&mut world, me, "Fire Wall");
+        let victim = nearest_chicken(&world, me);
+        let loc = world.objects[&me].location;
+        let map = world.objects[&me].map;
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 3))
+            .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+            .unwrap();
+        world.teleport(victim, cell);
+        let hp_before = world.objects[&victim].hp;
+        world.cast(me, fire_wall, Direction::from_points(loc, cell), None, cell);
+        let mut now = 1000;
+        for _ in 0..30 {
+            now += 100;
+            world.tick(now);
+        }
+        let walls = world
+            .objects
+            .values()
+            .filter(|o| matches!(o.appearance, Appearance::Spell { .. }) && o.map == map)
+            .count();
+        assert!(walls >= 1, "fire wall spell objects should exist");
+        let hurt = world
+            .objects
+            .get(&victim)
+            .map(|v| v.dead || v.hp < hp_before)
+            .unwrap_or(true);
+        assert!(hurt, "a chicken standing in the fire wall burns");
+        // Walls burn out: level 0 => 10 ticks of 2 s.
+        for _ in 0..250 {
+            now += 100;
+            world.tick(now);
+        }
+        let walls = world
+            .objects
+            .values()
+            .filter(|o| matches!(o.appearance, Appearance::Spell { .. }))
+            .count();
+        assert_eq!(walls, 0, "fire walls expire");
+    }
+
+    #[test]
+    fn warrior_might_raises_damage_then_expires() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Brute");
+        rec.level = 48;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let might = learn(&mut world, me, "Might");
+        let before = world.objects[&me].stats.max_dc;
+        let loc = world.objects[&me].location;
+        world.cast(me, might, Direction::Down, None, loc);
+        let mut now = 1000;
+        for _ in 0..12 {
+            now += 100;
+            world.tick(now);
+        }
+        let during = world.objects[&me].stats.max_dc;
+        // +5 % of a small DC rounds to 0, so only check it never drops.
+        assert!(
+            during >= before,
+            "Might must not lower max DC: {before} -> {during}"
+        );
+        let msgs = drain(&mut world);
+        assert!(msgs.iter().any(
+            |m| matches!(m, ServerMessage::BuffAdd(b) if b.kind == mir_proto::buff_type::MIGHT)
+        ));
+        // Level 0 lasts 60 s.
+        now += 61_000;
+        world.tick(now);
+        assert_eq!(
+            world.objects[&me].stats.max_dc, before,
+            "buff should expire"
+        );
+        let msgs = drain(&mut world);
+        assert!(msgs.iter().any(
+            |m| matches!(m, ServerMessage::BuffRemove { kind } if *kind == mir_proto::buff_type::MIGHT)
+        ));
+    }
+
+    #[test]
+    fn warrior_shoulder_dash_moves_forward() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Dasher");
+        rec.level = 27;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let dash = learn(&mut world, me, "Shoulder Dash");
+        let loc = world.objects[&me].location;
+        let map = world.objects[&me].map;
+        let dir = Direction::ALL
+            .iter()
+            .copied()
+            .find(|d| {
+                (1..=3).all(|i| {
+                    let p = loc.step(*d, i);
+                    world.maps[&map].file.is_walkable(p.x, p.y)
+                        && world.maps[&map].objects_at(p).is_empty()
+                })
+            })
+            .expect("a clear direction");
+        world.cast(me, dash, dir, None, loc);
+        let mut now = 1000;
+        let mut steps = 0;
+        for _ in 0..30 {
+            now += 100;
+            world.tick(now);
+            steps += drain(&mut world)
+                .iter()
+                .filter(|m| matches!(m, ServerMessage::ObjectDash { id, .. } if *id == me))
+                .count();
+        }
+        let after = world.objects[&me].location;
+        assert!(steps >= 1, "dash steps should be broadcast");
+        assert!(
+            after != loc && loc.distance(after) >= 1,
+            "player should have moved"
+        );
+        assert_eq!(Direction::from_points(loc, after), dir);
+    }
+
+    #[test]
+    fn taoist_explosive_talisman_consumes_an_amulet() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Tao");
+        rec.class = mir_proto::Class::Taoist;
+        rec.level = 13;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let talisman = learn(&mut world, me, "Explosive Talisman");
+        let victim = nearest_chicken(&world, me);
+        let loc = world.objects[&me].location;
+        let map = world.objects[&me].map;
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 2))
+            .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+            .unwrap();
+        world.teleport(victim, cell);
+        // Without a talisman equipped nothing flies.
+        world.cast(
+            me,
+            talisman,
+            Direction::from_points(loc, cell),
+            Some(victim),
+            cell,
+        );
+        let msgs = drain(&mut world);
+        let flew = msgs.iter().any(|m| matches!(m, ServerMessage::ObjectMagic { magic, targets, .. } if *magic == talisman && !targets.is_empty()));
+        assert!(!flew, "no talisman: no target");
+        // Equip a stack of talismans (ItemType Amulet, Shape 0).
+        let amulet = world
+            .data
+            .items
+            .values()
+            .filter(|d| {
+                d.item_type == mir_proto::item_type::AMULET
+                    && d.shape == 0
+                    && d.required_amount <= 13
+            })
+            .map(|d| d.index)
+            .min()
+            .expect("a talisman item");
+        world.test_give_item(me, amulet, 5);
+        let slot = world.test_slot_of(me, amulet).unwrap();
+        world.item_use(me, slot);
+        let mut now = 3000;
+        world.tick(now);
+        drain(&mut world);
+        world.cast(
+            me,
+            talisman,
+            Direction::from_points(loc, cell),
+            Some(victim),
+            cell,
+        );
+        now += 50;
+        world.tick(now);
+        let msgs = drain(&mut world);
+        let flew = msgs.iter().any(|m| matches!(m, ServerMessage::ObjectMagic { magic, targets, .. } if *magic == talisman && !targets.is_empty()));
+        assert!(flew, "with a talisman the spell targets the chicken");
+        let count = world.objects[&me].player().unwrap().bag.equipment[mir_proto::slot::AMULET]
+            .as_ref()
+            .map(|i| i.count)
+            .unwrap_or(0);
+        assert_eq!(count, 4, "one talisman is consumed per cast");
+        let hp_before = world.objects[&victim].hp;
+        for _ in 0..20 {
+            now += 100;
+            world.tick(now);
+        }
+        let hurt = world
+            .objects
+            .get(&victim)
+            .map(|v| v.dead || v.hp < hp_before)
+            .unwrap_or(true);
+        assert!(hurt, "the talisman should hit");
+    }
+
+    #[test]
     fn warrior_thrusting_reaches_the_second_cell() {
         let Some(mut world) = world() else {
             return;
