@@ -420,10 +420,20 @@ pub mod magic_type {
     pub const POISON_DUST: u16 = 302;
     pub const EXPLOSIVE_TALISMAN: u16 = 303;
     pub const EVIL_SLAYER: u16 = 304;
+    pub const INVISIBILITY: u16 = 305;
     pub const MAGIC_RESISTANCE: u16 = 306;
+    pub const MASS_INVISIBILITY: u16 = 307;
     pub const GREATER_EVIL_SLAYER: u16 = 308;
     pub const RESILIENCE: u16 = 309;
+    pub const TRAP_OCTAGON: u16 = 310;
+    pub const COMBAT_KICK: u16 = 311;
+    pub const ELEMENTAL_SUPERIORITY: u16 = 312;
     pub const MASS_HEAL: u16 = 313;
+    pub const BLOOD_LUST: u16 = 314;
+    pub const RESURRECTION: u16 = 315;
+    pub const PURIFICATION: u16 = 316;
+    pub const TRANSPARENCY: u16 = 317;
+    pub const CELESTIAL_LIGHT: u16 = 318;
     pub const SUMMON_SKELETON: u16 = 332;
     pub const SUMMON_SHINSU: u16 = 333;
     pub const SUMMON_JIN_SKELETON: u16 = 334;
@@ -512,6 +522,7 @@ pub mod magic_type {
                 | EXPEL_UNDEAD
                 | CHAIN_LIGHTNING
                 | ELECTRIC_SHOCK
+                | PURIFICATION
         )
     }
     /// Spells cast on a ground cell.
@@ -530,6 +541,11 @@ pub mod magic_type {
                 | DRAGON_TORNADO
                 | METEOR_SHOWER
                 | TEMPEST
+                | MASS_INVISIBILITY
+                | TRAP_OCTAGON
+                | ELEMENTAL_SUPERIORITY
+                | BLOOD_LUST
+                | RESURRECTION
         )
     }
     /// Spells cast on oneself (no target, own cell).
@@ -551,6 +567,10 @@ pub mod magic_type {
                 | SUMMON_SHINSU
                 | SUMMON_JIN_SKELETON
                 | STRENGTH_OF_FAITH
+                | INVISIBILITY
+                | TRANSPARENCY
+                | CELESTIAL_LIGHT
+                | COMBAT_KICK
         )
     }
     /// Spells that only use the facing direction.
@@ -628,6 +648,16 @@ pub mod magic_type {
                 | SUMMON_SHINSU
                 | SUMMON_JIN_SKELETON
                 | STRENGTH_OF_FAITH
+                | INVISIBILITY
+                | MASS_INVISIBILITY
+                | TRAP_OCTAGON
+                | COMBAT_KICK
+                | ELEMENTAL_SUPERIORITY
+                | BLOOD_LUST
+                | RESURRECTION
+                | PURIFICATION
+                | TRANSPARENCY
+                | CELESTIAL_LIGHT
         )
     }
 }
@@ -641,18 +671,36 @@ pub mod buff_type {
     pub const RENOUNCE: u16 = 200;
     pub const MAGIC_SHIELD: u16 = 201;
     pub const HEAL: u16 = 300;
+    pub const INVISIBILITY: u16 = 301;
     pub const MAGIC_RESISTANCE: u16 = 302;
     pub const RESILIENCE: u16 = 303;
+    pub const ELEMENTAL_SUPERIORITY: u16 = 304;
+    pub const BLOOD_LUST: u16 = 305;
     pub const STRENGTH_OF_FAITH: u16 = 306;
+    pub const CELESTIAL_LIGHT: u16 = 307;
+    pub const TRANSPARENCY: u16 = 308;
     pub const POISONOUS_CLOUD: u16 = 400;
     pub const FULL_BLOOM: u16 = 401;
     pub const WHITE_LOTUS: u16 = 402;
     pub const RED_LOTUS: u16 = 403;
+    pub const CLOAK: u16 = 404;
+    pub const GHOST_WALK: u16 = 405;
     /// Buffs other players can see (Zircon `visible: true`).
     pub fn is_visible(b: u16) -> bool {
         matches!(
             b,
-            MAGIC_SHIELD | MAGIC_RESISTANCE | RESILIENCE | REFLECT_DAMAGE | STRENGTH_OF_FAITH
+            MAGIC_SHIELD
+                | MAGIC_RESISTANCE
+                | RESILIENCE
+                | REFLECT_DAMAGE
+                | STRENGTH_OF_FAITH
+                | INVISIBILITY
+                | ELEMENTAL_SUPERIORITY
+                | BLOOD_LUST
+                | CELESTIAL_LIGHT
+                | TRANSPARENCY
+                | CLOAK
+                | GHOST_WALK
         )
     }
 }
@@ -661,6 +709,7 @@ pub mod buff_type {
 pub mod spell_effect {
     pub const FIRE_WALL: u8 = 2;
     pub const TEMPEST: u8 = 3;
+    pub const TRAP_OCTAGON: u8 = 5;
     pub const POISONOUS_CLOUD: u8 = 7;
 }
 

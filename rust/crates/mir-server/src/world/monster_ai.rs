@@ -74,11 +74,15 @@ impl World {
             let o = self.objects.get_mut(&id).unwrap();
             let m = o.monster_mut().unwrap();
             if let Some(t) = m.target {
+                let me = &self.objects[&id];
                 let valid = self
                     .objects
                     .get(&t)
                     .map(|to| {
-                        !to.dead && to.map == map && to.location.distance(loc) <= MAX_VIEW_RANGE
+                        !to.dead
+                            && to.map == map
+                            && to.location.distance(loc) <= MAX_VIEW_RANGE
+                            && self.monster_may_target(me, to)
                     })
                     .unwrap_or(false);
                 if !valid {
@@ -134,7 +138,8 @@ impl World {
                 let me = &self.objects[&id];
                 for pid in &self.maps[&map].objects {
                     let p = &self.objects[pid];
-                    if !me.hostile_to(p) || !self.can_see(me, p) {
+                    if !me.hostile_to(p) || !self.can_see(me, p) || !self.monster_may_target(me, p)
+                    {
                         continue;
                     }
                     let d = p.location.distance(loc);

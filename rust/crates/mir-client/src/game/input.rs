@@ -403,7 +403,10 @@ impl Game {
         }
         let direction = if magic_type::is_stance_cast(magic) {
             Direction::Down
-        } else if magic == magic_type::SHOULDER_DASH || magic_type::is_line(magic) {
+        } else if magic == magic_type::SHOULDER_DASH
+            || magic == magic_type::COMBAT_KICK
+            || magic_type::is_line(magic)
+        {
             if mouse_cell == user_loc {
                 user.direction
             } else {

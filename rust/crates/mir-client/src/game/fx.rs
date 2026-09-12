@@ -83,7 +83,25 @@ impl Game {
             .filter(|o| !o.dead && o.visible_buffs.contains(&buff_type::REFLECT_DAMAGE))
             .map(|o| o.id)
             .collect();
+        let celestial: Vec<ObjectId> = self
+            .objects
+            .values()
+            .filter(|o| !o.dead && o.visible_buffs.contains(&buff_type::CELESTIAL_LIGHT))
+            .map(|o| o.id)
+            .collect();
         let mut effects = self.effects.clone();
+        for id in celestial {
+            effects.push(Effect {
+                library: effects::MAGIC_EX2,
+                start: 300 + ((now / 200) % 3) as u32,
+                count: 1,
+                delay_ms: 1000,
+                color: effects::HOLY,
+                anchor: Anchor::Object(id),
+                direction: None,
+                started: now,
+            });
+        }
         for id in reflecting {
             effects.push(Effect {
                 library: effects::MAGIC_EX2,

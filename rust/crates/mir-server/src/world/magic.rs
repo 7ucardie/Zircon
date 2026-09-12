@@ -200,6 +200,106 @@ impl World {
                 pending.push(pm(now + 500, None, loc, true))
             }
             magic_type::RENOUNCE => pending.push(pm(now + 600, None, loc, true)),
+            // ---- Taoist wave 3 ----
+            magic_type::INVISIBILITY | magic_type::TRANSPARENCY | magic_type::CELESTIAL_LIGHT => {
+                let (need, delay) = match magic {
+                    magic_type::INVISIBILITY => (2, 500),
+                    magic_type::TRANSPARENCY => (10, 500),
+                    _ => (20, 1500),
+                };
+                let already = match magic {
+                    magic_type::INVISIBILITY => self.objects[&id].has_buff(buff_type::INVISIBILITY),
+                    magic_type::TRANSPARENCY => self.objects[&id].has_buff(buff_type::TRANSPARENCY),
+                    _ => self.objects[&id].has_buff(buff_type::CELESTIAL_LIGHT),
+                };
+                if already {
+                    // Zircon: cast goes through (cooldown, MP) but nothing happens.
+                } else if self.use_amulet(id, need).is_none() {
+                    cast_ok = false;
+                    self.send_to(
+                        id,
+                        ServerMessage::Chat {
+                            text: format!("{} needs {need} talismans.", def.name),
+                        },
+                    );
+                } else {
+                    if magic == magic_type::CELESTIAL_LIGHT {
+                        targets.push(id);
+                    }
+                    pending.push(pm(now + delay, None, loc, true));
+                }
+            }
+            magic_type::MASS_INVISIBILITY
+            | magic_type::TRAP_OCTAGON
+            | magic_type::ELEMENTAL_SUPERIORITY
+            | magic_type::BLOOD_LUST => {
+                let need = if magic == magic_type::ELEMENTAL_SUPERIORITY {
+                    1
+                } else {
+                    2
+                };
+                if location.distance(loc) > MAGIC_RANGE {
+                    cast_ok = false;
+                } else if self.use_amulet(id, need).is_none() {
+                    cast_ok = false;
+                    self.send_to(
+                        id,
+                        ServerMessage::Chat {
+                            text: format!("{} needs {need} talisman(s).", def.name),
+                        },
+                    );
+                } else {
+                    locations.push(location);
+                    let d = location.distance(loc) as u64;
+                    pending.push(pm(now + 500 + d * 48, None, location, true));
+                }
+            }
+            magic_type::COMBAT_KICK => {
+                pending.push(pm(now + 500, None, loc.step(direction, 1), true))
+            }
+            magic_type::RESURRECTION => {
+                // Dead players near the cell, one talisman each.
+                let dead: Vec<ObjectId> = self
+                    .objects
+                    .values()
+                    .filter(|o| {
+                        o.is_player()
+                            && o.dead
+                            && o.map == map
+                            && o.location.distance(location) <= 3
+                            && o.location.distance(loc) <= MAGIC_RANGE
+                    })
+                    .map(|o| o.id)
+                    .collect();
+                for t in dead {
+                    if self.use_amulet(id, 1).is_none() {
+                        self.send_to(
+                            id,
+                            ServerMessage::Chat {
+                                text: format!("{} needs a talisman.", def.name),
+                            },
+                        );
+                        break;
+                    }
+                    targets.push(t);
+                    pending.push(pm(now + 500 + dist(self, t) * 48, Some(t), location, true));
+                }
+            }
+            magic_type::PURIFICATION => {
+                let t = target.unwrap_or(id);
+                if self.use_amulet(id, 2).is_none() {
+                    cast_ok = false;
+                    self.send_to(
+                        id,
+                        ServerMessage::Chat {
+                            text: format!("{} needs 2 talismans.", def.name),
+                        },
+                    );
+                } else {
+                    targets.push(t);
+                    pending.push(pm(now + 500 + dist(self, t) * 48, Some(t), location, true));
+                }
+            }
             magic_type::ELECTRIC_SHOCK => {
                 if let Some(t) = target.filter(|t| self.objects[t].is_monster()) {
                     targets.push(t);
@@ -1182,6 +1282,289 @@ impl World {
                         self.level_magic(pm.caster, pm.magic);
                     }
                 }
+                // ---- Taoist wave 3 ----
+                magic_type::INVISIBILITY | magic_type::TRANSPARENCY => {
+                    let (pmin, pmax, sc) = self.caster_power(pm.caster, pm.magic);
+                    let power = self.roll_range(pmin, pmax);
+                    let sc = self.roll_range(sc.0, sc.1);
+                    let (kind, secs) = if pm.magic == magic_type::INVISIBILITY {
+                        (buff_type::INVISIBILITY, (power + sc).max(1) as u64)
+                    } else {
+                        (
+                            buff_type::TRANSPARENCY,
+                            (power + sc / 2).clamp(1, 3600) as u64,
+                        )
+                    };
+                    self.buff_add(pm.caster, kind, secs * 1000, BuffStats::default());
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::CELESTIAL_LIGHT => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let (pmin, pmax, _) = self.caster_power(pm.caster, pm.magic);
+                    let secs = self.roll_range(pmin, pmax).max(1) as u64;
+                    self.buff_add(
+                        pm.caster,
+                        buff_type::CELESTIAL_LIGHT,
+                        secs * 1000,
+                        BuffStats {
+                            celestial: (level + 1) * 10,
+                            ..BuffStats::default()
+                        },
+                    );
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::MASS_INVISIBILITY
+                | magic_type::ELEMENTAL_SUPERIORITY
+                | magic_type::BLOOD_LUST => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let (pmin, pmax, sc) = self.caster_power(pm.caster, pm.magic);
+                    let radius = if pm.magic == magic_type::MASS_INVISIBILITY {
+                        2
+                    } else {
+                        3
+                    };
+                    let players: Vec<ObjectId> = self
+                        .objects
+                        .values()
+                        .filter(|o| {
+                            o.is_player()
+                                && !o.dead
+                                && o.map == cmap
+                                && o.location.distance(pm.location) <= radius
+                        })
+                        .map(|o| o.id)
+                        .collect();
+                    for t in players {
+                        let power = self.roll_range(pmin, pmax);
+                        let scr = self.roll_range(sc.0, sc.1);
+                        match pm.magic {
+                            magic_type::MASS_INVISIBILITY => {
+                                if self.objects[&t].has_buff(buff_type::INVISIBILITY) {
+                                    continue;
+                                }
+                                self.buff_add(
+                                    t,
+                                    buff_type::INVISIBILITY,
+                                    (power + scr).max(1) as u64 * 1000,
+                                    BuffStats::default(),
+                                );
+                            }
+                            magic_type::ELEMENTAL_SUPERIORITY => self.buff_add(
+                                t,
+                                buff_type::ELEMENTAL_SUPERIORITY,
+                                (power + scr * 2).max(1) as u64 * 1000,
+                                BuffStats {
+                                    max_mc: 5 + level,
+                                    max_sc: 5 + level,
+                                    ..BuffStats::default()
+                                },
+                            ),
+                            _ => self.buff_add(
+                                t,
+                                buff_type::BLOOD_LUST,
+                                (power + scr * 2).max(1) as u64 * 1000,
+                                BuffStats {
+                                    max_dc: 5 + level,
+                                    ..BuffStats::default()
+                                },
+                            ),
+                        }
+                        self.level_magic(pm.caster, pm.magic);
+                    }
+                }
+                magic_type::TRAP_OCTAGON => {
+                    let (pmin, pmax, sc) = self.caster_power(pm.caster, pm.magic);
+                    let trapped: Vec<ObjectId> = self
+                        .objects
+                        .values()
+                        .filter(|o| {
+                            o.map == cmap && !o.dead && o.location.distance(pm.location) <= 1
+                        })
+                        .filter_map(|o| match &o.kind {
+                            Kind::Monster(m) if m.owner.is_none() => {
+                                Some((o.id, self.data.monsters[&m.def].level))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>()
+                        .into_iter()
+                        .filter(|(_, ml)| *ml < clevel + self.rng.random_range(0..3))
+                        .map(|(id, _)| id)
+                        .collect();
+                    if trapped.is_empty() {
+                        continue;
+                    }
+                    let secs =
+                        (self.roll_range(sc.0, sc.1) + self.roll_range(pmin, pmax)).max(1) as u64;
+                    for t in &trapped {
+                        if let Some(m) = self.objects.get_mut(t).and_then(|o| o.monster_mut()) {
+                            m.shock_until = m.shock_until.max(self.now + secs * 1000);
+                            m.target = None;
+                        }
+                        self.level_magic(pm.caster, pm.magic);
+                    }
+                    let c = pm.location;
+                    for (dx, dy) in [
+                        (-1, -2),
+                        (-1, 2),
+                        (1, -2),
+                        (1, 2),
+                        (-2, -1),
+                        (-2, 1),
+                        (2, -1),
+                        (2, 1),
+                    ] {
+                        let cell = Point::new(c.x + dx, c.y + dy);
+                        if !self.maps[&cmap].file.is_walkable(cell.x, cell.y) {
+                            continue;
+                        }
+                        self.spawn_spell(
+                            cmap,
+                            cell,
+                            spell_effect::TRAP_OCTAGON,
+                            secs as i32 * 4,
+                            250,
+                            pm.caster,
+                            pm.magic,
+                        );
+                        let sid = *self.maps[&cmap]
+                            .objects_at(cell)
+                            .iter()
+                            .rev()
+                            .find(|v| self.objects[v].is_spell())
+                            .unwrap();
+                        if let Kind::Spell(sd) = &mut self.objects.get_mut(&sid).unwrap().kind {
+                            sd.targets = trapped.clone();
+                        }
+                    }
+                }
+                magic_type::COMBAT_KICK => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    let dir = self.objects[&pm.caster].direction;
+                    let victims: Vec<ObjectId> = self.maps[&cmap]
+                        .objects_at(pm.location)
+                        .iter()
+                        .copied()
+                        .filter(|v| self.objects[v].is_monster() && !self.objects[v].dead)
+                        .collect();
+                    let (pmin, pmax, _) = self.caster_power(pm.caster, pm.magic);
+                    for v in victims {
+                        let (mlevel, boss) = match &self.objects[&v].kind {
+                            Kind::Monster(m) => (
+                                self.data.monsters[&m.def].level,
+                                self.data.monsters[&m.def].is_boss,
+                            ),
+                            _ => continue,
+                        };
+                        if mlevel >= clevel || boss {
+                            continue;
+                        }
+                        if self.rng.random_range(0..16) >= 6 + level * 3 + clevel - mlevel {
+                            continue;
+                        }
+                        let distance = self.roll_range(pmin, pmax).max(1);
+                        let mut pushed = 0;
+                        let mut at = self.objects[&v].location;
+                        for _ in 0..distance {
+                            let next = at.step(dir, 1);
+                            if self.cell_blocked(cmap, next, false) {
+                                break;
+                            }
+                            at = next;
+                            pushed += 1;
+                        }
+                        if pushed == 0 {
+                            continue;
+                        }
+                        let from = self.objects[&v].location;
+                        self.move_object(v, at);
+                        if let Some(o) = self.objects.get_mut(&v) {
+                            o.direction = dir.rotate(4);
+                        }
+                        self.events.push((
+                            v,
+                            ServerMessage::ObjectMove {
+                                id: v,
+                                from,
+                                to: at,
+                                direction: dir,
+                                run: pushed > 1,
+                            },
+                        ));
+                        let power = {
+                            let s = self.objects[&pm.caster].stats;
+                            self.roll_dc(s)
+                        };
+                        self.pending_hits.push(PendingHit {
+                            time: self.now,
+                            attacker: pm.caster,
+                            target_cell: (cmap, at),
+                            power,
+                            target: None,
+                            magics: vec![magic_type::COMBAT_KICK],
+                            primary: true,
+                            raw: false,
+                        });
+                        self.level_magic(pm.caster, pm.magic);
+                        break;
+                    }
+                }
+                magic_type::RESURRECTION => {
+                    let Some(t) = pm.target else { continue };
+                    if !self
+                        .objects
+                        .get(&t)
+                        .map(|o| o.dead && o.is_player())
+                        .unwrap_or(false)
+                    {
+                        continue;
+                    }
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    if self.rng.random_range(0..100) > 25 + level * 25 {
+                        continue;
+                    }
+                    let (pmin, pmax, _) = self.caster_power(pm.caster, pm.magic);
+                    let pct = self.roll_range(pmin, pmax).clamp(1, 100);
+                    self.revive_in_place(t, pct);
+                    self.level_magic(pm.caster, pm.magic);
+                    if let Some(um) = self
+                        .objects
+                        .get_mut(&pm.caster)
+                        .and_then(|o| o.player_mut())
+                        .and_then(|p| p.magics.iter_mut().find(|m| m.magic == pm.magic))
+                    {
+                        um.cooldown_until = self.now + 20_000;
+                    }
+                    self.send_to(
+                        pm.caster,
+                        ServerMessage::MagicCooldown {
+                            magic: pm.magic,
+                            delay_ms: 20_000,
+                        },
+                    );
+                }
+                magic_type::PURIFICATION => {
+                    let Some(t) = pm.target else { continue };
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    if self.rng.random_range(0..100) > 40 + level * 20 {
+                        continue;
+                    }
+                    let Some(o) = self.objects.get_mut(&t) else {
+                        continue;
+                    };
+                    let removed = o.poisons.len();
+                    if o.is_player() {
+                        o.poisons.clear();
+                    }
+                    let poisoned = !o.poisons.is_empty();
+                    if removed > 0 && o.is_player() {
+                        self.events
+                            .push((t, ServerMessage::ObjectPoisoned { id: t, poisoned }));
+                        for _ in 0..removed {
+                            self.level_magic(pm.caster, pm.magic);
+                        }
+                    }
+                }
                 // ---- Pets ----
                 magic_type::ELECTRIC_SHOCK => {
                     let Some(t) = pm.target else { continue };
@@ -1616,5 +1999,14 @@ impl World {
                 location: to,
             },
         ));
+    }
+
+    /// Power range of the caster's skill plus its SC range.
+    pub(super) fn caster_power(&self, id: ObjectId, magic: u16) -> (i32, i32, (i32, i32)) {
+        let o = &self.objects[&id];
+        let p = o.player().unwrap();
+        let um = p.magics.iter().find(|m| m.magic == magic).unwrap();
+        let (pmin, pmax) = um.power_range(&self.data.magics[&magic]);
+        (pmin, pmax, (o.stats.min_sc, o.stats.max_sc))
     }
 }

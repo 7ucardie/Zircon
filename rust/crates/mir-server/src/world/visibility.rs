@@ -3,7 +3,42 @@ use super::*;
 impl World {
     /// Zircon `CanBeSeenBy`: everyone sees everyone for now; invisibility
     /// and cloak plug in here.
-    pub(super) fn can_see(&self, _viewer: &Object, _target: &Object) -> bool {
+    pub(super) fn can_see(&self, viewer: &Object, target: &Object) -> bool {
+        // Zircon `CanBeSeenBy`: transparent or cloaked players vanish unless
+        // the viewer is at least their level and within CloakRange (3).
+        if target.has_buff(buff_type::TRANSPARENCY) || target.has_buff(buff_type::CLOAK) {
+            let vlevel = self.level_of(viewer);
+            let tlevel = self.level_of(target);
+            if vlevel < tlevel || viewer.location.distance(target.location) > 3 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Level of any fighting object.
+    pub(super) fn level_of(&self, o: &Object) -> i32 {
+        match &o.kind {
+            Kind::Player(p) => p.level,
+            Kind::Monster(m) => self.data.monsters[&m.def].level,
+            _ => 0,
+        }
+    }
+
+    /// Zircon `ShouldAttackTarget` extras: monsters ignore invisible and
+    /// transparent players, and cloaked ones beyond two cells.
+    pub(super) fn monster_may_target(&self, monster: &Object, target: &Object) -> bool {
+        if target.has_buff(buff_type::INVISIBILITY) || target.has_buff(buff_type::TRANSPARENCY) {
+            return false;
+        }
+        if target.has_buff(buff_type::CLOAK) {
+            if monster.location.distance(target.location) > 2 {
+                return false;
+            }
+            if self.level_of(target) >= self.level_of(monster) {
+                return false;
+            }
+        }
         true
     }
 

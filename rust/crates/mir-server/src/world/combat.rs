@@ -583,6 +583,49 @@ impl World {
                 max_hp,
             },
         ));
+        // Celestial Light: survive the killing blow once at a percent of max HP.
+        let celestial = self.objects[&target]
+            .player()
+            .and_then(|p| {
+                p.buffs
+                    .iter()
+                    .find(|b| b.kind == buff_type::CELESTIAL_LIGHT)
+            })
+            .map(|b| b.stats.celestial);
+        if let (true, true, Some(pct)) = (died, is_player, celestial) {
+            let o = self.objects.get_mut(&target).unwrap();
+            o.hp = (o.max_hp * pct / 100).max(1);
+            let (hp, max_hp) = (o.hp, o.max_hp);
+            self.buff_remove(target, buff_type::CELESTIAL_LIGHT);
+            if let Some(um) = self
+                .objects
+                .get_mut(&target)
+                .and_then(|o| o.player_mut())
+                .and_then(|p| {
+                    p.magics
+                        .iter_mut()
+                        .find(|m| m.magic == magic_type::CELESTIAL_LIGHT)
+                })
+            {
+                um.cooldown_until = now + 6000;
+            }
+            self.send_to(
+                target,
+                ServerMessage::MagicCooldown {
+                    magic: magic_type::CELESTIAL_LIGHT,
+                    delay_ms: 6000,
+                },
+            );
+            self.events.push((
+                target,
+                ServerMessage::HealthChanged {
+                    id: target,
+                    hp,
+                    max_hp,
+                },
+            ));
+            return power;
+        }
         if died {
             if is_player {
                 self.player_die(target);

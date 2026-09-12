@@ -28,6 +28,7 @@ impl Game {
                 let library = match *effect {
                     mir_proto::spell_effect::FIRE_WALL => effects::MAGIC,
                     mir_proto::spell_effect::TEMPEST => effects::MAGIC_EX2,
+                    mir_proto::spell_effect::TRAP_OCTAGON => effects::MAGIC,
                     mir_proto::spell_effect::POISONOUS_CLOUD => effects::MAGIC_EX4,
                     _ => return None,
                 };
@@ -398,6 +399,11 @@ impl Game {
                 {
                     [1.0, 1.0, 1.0, 0.55]
                 }
+                Appearance::Spell { effect }
+                    if *effect == mir_proto::spell_effect::TRAP_OCTAGON =>
+                {
+                    [1.0, 1.0, 1.0, 0.8]
+                }
                 _ => [139.0 / 255.0, 69.0 / 255.0, 19.0 / 255.0, 1.0],
             };
             if let Some(info) = self.assets.info(library, index) {
@@ -553,8 +559,22 @@ impl Game {
             index,
             Surface::Image,
         ) {
+            let hidden = self
+                .objects
+                .get(&id)
+                .map(|o| {
+                    o.visible_buffs.iter().any(|b| {
+                        matches!(
+                            *b,
+                            buff_type::INVISIBILITY | buff_type::TRANSPARENCY | buff_type::CLOAK
+                        )
+                    })
+                })
+                .unwrap_or(false);
             let tint = if self.objects.get(&id).map(|o| o.poisoned).unwrap_or(false) {
                 [0.4, 1.0, 0.4, 1.0]
+            } else if hidden {
+                [1.0, 1.0, 1.0, 0.5]
             } else if self.hovered == Some(id) {
                 [1.0, 1.0, 1.0, 1.0]
             } else {

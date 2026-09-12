@@ -272,6 +272,15 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         }
         magic_type::SUMMON_SHINSU => (MAGIC, 2590, 19, 60, WHITE, false),
         magic_type::STRENGTH_OF_FAITH => (MAGIC_EX2, 360, 10, 100, WHITE, false),
+        magic_type::INVISIBILITY => (MAGIC, 810, 10, 60, WHITE, false),
+        magic_type::MASS_INVISIBILITY
+        | magic_type::ELEMENTAL_SUPERIORITY
+        | magic_type::BLOOD_LUST => (MAGIC, 2080, 6, 80, WHITE, true),
+        magic_type::TRAP_OCTAGON => (MAGIC, 630, 10, 60, DARK, false),
+        magic_type::RESURRECTION => (MAGIC_EX, 310, 10, 60, HOLY, false),
+        magic_type::PURIFICATION => (MAGIC_EX2, 220, 10, 60, HOLY, false),
+        magic_type::TRANSPARENCY => (MAGIC_EX2, 430, 7, 100, WHITE, false),
+        magic_type::CELESTIAL_LIGHT => (MAGIC_EX2, 280, 8, 100, HOLY, false),
         _ => return None,
     };
     Some(Effect {
@@ -433,6 +442,53 @@ pub fn payload(
             for a in anchors {
                 out.effects
                     .push(Effect::at(MAGIC, 10, 10, 100, LIGHTNING, a, now));
+            }
+        }
+        magic_type::MASS_INVISIBILITY
+        | magic_type::ELEMENTAL_SUPERIORITY
+        | magic_type::BLOOD_LUST => {
+            let explode = match magic {
+                magic_type::MASS_INVISIBILITY => (MAGIC, 820, 7, 100, WHITE),
+                magic_type::ELEMENTAL_SUPERIORITY => (MAGIC_EX, 1870, 10, 100, WHITE),
+                _ => (MAGIC_EX, 140, 7, 100, DARK),
+            };
+            for a in anchors {
+                out.projectiles.push((
+                    caster_cell,
+                    a,
+                    Projectile {
+                        library: MAGIC,
+                        start: 980,
+                        count: 3,
+                        delay_ms: 100,
+                        color: WHITE,
+                        from: caster_cell,
+                        to: a,
+                        started: now,
+                        duration: 0,
+                        dir16: 0,
+                        dir_stride: 10,
+                        explode: Some(explode),
+                    },
+                ));
+            }
+        }
+        magic_type::RESURRECTION => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX, 320, 7, 100, HOLY, a, now));
+            }
+        }
+        magic_type::PURIFICATION => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX2, 230, 10, 100, HOLY, a, now));
+            }
+        }
+        magic_type::CELESTIAL_LIGHT => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX2, 290, 9, 100, HOLY, a, now));
             }
         }
         magic_type::STRENGTH_OF_FAITH => {

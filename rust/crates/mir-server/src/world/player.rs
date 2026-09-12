@@ -445,6 +445,9 @@ impl World {
             bs.agility += b.stats.agility;
             bs.hp_pct += b.stats.hp_pct;
             bs.mc_pct += b.stats.mc_pct;
+            bs.max_dc += b.stats.max_dc;
+            bs.max_mc += b.stats.max_mc;
+            bs.max_sc += b.stats.max_sc;
         }
         bs.mc_pct += pas_mc_pct;
         let o = self.objects.get_mut(&id).unwrap();
@@ -457,13 +460,13 @@ impl World {
             min_ac: base.min_ac + g(stat::MIN_AC),
             max_ac: base.max_ac + g(stat::MAX_AC) + bs.max_ac,
             min_dc: base.min_dc + g(stat::MIN_DC) + pas_dc + pas_min_dc,
-            max_dc: base.max_dc + g(stat::MAX_DC) + pas_dc,
+            max_dc: base.max_dc + g(stat::MAX_DC) + pas_dc + bs.max_dc,
             min_mr: base.min_mr + g(stat::MIN_MR),
             max_mr: base.max_mr + g(stat::MAX_MR) + bs.max_mr,
             min_mc: base.min_mc + g(stat::MIN_MC),
-            max_mc: base.max_mc + g(stat::MAX_MC),
+            max_mc: base.max_mc + g(stat::MAX_MC) + bs.max_mc,
             min_sc: base.min_sc + g(stat::MIN_SC),
-            max_sc: base.max_sc + g(stat::MAX_SC),
+            max_sc: base.max_sc + g(stat::MAX_SC) + bs.max_sc,
         };
         s.min_dc += s.min_dc * bs.dc_pct / 100;
         s.max_dc += s.max_dc * bs.dc_pct / 100;
@@ -666,5 +669,32 @@ impl World {
         };
         let list = p.magics.iter().map(|m| m.summary()).collect();
         self.send_to(id, ServerMessage::Magics(list));
+    }
+
+    /// Zircon `Resurrection`: back on the same cell at a percent of HP/MP.
+    pub(super) fn revive_in_place(&mut self, id: ObjectId, pct: i32) {
+        let (hp, dir, location) = {
+            let Some(o) = self.objects.get_mut(&id) else {
+                return;
+            };
+            o.dead = false;
+            o.hp = (o.max_hp * pct / 100).max(1);
+            if let Some(p) = o.player_mut() {
+                p.mp = (p.max_mp * pct / 100).max(1);
+                p.revive_time = 0;
+            }
+            (o.hp, o.direction, o.location)
+        };
+        self.events.push((
+            id,
+            ServerMessage::ObjectRevive {
+                id,
+                location,
+                direction: dir,
+                hp,
+            },
+        ));
+        let stats = self.player_stats(&self.objects[&id]);
+        self.send_to(id, ServerMessage::StatsChanged(stats));
     }
 }

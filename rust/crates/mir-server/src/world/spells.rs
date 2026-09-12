@@ -36,6 +36,7 @@ impl World {
                 tick_time: 0,
                 owner,
                 magic,
+                targets: Vec::new(),
             }),
             map,
             location,
@@ -132,6 +133,25 @@ impl World {
                         if self.magic_attack(owner, v, magic, element::WIND, 80) > 0 {
                             self.try_repel(v, owner, 5);
                         }
+                    }
+                }
+                spell_effect::TRAP_OCTAGON => {
+                    let held = {
+                        let Kind::Spell(s) = &self.objects[&sid].kind else {
+                            continue;
+                        };
+                        s.targets.iter().any(|t| {
+                            self.objects
+                                .get(t)
+                                .and_then(|o| match &o.kind {
+                                    Kind::Monster(m) => Some(!o.dead && m.shock_until > now),
+                                    _ => None,
+                                })
+                                .unwrap_or(false)
+                        })
+                    };
+                    if !held {
+                        self.remove_object(sid);
                     }
                 }
                 spell_effect::POISONOUS_CLOUD => {

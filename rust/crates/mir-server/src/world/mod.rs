@@ -152,6 +152,11 @@ pub struct BuffStats {
     pub mc_pct: i32,
     /// Zircon `Stat.PetDCPercent`.
     pub pet_dc_pct: i32,
+    pub max_dc: i32,
+    pub max_mc: i32,
+    pub max_sc: i32,
+    /// Percent of max HP restored instead of dying (Zircon `Stat.CelestialLight`).
+    pub celestial: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).
@@ -181,6 +186,8 @@ pub struct SpellData {
     pub tick_time: u64,
     pub owner: ObjectId,
     pub magic: u16,
+    /// Trap Octagon: the monsters held; the ring vanishes when none is left.
+    pub targets: Vec<ObjectId>,
 }
 
 /// Zircon `BuffType.Heal`: heals `cap` per second until the pool is empty.

@@ -1438,6 +1438,76 @@ mod tests {
     }
 
     #[test]
+    fn taoist_traps_and_buffs() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Tao2");
+        rec.class = mir_proto::Class::Taoist;
+        rec.level = 34;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let trap = learn(&mut world, me, "Trap Octagon");
+        let blood = learn(&mut world, me, "Blood Lust");
+        let amulet = world
+            .data
+            .items
+            .values()
+            .filter(|d| {
+                d.item_type == mir_proto::item_type::AMULET
+                    && d.shape == 0
+                    && d.required_amount <= 34
+            })
+            .map(|d| d.index)
+            .min()
+            .expect("a talisman item");
+        world.test_give_item(me, amulet, 20);
+        let slot = world.test_slot_of(me, amulet).unwrap();
+        world.item_use(me, slot);
+        let mut now = 3000;
+        world.tick(now);
+        drain(&mut world);
+        let victim = nearest_chicken(&world, me);
+        let loc = world.objects[&me].location;
+        let map = world.objects[&me].map;
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 3))
+            .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+            .unwrap();
+        world.teleport(victim, cell);
+        world.cast(me, trap, Direction::from_points(loc, cell), None, cell);
+        for _ in 0..10 {
+            now += 100;
+            world.teleport(victim, cell);
+            world.tick(now);
+        }
+        let shocked =
+            matches!(&world.objects[&victim].kind, world::Kind::Monster(m) if m.shock_until > now);
+        assert!(shocked, "trapped chicken cannot move");
+        let ring = world
+            .objects
+            .values()
+            .filter(|o| matches!(o.appearance, Appearance::Spell { effect } if effect == mir_proto::spell_effect::TRAP_OCTAGON))
+            .count();
+        assert!(ring >= 4, "octagon cells: {ring}");
+        // Blood Lust raises max DC of players in the area.
+        let before = world.objects[&me].stats.max_dc;
+        now += 3000;
+        world.tick(now);
+        world.cast(me, blood, Direction::Down, None, loc);
+        for _ in 0..12 {
+            now += 100;
+            world.tick(now);
+        }
+        assert!(
+            world.objects[&me].stats.max_dc > before,
+            "Blood Lust adds DC"
+        );
+    }
+
+    #[test]
     fn warrior_thrusting_reaches_the_second_cell() {
         let Some(mut world) = world() else {
             return;
@@ -1466,6 +1536,10 @@ mod tests {
         let hp_before = world.objects[&victim].hp;
         let mut now = 1000;
         for _ in 0..200 {
+            // Keep the chicken two cells ahead; it wanders otherwise.
+            if world.objects.get(&victim).map(|v| !v.dead).unwrap_or(false) {
+                world.teleport(victim, loc.step(dir, 2));
+            }
             world.player_attack(me, dir, Some(thrusting));
             now += 1600;
             world.tick(now);
