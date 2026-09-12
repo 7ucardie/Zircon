@@ -90,6 +90,9 @@ impl World {
                 full_moon_ready: false,
                 waning_moon_ready: false,
                 flame_splash_on: false,
+                currencies: rec.currencies.iter().copied().collect(),
+                rebirth: rec.rebirth,
+                npc_roll: None,
             }),
             map,
             location,
@@ -258,6 +261,8 @@ impl World {
         rec.next_item_id = p.next_item_id;
         rec.magics = p.magics.iter().map(|m| m.stored()).collect();
         rec.belt = p.belt.clone();
+        rec.currencies = p.currencies.iter().map(|(k, v)| (*k, *v)).collect();
+        rec.rebirth = p.rebirth;
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;

@@ -128,6 +128,15 @@ spawn table without opening a port. `--map <file>` forces a start map.
 `ZIRCON_SEED=n` seeds the server's random rolls (the tests use a fixed seed and
 ordered object maps, so a failing roll reproduces).
 
+## NPC scripts
+
+Dialog pages run Zircon's checks and actions: levels, class, gold, items,
+random rolls, currencies by name (`CurrencyInfo`), named data lists and
+values (`GameNPCList`, persisted in `npc_lists.json` under `--data`) and
+rebirth at level 86 + rebirths. `NPCRequirement` rows hide an NPC from
+players who do not meet them. Weapon refining, horses, marriage, fame and
+Lua script actions wait for their systems.
+
 ## Monster AI
 
 `MonsterInfo.AI` selects a behaviour profile (`world/ai_profile.rs`, ported

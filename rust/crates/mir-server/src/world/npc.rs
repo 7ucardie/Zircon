@@ -139,7 +139,7 @@ impl World {
             2 => true,
             3 => cmp(c.operator, p.bag.gold as i64, c.int1 as i64),
             4 => c.item1 == 0 || cmp(c.operator, p.bag.count_of(c.item1) as i64, c.int1 as i64),
-            // PK points: nobody is red in the prototype.
+            // PK points: nobody is red in the prototype (Redemption 0).
             5 => {
                 let threshold = if c.int1 == 0 {
                     RED_POINT
@@ -171,18 +171,51 @@ impl World {
                 let roll = self.rng.random_range(0..c.int1.max(1)) as i64;
                 cmp(c.operator, roll, c.int2 as i64)
             }
-            // Currency by name: only gold exists.
-            17 => {
-                if c.string1.eq_ignore_ascii_case("gold") {
+            // Currency by name (case-insensitive); unknown names pass like Zircon's `continue`.
+            17 => match self.currency_by_name(&c.string1) {
+                Some(cur) if cur.name.eq_ignore_ascii_case("gold") => {
                     cmp(c.operator, p.bag.gold as i64, c.int1 as i64)
-                } else {
-                    true
                 }
-            }
-            // Roll results, data lists and fame do not exist yet: fail like
-            // Zircon does when the data is missing.
-            18 | 19 | 21 => false,
-            20 => cmp(c.operator, 0, c.int2 as i64),
+                Some(cur) => cmp(
+                    c.operator,
+                    p.currencies.get(&cur.index).copied().unwrap_or(0),
+                    c.int1 as i64,
+                ),
+                None => true,
+            },
+            // Roll result: missing means failure.
+            18 => match p.npc_roll {
+                Some(r) => cmp(c.operator, r as i64, c.int1 as i64),
+                None => false,
+            },
+            // Data list membership: `<String1>_NameList` keyed by the data type.
+            19 => match self.npc_data_key(p, c.int1) {
+                Some(key) => self
+                    .npc_store
+                    .lists
+                    .get(&format!("{}_NameList", c.string1))
+                    .map(|l| l.contains_key(&key))
+                    .unwrap_or(false),
+                None => true,
+            },
+            // Data value: missing rows count as 0, compared with IntParameter2.
+            20 => match self.npc_data_key(p, c.int1) {
+                Some(key) => {
+                    let v = self
+                        .npc_store
+                        .lists
+                        .get(&c.string1)
+                        .and_then(|l| l.get(&key))
+                        .copied()
+                        .unwrap_or(0);
+                    cmp(c.operator, v, c.int2 as i64)
+                }
+                None => true,
+            },
+            // Fame titles do not exist yet.
+            21 => false,
+            // Lua scripts are not supported: the check passes.
+            22 => true,
             _ => true,
         }
     }
@@ -232,8 +265,141 @@ impl World {
                     self.send_changes(id, changes);
                 }
             }
+            // Message: no server case in Zircon either.
+            7 => {}
+            // Rebirth: only at level 86 + rebirths; back to level 1 with 1/200 exp.
+            14 => {
+                let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+                    return;
+                };
+                if p.level < 86 + p.rebirth {
+                    return;
+                }
+                p.level = 1;
+                p.experience /= 200;
+                p.rebirth += 1;
+                self.refresh_stats(id, true);
+                self.send_player_stats(id);
+            }
+            // Currencies by name.
+            15 | 16 => {
+                let Some(cur) = self.currency_by_name(&a.string1).cloned() else {
+                    return;
+                };
+                let delta = if a.action_type == 15 {
+                    a.int1 as i64
+                } else {
+                    -(a.int1 as i64)
+                };
+                if cur.name.eq_ignore_ascii_case("gold") {
+                    if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                        p.bag.gold = (p.bag.gold as i64 + delta).max(0) as u64;
+                    }
+                    self.send_gold(id);
+                } else if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                    let e = p.currencies.entry(cur.index).or_insert(0);
+                    *e += delta;
+                }
+            }
+            // Data lists and values (Zircon `GameNPCList`).
+            17..=21 => {
+                let Some(key) = self
+                    .objects
+                    .get(&id)
+                    .and_then(|o| o.player())
+                    .and_then(|p| self.npc_data_key(p, a.int1))
+                else {
+                    return;
+                };
+                let list_cat = format!("{}_NameList", a.string1);
+                match a.action_type {
+                    17 => {
+                        self.npc_store
+                            .lists
+                            .entry(list_cat)
+                            .or_default()
+                            .entry(key)
+                            .or_insert(0);
+                    }
+                    18 => {
+                        if let Some(l) = self.npc_store.lists.get_mut(&list_cat) {
+                            l.remove(&key);
+                        }
+                    }
+                    19 => {
+                        self.npc_store.lists.remove(&list_cat);
+                    }
+                    20 => {
+                        let e = self
+                            .npc_store
+                            .lists
+                            .entry(a.string1.clone())
+                            .or_default()
+                            .entry(key)
+                            .or_insert(0);
+                        *e += a.int2 as i64;
+                    }
+                    _ => {
+                        self.npc_store
+                            .lists
+                            .entry(a.string1.clone())
+                            .or_default()
+                            .insert(key, a.int2 as i64);
+                    }
+                }
+                self.npc_store.save();
+            }
+            // Element/horse/marriage/refine/fame/script actions need systems
+            // that do not exist yet.
             _ => {}
         }
+    }
+
+    /// `CurrencyInfo` by name, case-insensitive.
+    pub(super) fn currency_by_name(&self, name: &str) -> Option<&crate::data::CurrencyDef> {
+        if name.is_empty() {
+            return None;
+        }
+        self.data.currencies.iter().find(|c| {
+            c.name.eq_ignore_ascii_case(name) || c.abbreviation.eq_ignore_ascii_case(name)
+        })
+    }
+
+    /// Zircon `GetDataTypeValue`: the key a data list/value is stored under.
+    /// `NPCDataType`: None 0, User 1, Guild 2 (no guilds yet), Account 3.
+    pub(super) fn npc_data_key(&self, p: &PlayerData, data_type: i32) -> Option<String> {
+        match data_type {
+            0 => Some("None".into()),
+            1 => Some(format!("User_{}", p.name)),
+            3 => Some(format!("Account_{}", p.account)),
+            _ => None,
+        }
+    }
+
+    /// Zircon `NPCObject.CanBeSeenBy`: `NPCRequirement` rows gate visibility.
+    pub(super) fn npc_visible_to(&self, npc_info: i32, viewer: &PlayerData) -> bool {
+        let Some(def) = self.data.npcs.iter().find(|n| n.index == npc_info) else {
+            return true;
+        };
+        def.requirements.iter().all(|r| match r.requirement {
+            0 => viewer.level >= r.int1,
+            1 => viewer.level <= r.int1,
+            // Quests: nothing accepted or completed yet.
+            2 | 4 => false,
+            3 | 5 => true,
+            6 => r.class & (1 << viewer.class.mir_class()) != 0,
+            7 => {
+                let day = (std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0)
+                    / 86_400
+                    + 4)
+                    % 7;
+                r.days & (1 << day) != 0
+            }
+            _ => true,
+        })
     }
 
     pub fn npc_buy(&mut self, id: ObjectId, info: i32, count: u32) {

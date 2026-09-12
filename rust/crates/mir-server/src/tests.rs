@@ -1258,3 +1258,54 @@ fn guards_stand_in_town_and_archers_shoot_from_range() {
         "ranged hit landed or was dodged: {hp0} -> {hp1}"
     );
 }
+
+#[test]
+fn npc_data_lists_and_currencies_round_trip() {
+    use crate::data::{NpcActionDef, NpcCheckDef};
+    let Some(mut world) = world() else {
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Scribe")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let action = |t: i32, s: &str, i1: i32, i2: i32| NpcActionDef {
+        action_type: t,
+        string1: s.into(),
+        int1: i1,
+        int2: i2,
+        item1: 0,
+        map1: 0,
+        stat1: 0,
+    };
+    let check = |t: i32, op: i32, s: &str, i1: i32, i2: i32| NpcCheckDef {
+        check_type: t,
+        operator: op,
+        string1: s.into(),
+        int1: i1,
+        int2: i2,
+        item1: 0,
+        stat1: 0,
+        fail_page: 0,
+    };
+    // Data list membership (Zircon CheckDataList) after AddDataList / RemoveDataList.
+    assert!(!world.test_npc_check(me, &check(19, 0, "Quest1", 1, 0)));
+    world.test_npc_action(me, &action(17, "Quest1", 1, 0));
+    assert!(world.test_npc_check(me, &check(19, 0, "Quest1", 1, 0)));
+    world.test_npc_action(me, &action(18, "Quest1", 1, 0));
+    assert!(!world.test_npc_check(me, &check(19, 0, "Quest1", 1, 0)));
+    // Data values: set, change, compare with IntParameter2.
+    world.test_npc_action(me, &action(21, "Kills", 1, 5));
+    world.test_npc_action(me, &action(20, "Kills", 1, 2));
+    assert!(world.test_npc_check(me, &check(20, 0, "Kills", 1, 7)));
+    assert!(world.test_npc_check(me, &check(20, 5, "Kills", 1, 3)));
+    // Currencies by name; gold routes to the bag.
+    world.test_npc_action(me, &action(15, "Fame Point", 12, 0));
+    assert!(world.test_npc_check(me, &check(17, 0, "FP", 12, 0)));
+    world.test_npc_action(me, &action(16, "Fame Point", 2, 0));
+    assert!(world.test_npc_check(me, &check(17, 0, "Fame Point", 10, 0)));
+    let gold_before = world.test_gold(me);
+    world.test_npc_action(me, &action(15, "Gold", 30, 0));
+    assert_eq!(world.test_gold(me), gold_before + 30);
+    // Unknown currency names pass the check like Zircon's `continue`.
+    assert!(world.test_npc_check(me, &check(17, 0, "Moonstones", 1, 0)));
+}

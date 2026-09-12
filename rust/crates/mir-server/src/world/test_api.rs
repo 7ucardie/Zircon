@@ -136,4 +136,24 @@ impl World {
             p.mp = p.max_mp;
         }
     }
+
+    /// Test helpers: run NPC page actions and checks directly.
+    #[cfg(test)]
+    pub fn test_npc_action(&mut self, id: ObjectId, a: &crate::data::NpcActionDef) {
+        self.npc_action(id, a);
+    }
+
+    #[cfg(test)]
+    pub fn test_npc_check(&mut self, id: ObjectId, c: &crate::data::NpcCheckDef) -> bool {
+        self.npc_check(id, c)
+    }
+
+    #[cfg(test)]
+    pub fn test_gold(&self, id: ObjectId) -> u64 {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .map(|p| p.bag.gold)
+            .unwrap_or(0)
+    }
 }

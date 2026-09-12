@@ -266,6 +266,40 @@ pub struct PlayerData {
     pub full_moon_ready: bool,
     pub waning_moon_ready: bool,
     pub flame_splash_on: bool,
+    /// Zircon `UserCurrency` amounts by `CurrencyInfo` index (gold is in the bag).
+    pub currencies: HashMap<i32, i64>,
+    pub rebirth: i32,
+    /// Zircon `NPCVals["ROLLRESULT"]`.
+    pub npc_roll: Option<i32>,
+}
+
+/// Zircon `GameNPCList` rows: named lists/values NPC scripts read and write,
+/// persisted as JSON next to the accounts.
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
+pub struct NpcStore {
+    /// category -> type value -> IntValue1.
+    pub lists: HashMap<String, HashMap<String, i64>>,
+    #[serde(skip)]
+    path: Option<PathBuf>,
+}
+
+impl NpcStore {
+    fn load(path: PathBuf) -> NpcStore {
+        let mut store: NpcStore = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        store.path = Some(path);
+        store
+    }
+
+    fn save(&self) {
+        if let Some(p) = &self.path {
+            if let Ok(json) = serde_json::to_vec_pretty(self) {
+                let _ = std::fs::write(p, json);
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -546,6 +580,7 @@ pub struct World {
     /// Seeded from `ZIRCON_SEED` when set (tests), otherwise from the OS.
     rng: rand::rngs::StdRng,
     pending_hits: Vec<PendingHit>,
+    pub npc_store: NpcStore,
     pending_monster_spells: Vec<PendingMonsterSpell>,
     ai_profiles: HashMap<i32, ai_profile::AiProfile>,
     pending_magics: Vec<PendingMagic>,
@@ -631,6 +666,7 @@ impl World {
                 None => rand::SeedableRng::from_os_rng(),
             },
             pending_hits: Vec::new(),
+            npc_store: NpcStore::default(),
             pending_monster_spells: Vec::new(),
             ai_profiles: HashMap::new(),
             pending_magics: Vec::new(),
@@ -639,6 +675,11 @@ impl World {
             last_spawn_check: 0,
             force_map,
         }
+    }
+
+    /// Persist NPC lists/values under `dir` (`npc_lists.json`).
+    pub fn set_store_dir(&mut self, dir: &Path) {
+        self.npc_store = NpcStore::load(dir.join("npc_lists.json"));
     }
 
     /// Objects on a map, in insertion order (empty when the map is not loaded).

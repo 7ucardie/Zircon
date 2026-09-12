@@ -7,6 +7,11 @@ impl World {
         if matches!(&target.kind, Kind::Monster(m) if m.hidden) {
             return false;
         }
+        if let (Kind::Npc(n), Some(p)) = (&target.kind, viewer.player()) {
+            if !self.npc_visible_to(n.info, p) {
+                return false;
+            }
+        }
         // Zircon `CanBeSeenBy`: transparent or cloaked players vanish unless
         // the viewer is at least their level and within CloakRange (3).
         if target.has_buff(buff_type::TRANSPARENCY) || target.has_buff(buff_type::CLOAK) {

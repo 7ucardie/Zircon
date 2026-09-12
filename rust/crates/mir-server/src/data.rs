@@ -148,6 +148,28 @@ pub struct NpcDef {
     pub image: i32,
     pub face_image: i32,
     pub entry_page: i32,
+    /// `NPCRequirement`: who can see this NPC at all.
+    pub requirements: Vec<NpcRequirementDef>,
+}
+
+/// Zircon `NPCRequirementType`: MinLevel 0, MaxLevel 1, Accepted 2,
+/// NotAccepted 3, HaveCompleted 4, HaveNotCompleted 5, Class 6, DaysOfWeek 7.
+#[derive(Debug, Clone)]
+pub struct NpcRequirementDef {
+    pub requirement: i32,
+    pub int1: i32,
+    pub quest: i32,
+    pub class: u8,
+    pub days: i32,
+}
+
+/// `CurrencyInfo`.
+#[derive(Debug, Clone)]
+pub struct CurrencyDef {
+    pub index: i32,
+    pub name: String,
+    pub abbreviation: String,
+    pub exchange_rate: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -310,6 +332,7 @@ pub struct GameData {
     pub monsters: HashMap<i32, MonsterDef>,
     pub safe_zones: Vec<SafeZoneDef>,
     pub guards: Vec<GuardDef>,
+    pub currencies: Vec<CurrencyDef>,
     pub base_stats: Vec<BaseStatDef>,
     pub npcs: Vec<NpcDef>,
     pub items: HashMap<i32, ItemDef>,
@@ -481,7 +504,7 @@ impl GameData {
             })
             .collect();
 
-        let npcs = match db.collection("NPCInfo") {
+        let mut npcs: Vec<NpcDef> = match db.collection("NPCInfo") {
             Some(c) => c
                 .records
                 .iter()
@@ -492,6 +515,7 @@ impl GameData {
                     image: i32_of(c, r, "Image"),
                     face_image: i32_of(c, r, "FaceImage"),
                     entry_page: i32_of(c, r, "EntryPage"),
+                    requirements: Vec::new(),
                 })
                 .filter(|n| n.region != 0)
                 .collect(),
@@ -711,6 +735,34 @@ impl GameData {
             None => Vec::new(),
         };
 
+        let currencies = match db.collection("CurrencyInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| CurrencyDef {
+                    index: c.index(r),
+                    name: c.str_or(r, "Name", "").to_string(),
+                    abbreviation: c.str_or(r, "Abbreviation", "").to_string(),
+                    exchange_rate: c.float_or(r, "ExchangeRate", 1.0),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        if let Some(c) = db.collection("NPCRequirement") {
+            for r in &c.records {
+                let npc = i32_of(c, r, "NPC");
+                if let Some(n) = npcs.iter_mut().find(|n| n.index == npc) {
+                    n.requirements.push(NpcRequirementDef {
+                        requirement: i32_of(c, r, "Requirement"),
+                        int1: i32_of(c, r, "IntParameter1"),
+                        quest: i32_of(c, r, "QuestParameter"),
+                        class: i32_of(c, r, "Class") as u8,
+                        days: i32_of(c, r, "DayOfWeek"),
+                    });
+                }
+            }
+        }
+
         Ok(GameData {
             maps,
             regions,
@@ -718,6 +770,7 @@ impl GameData {
             monsters,
             safe_zones,
             guards,
+            currencies,
             base_stats,
             npcs,
             items,

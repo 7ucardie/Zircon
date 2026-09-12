@@ -47,6 +47,11 @@ pub struct CharacterRecord {
     pub magics: Vec<StoredMagic>,
     #[serde(default)]
     pub belt: Vec<BeltLink>,
+    /// Zircon `UserCurrency`: (CurrencyInfo index, amount); gold lives in `gold`.
+    #[serde(default)]
+    pub currencies: Vec<(i32, i64)>,
+    #[serde(default)]
+    pub rebirth: i32,
 }
 
 impl CharacterRecord {
@@ -275,6 +280,8 @@ impl Accounts {
             next_item_id: 0,
             magics: Vec::new(),
             belt: Vec::new(),
+            currencies: Vec::new(),
+            rebirth: 0,
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;
@@ -334,6 +341,8 @@ pub fn test_character(name: &str) -> CharacterRecord {
         next_item_id: 0,
         magics: Vec::new(),
         belt: Vec::new(),
+        currencies: Vec::new(),
+        rebirth: 0,
     }
 }
 

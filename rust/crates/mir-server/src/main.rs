@@ -95,6 +95,7 @@ fn main() -> anyhow::Result<()> {
         "game data loaded"
     );
     let mut world = World::new(data, args.assets.join("Map"), args.map.clone());
+    world.set_store_dir(&args.data);
 
     if args.inspect {
         return inspect(&mut world);
