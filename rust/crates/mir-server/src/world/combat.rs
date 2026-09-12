@@ -49,6 +49,12 @@ impl World {
             let roll: bool = self.rng.random_range(0..5) == 0;
             let moon_roll = self.rng.random_range(0..5);
             let (o_hp, o_max_hp) = (o.hp, o.max_hp);
+            let weapon_effect = o
+                .player()
+                .and_then(|p| p.bag.equipment.get(slot::WEAPON).and_then(|w| w.as_ref()))
+                .and_then(|w| self.data.items.get(&w.info))
+                .map(|i| i.effect)
+                .unwrap_or(0);
             let release = o.player().and_then(|p| {
                 let um = p.magics.iter().find(|m| m.magic == magic_type::RELEASE)?;
                 let def = self.data.magics.get(&um.magic)?;
@@ -167,6 +173,13 @@ impl World {
                         if attack_magic == Some(m) && p.flame_splash_on && cost <= p.mp {
                             p.mp -= cost;
                             valid = Some(m);
+                            magics.push(m);
+                        }
+                    }
+                    // Always-on attack skills.
+                    magic_type::FATAL_BLOW | magic_type::MASSACRE => magics.push(m),
+                    magic_type::DUAL_WEAPON_SKILLS => {
+                        if weapon_effect == 100 {
                             magics.push(m);
                         }
                     }
@@ -508,6 +521,24 @@ impl World {
                             power = power * mp / 100;
                         }
                         magic_type::CALAMITY_OF_FULL_MOON | magic_type::WANING_MOON => power += mp,
+                        // Fatal Blow: an execute chance under 30 % HP.
+                        magic_type::FATAL_BLOW => {
+                            let (thp, tmax) = {
+                                let t = &self.objects[&tid];
+                                (t.hp, t.max_hp)
+                            };
+                            let level = um.level as i32;
+                            if thp < tmax * 30 / 100
+                                && self
+                                    .rng
+                                    .random_range(0..(crate::magic::MAGIC_MAX_LEVEL as i32 + 1))
+                                    <= level
+                            {
+                                power += power * mp / 100;
+                                self.level_magic(hit.attacker, magic_type::FATAL_BLOW);
+                            }
+                        }
+                        magic_type::DUAL_WEAPON_SKILLS => power += power * mp / 100,
                         magic_type::KARMA => {
                             power += self.roll_dc(attacker_stats);
                             // The percent-HP execute: quartered on monsters, flat on bosses.
@@ -591,16 +622,31 @@ impl World {
                 }
                 if elemental {
                     power -= self.roll_range(tstats.min_mr, tstats.max_mr);
-                } else if lotus.is_none() {
+                } else if lotus.is_none() && !hit.magics.contains(&magic_type::MASSACRE) {
                     let mut ac = self.roll_ac(tstats);
+                    // Defensive Mastery: the defender rolls max AC by chance.
+                    let dm = self.objects[&tid]
+                        .player()
+                        .map(|p| p.def_mastery)
+                        .unwrap_or(0);
+                    if dm >= 10 || (dm > 0 && self.rng.random_range(0..10) < dm) {
+                        ac = tstats.max_ac;
+                    }
                     ac -= ac * resolution_pct / 100;
                     power -= ac;
                 }
                 if power <= 0 {
                     continue;
                 }
-                if attacker_is_player && self.rng.random_range(0..100) < 1 {
-                    power *= 2; // CriticalChance 1, CriticalDamage 0
+                if attacker_is_player {
+                    // CriticalChance 1 (+ Concentration), CriticalDamage 0.
+                    let crit: i32 = 1 + self.objects[&hit.attacker]
+                        .player()
+                        .map(|p| p.buffs.iter().map(|b| b.stats.crit).sum::<i32>())
+                        .unwrap_or(0);
+                    if self.rng.random_range(0..100) < crit {
+                        power *= 2;
+                    }
                 }
                 // Blade Storm: half now, half 300 ms later.
                 if hit.magics.contains(&magic_type::BLADE_STORM) {
@@ -731,6 +777,50 @@ impl World {
                 }
             }
         }
+        // Player defences: Invincibility, Evasion (elemental), immunities,
+        // Last Stand below 30 % HP, Superior Magic Shield pool.
+        if let Some(p) = self.objects.get(&target).and_then(|o| o.player()) {
+            if p.buffs.iter().any(|b| b.stats.invincible) {
+                return 0;
+            }
+            let evasion: i32 = p.buffs.iter().map(|b| b.stats.evasion).sum();
+            if elem != element::NONE && evasion > 0 && self.rng.random_range(0..100) <= evasion {
+                return 0;
+            }
+            let immunity = if elem == element::NONE {
+                p.phys_immunity
+            } else {
+                p.magic_immunity
+            };
+            power -= power * immunity / 100;
+            let (hp, max_hp) = (self.objects[&target].hp, self.objects[&target].max_hp);
+            if p.last_stand > 0 && elem == element::NONE && hp * 100 / max_hp.max(1) < 30 {
+                power -= power * p.last_stand / 100;
+            }
+            if power <= 0 {
+                return 0;
+            }
+        }
+        if self.objects[&target].has_buff(buff_type::SUPERIOR_MAGIC_SHIELD) {
+            let remaining = {
+                let p = self.objects.get_mut(&target).unwrap().player_mut().unwrap();
+                let b = p
+                    .buffs
+                    .iter_mut()
+                    .find(|b| b.kind == buff_type::SUPERIOR_MAGIC_SHIELD)
+                    .unwrap();
+                let absorbed = power.max(0).min(b.stats.pool);
+                b.stats.pool -= absorbed;
+                power -= absorbed;
+                b.stats.pool
+            };
+            if remaining <= 0 {
+                self.buff_remove(target, buff_type::SUPERIOR_MAGIC_SHIELD);
+            }
+            if power <= 0 {
+                return 0;
+            }
+        }
         let mut power = if self.objects[&target]
             .poisons
             .iter()
@@ -798,6 +888,40 @@ impl World {
                     .unwrap()
                     .panic_used = true;
                 self.teleport_nearby(target, 7, 12);
+            }
+        }
+        // Judgement Of Heaven: a chance to answer a monster's hit with lightning.
+        if self.objects[&attacker].is_monster() {
+            let judgement: i32 = self.objects[&target]
+                .player()
+                .map(|p| p.buffs.iter().map(|b| b.stats.judgement).sum())
+                .unwrap_or(0);
+            if judgement > 0 && self.rng.random_range(0..100) < judgement {
+                let ts = self.objects[&target].stats;
+                let bolt = self.roll_range(ts.min_mc, ts.max_mc) / 5;
+                if bolt > 0 {
+                    let aloc = self.objects[&attacker].location;
+                    self.events.push((
+                        attacker,
+                        ServerMessage::ObjectEffect {
+                            id: attacker,
+                            effect: effect::FLASH_OF_LIGHT,
+                            location: aloc,
+                        },
+                    ));
+                    self.pending_hits.push(PendingHit {
+                        time: now + 300,
+                        attacker: target,
+                        target_cell: (self.objects[&attacker].map, aloc),
+                        power: bolt,
+                        target: Some(attacker),
+                        magics: Vec::new(),
+                        primary: false,
+                        raw: true,
+                        element: element::LIGHTNING,
+                        ranged: true,
+                    });
+                }
             }
         }
         let credit = self.objects[&attacker].side().unwrap_or(attacker);

@@ -205,6 +205,23 @@ impl World {
                 pending.push(pm(now + 500, None, loc, true))
             }
             magic_type::RENOUNCE => pending.push(pm(now + 600, None, loc, true)),
+            // ---- Wave four ----
+            mm if magic_wave4::handled(mm) => {
+                if !self.wave4_cast(
+                    id,
+                    magic,
+                    target,
+                    location,
+                    direction,
+                    loc,
+                    now,
+                    &mut pending,
+                    &mut targets,
+                    &mut locations,
+                ) {
+                    cast_ok = false;
+                }
+            }
             // ---- Assassin wave 3 ----
             magic_type::CLOAK => {
                 if self.objects[&id].has_buff(buff_type::CLOAK) {
@@ -577,7 +594,13 @@ impl World {
         // except for the skills that keep them.
         if !matches!(
             magic,
-            magic_type::CLOAK | magic_type::POISONOUS_CLOUD | magic_type::TRANSPARENCY
+            magic_type::CLOAK
+                | magic_type::POISONOUS_CLOUD
+                | magic_type::TRANSPARENCY
+                | magic_type::THE_NEW_BEGINNING
+                | magic_type::EVASION
+                | magic_type::RAGING_WIND
+                | magic_type::DARK_CONVERSION
         ) {
             self.buff_remove(id, buff_type::CLOAK);
             self.buff_remove(id, buff_type::TRANSPARENCY);
@@ -1350,6 +1373,8 @@ impl World {
                         self.level_magic(pm.caster, pm.magic);
                     }
                 }
+                // ---- Wave four ----
+                mm if magic_wave4::handled(mm) => self.wave4_land(&pm, cmap, cloc),
                 // ---- Assassin wave 3 ----
                 magic_type::CLOAK => {
                     self.apply_cloak(pm.caster, false);

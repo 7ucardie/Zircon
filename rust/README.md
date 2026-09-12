@@ -102,6 +102,16 @@ and the original effect sprites:
   execute from the cloak costing HP; Resolution and Release scale it),
   Flame Splash (toggle: up to four extra directions per swing),
   Rejuvenation (faster regeneration).
+- Wave four (all classes): passives Defensive Mastery, Physical Immunity,
+  Magic Immunity, Advent Of Demon, Advent Of Devil, Vitality, Last Stand,
+  Fatal Blow, Dual Weapon Skills, Massacre; self bursts Seismic Slam,
+  Taecheon Sword, Fire Sword, Thunder Strike, Ice Breaker, Frozen Dragon,
+  Heavenly Sky, Poison Cloud, Four Wheels, Crescent Moon, Flash Of Light;
+  targets Ice Dragon, Searing Light, Hemorrhage, Abyss, Containment,
+  Neutralize, Parasite; cell areas Ice Rain, Asteroid, Life Steal; self
+  buffs Invincibility, Evasion, Raging Wind, Concentration, The New
+  Beginning, Judgement Of Heaven, Superior Magic Shield, Dark Conversion,
+  Spiritualism.
 
 Buff icons with their remaining time sit top-right. Other skills show in the
 window but cannot be cast yet.

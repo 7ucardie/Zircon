@@ -417,6 +417,7 @@ impl Game {
         } else if magic == magic_type::SHOULDER_DASH
             || magic == magic_type::COMBAT_KICK
             || magic == magic_type::RAKE
+            || magic_type::is_directional(magic)
             || magic_type::is_line(magic)
         {
             if mouse_cell == user_loc {

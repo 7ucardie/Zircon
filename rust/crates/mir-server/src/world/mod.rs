@@ -54,6 +54,10 @@ pub mod poison_kind {
     /// Tick damage that stops regeneration.
     pub const HEMORRHAGE: u16 = 16384;
     pub const BINDING: u16 = 32768;
+    /// Tick damage that spreads (Parasite).
+    pub const PARASITE: u16 = 256;
+    /// Doubles attack and move delays.
+    pub const NEUTRALIZE: u16 = 512;
 }
 
 /// Paralysed objects take no actions.
@@ -174,6 +178,21 @@ pub struct BuffStats {
     pub celestial: i32,
     /// HP drained every 2 s while cloaked (Zircon `Stat.CloakDamage`).
     pub cloak_damage: i32,
+    /// Percent chance to dodge elemental damage (Evasion).
+    pub evasion: i32,
+    /// Extra critical chance percent (Concentration).
+    pub crit: i32,
+    /// Charge stacks (The New Beginning).
+    pub stacks: i32,
+    /// Absorb pool (Superior Magic Shield) or tick amount (Dark Conversion).
+    pub pool: i32,
+    /// Percent chance to strike back when hit (Judgement Of Heaven).
+    pub judgement: i32,
+    pub invincible: bool,
+    /// Raging Wind level + 1 (re-splits AC/MR pools).
+    pub raging_wind: i32,
+    /// Life steal percent from a buff.
+    pub life_steal: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).
@@ -272,6 +291,12 @@ pub struct PlayerData {
     /// Zircon `NPCVals["ROLLRESULT"]`.
     pub npc_roll: Option<i32>,
     pub quests: Vec<crate::accounts::StoredQuest>,
+    /// Passive skill stats (Zircon `GetPassiveStats` and combat checks).
+    pub def_mastery: i32,
+    pub phys_immunity: i32,
+    pub magic_immunity: i32,
+    pub vitality: i32,
+    pub last_stand: i32,
 }
 
 /// Zircon `GameNPCList` rows: named lists/values NPC scripts read and write,
@@ -598,6 +623,7 @@ mod buffs;
 mod combat;
 mod inventory;
 mod magic;
+mod magic_wave4;
 mod maps;
 mod monster_ai;
 mod movement;

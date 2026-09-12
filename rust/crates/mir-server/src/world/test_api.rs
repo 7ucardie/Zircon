@@ -234,4 +234,10 @@ impl World {
             .map(|p| p.experience)
             .unwrap_or(0)
     }
+
+    /// Test helper: deal raw damage from `attacker` to `target`.
+    #[cfg(test)]
+    pub fn test_damage(&mut self, target: ObjectId, attacker: ObjectId, power: i32) -> i32 {
+        self.damage(target, attacker, power, mir_proto::element::NONE, false)
+    }
 }

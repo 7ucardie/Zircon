@@ -94,6 +94,11 @@ impl World {
                 rebirth: rec.rebirth,
                 npc_roll: None,
                 quests: rec.quests.clone(),
+                def_mastery: 0,
+                phys_immunity: 0,
+                magic_immunity: 0,
+                vitality: 0,
+                last_stand: 0,
             }),
             map,
             location,
@@ -418,6 +423,10 @@ impl World {
         let mut pas_min_dc = 0;
         let mut life_steal = 0;
         let mut pas_mc_pct = 0;
+        let mut pas_max_ac = 0;
+        let mut pas_max_mr = 0;
+        let (mut def_mastery, mut phys_immunity, mut magic_immunity, mut vitality, mut last_stand) =
+            (0, 0, 0, 0, 0);
         for m in &p.magics {
             let Some(def) = self.data.magics.get(&m.magic) else {
                 continue;
@@ -442,6 +451,13 @@ impl World {
                 magic_type::BLOODY_FLOWER => life_steal += pmin,
                 // Zircon quirk: owning Renounce grants its MC percent passively.
                 magic_type::RENOUNCE => pas_mc_pct += (m.level as i32 + 1) * 10,
+                magic_type::ADVENT_OF_DEMON => pas_max_ac += pmin,
+                magic_type::ADVENT_OF_DEVIL => pas_max_mr += pmin,
+                magic_type::DEFENSIVE_MASTERY => def_mastery += pmin,
+                magic_type::PHYSICAL_IMMUNITY => phys_immunity += pmin,
+                magic_type::MAGIC_IMMUNITY => magic_immunity += pmin,
+                magic_type::VITALITY => vitality += pmin,
+                magic_type::LAST_STAND => last_stand += pmin,
                 _ => {}
             }
         }
@@ -459,6 +475,8 @@ impl World {
             bs.max_dc += b.stats.max_dc;
             bs.max_mc += b.stats.max_mc;
             bs.max_sc += b.stats.max_sc;
+            bs.raging_wind += b.stats.raging_wind;
+            bs.life_steal += b.stats.life_steal;
         }
         bs.mc_pct += pas_mc_pct;
         let o = self.objects.get_mut(&id).unwrap();
@@ -469,11 +487,11 @@ impl World {
             accuracy: base.accuracy + g(stat::ACCURACY) + pas_acc,
             agility: base.agility + g(stat::AGILITY) + pas_agi + bs.agility,
             min_ac: base.min_ac + g(stat::MIN_AC),
-            max_ac: base.max_ac + g(stat::MAX_AC) + bs.max_ac,
+            max_ac: base.max_ac + g(stat::MAX_AC) + bs.max_ac + pas_max_ac,
             min_dc: base.min_dc + g(stat::MIN_DC) + pas_dc + pas_min_dc,
             max_dc: base.max_dc + g(stat::MAX_DC) + pas_dc + bs.max_dc,
             min_mr: base.min_mr + g(stat::MIN_MR),
-            max_mr: base.max_mr + g(stat::MAX_MR) + bs.max_mr,
+            max_mr: base.max_mr + g(stat::MAX_MR) + bs.max_mr + pas_max_mr,
             min_mc: base.min_mc + g(stat::MIN_MC),
             max_mc: base.max_mc + g(stat::MAX_MC) + bs.max_mc,
             min_sc: base.min_sc + g(stat::MIN_SC),
@@ -493,6 +511,16 @@ impl World {
         s.max_mr = s.max_mr.max(0);
         s.min_dc = s.min_dc.max(0).min(s.max_dc.max(0));
         s.max_dc = s.max_dc.max(0);
+        // Raging Wind: pool AC and MR, add 4 + 6 per level, split 30/70.
+        if bs.raging_wind > 0 {
+            let bonus = 4 + (bs.raging_wind - 1) * 6;
+            let pool = s.min_ac + s.max_ac + bonus;
+            s.min_ac = pool * 3 / 10;
+            s.max_ac = pool - s.min_ac;
+            let pool = s.min_mr + s.max_mr + bonus;
+            s.min_mr = pool * 3 / 10;
+            s.max_mr = pool - s.min_mr;
+        }
         o.stats = s;
         if restore {
             o.hp = o.max_hp;
@@ -507,7 +535,12 @@ impl World {
             p.mp = p.mp.min(p.max_mp);
         }
         p.attack_speed = g(stat::ATTACK_SPEED) as i64;
-        p.life_steal = life_steal;
+        p.life_steal = life_steal + bs.life_steal;
+        p.def_mastery = def_mastery;
+        p.phys_immunity = phys_immunity;
+        p.magic_immunity = magic_immunity;
+        p.vitality = vitality;
+        p.last_stand = last_stand;
         p.max_bag = base.bag_weight + g(73);
         p.max_wear = base.wear_weight + g(74);
         p.max_hand = base.hand_weight + g(75);

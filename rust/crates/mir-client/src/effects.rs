@@ -11,6 +11,7 @@ pub const MAGIC_EX2: u16 = 244;
 pub const MAGIC_EX3: u16 = 245;
 pub const MAGIC_EX4: u16 = 246;
 pub const MAGIC_EX5: u16 = 247;
+pub const MAGIC_EX7: u16 = 249;
 
 pub const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 pub const FIRE: [f32; 4] = [1.0, 69.0 / 255.0, 0.0, 1.0];
@@ -239,6 +240,7 @@ pub fn object_effect(kind: u8, id: ObjectId, cell: Point, now: u64) -> Option<Ef
         e::SWEET_BRIER => Effect::at(MAGIC_EX4, 1900, 10, 100, WHITE, Anchor::Object(id), now),
         e::KARMA => Effect::at(MAGIC_EX4, 1800, 10, 100, WHITE, Anchor::Object(id), now),
         e::PUPPET => Effect::at(MAGIC_EX4, 820, 8, 100, FIRE, Anchor::Cell(cell), now),
+        e::FLASH_OF_LIGHT => Effect::at(MAGIC_EX4, 2300, 8, 60, WHITE, Anchor::Object(id), now),
         _ => return None,
     })
 }
@@ -330,6 +332,21 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         magic_type::TRANSPARENCY => (MAGIC_EX2, 430, 7, 100, WHITE, false),
         magic_type::CELESTIAL_LIGHT => (MAGIC_EX2, 280, 8, 100, HOLY, false),
         magic_type::WRAITH_GRIP => (MAGIC_EX4, 1460, 15, 60, WHITE, false),
+        magic_type::INVINCIBILITY => (MAGIC_EX5, 400, 10, 100, WHITE, false),
+        magic_type::EVASION => (MAGIC_EX4, 2500, 12, 70, WHITE, false),
+        magic_type::RAGING_WIND => (MAGIC_EX4, 2600, 12, 70, WHITE, false),
+        magic_type::CONCENTRATION => (MAGIC_EX5, 300, 15, 100, WHITE, false),
+        magic_type::THE_NEW_BEGINNING => (MAGIC_EX4, 2200, 8, 100, WHITE, false),
+        magic_type::SUPERIOR_MAGIC_SHIELD => (MAGIC_EX2, 1900, 17, 60, FIRE, false),
+        magic_type::ABYSS => (MAGIC_EX4, 2000, 14, 70, DARK, false),
+        magic_type::SPIRITUALISM => (MAGIC_EX2, 1580, 11, 100, WHITE, false),
+        magic_type::LIFE_STEAL => (MAGIC_EX2, 2410, 9, 100, DARK, false),
+        magic_type::ICE_DRAGON => (MAGIC, 2620, 6, 80, ICE, false),
+        magic_type::SEARING_LIGHT => (MAGIC_EX3, 1190, 8, 70, HOLY, false),
+        magic_type::PARASITE => (MAGIC_EX5, 1000, 5, 100, WHITE, false),
+        magic_type::NEUTRALIZE => (MAGIC, 2080, 6, 80, DARK, false),
+        magic_type::ICE_RAIN => (MAGIC, 1430, 12, 50, ICE, false),
+        magic_type::CONTAINMENT => (MAGIC_EX3, 590, 9, 60, WHITE, false),
         magic_type::HELL_FIRE => (MAGIC_EX4, 1520, 15, 60, FIRE, false),
         magic_type::CLOAK => (MAGIC_EX4, 600, 10, 60, WHITE, false),
         magic_type::SUMMON_PUPPET => (MAGIC_EX4, 800, 16, 100, WHITE, false),
@@ -561,6 +578,167 @@ pub fn payload(
                     .push(Effect::at(MAGIC_EX4, 1420, 14, 100, WHITE, a, now));
                 out.effects
                     .push(Effect::at(MAGIC_EX4, 1440, 14, 100, WHITE, a, now));
+            }
+        }
+        magic_type::SEISMIC_SLAM => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                4900,
+                6,
+                100,
+                LIGHTNING,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::TAECHEON_SWORD => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5000,
+                31,
+                100,
+                FIRE,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::FIRE_SWORD => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5100,
+                39,
+                100,
+                FIRE,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::ICE_BREAKER => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5200,
+                37,
+                100,
+                ICE,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::FROZEN_DRAGON => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5300,
+                41,
+                100,
+                ICE,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::HEAVENLY_SKY => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5400,
+                39,
+                100,
+                LIGHTNING,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::POISON_CLOUD => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5500,
+                56,
+                100,
+                DARK,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::FOUR_WHEELS => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5600,
+                35,
+                100,
+                FIRE,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::CRESCENT_MOON => {
+            out.effects.push(Effect::at(
+                MAGIC_EX5,
+                5700,
+                21,
+                100,
+                DARK,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
+        magic_type::THUNDER_STRIKE => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC, 1450, 3, 150, LIGHTNING, a, now));
+            }
+        }
+        magic_type::ICE_RAIN => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX7, 720, 7, 100, ICE, a, now));
+            }
+        }
+        magic_type::ASTEROID => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX5, 1320, 8, 100, FIRE, a, now));
+            }
+        }
+        magic_type::CONTAINMENT | magic_type::LIFE_STEAL => {
+            let (lib, start, count, col) = if magic == magic_type::CONTAINMENT {
+                (MAGIC_EX3, 590, 9, WHITE)
+            } else {
+                (MAGIC_EX2, 2500, 10, DARK)
+            };
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(lib, start, count, 100, col, a, now));
+            }
+        }
+        magic_type::ICE_DRAGON
+        | magic_type::SEARING_LIGHT
+        | magic_type::HEMORRHAGE
+        | magic_type::PARASITE
+        | magic_type::NEUTRALIZE => {
+            let (lib, start, count, col, hit) = match magic {
+                magic_type::ICE_DRAGON => (MAGIC_EX5, 2800, 6, ICE, (MAGIC_EX5, 3000, 12)),
+                magic_type::SEARING_LIGHT => (MAGIC_EX3, 1210, 10, HOLY, (MAGIC_EX3, 1300, 10)),
+                magic_type::HEMORRHAGE => (MAGIC_EX7, 1100, 6, FIRE, (MAGIC_EX7, 1270, 10)),
+                magic_type::PARASITE => (MAGIC_EX5, 800, 6, WHITE, (MAGIC_EX5, 1200, 10)),
+                _ => (MAGIC_EX7, 300, 4, FIRE, (MAGIC_EX7, 460, 10)),
+            };
+            for a in anchors {
+                out.projectiles.push((
+                    caster_cell,
+                    a,
+                    Projectile {
+                        library: lib,
+                        start,
+                        count,
+                        delay_ms: 100,
+                        color: col,
+                        from: caster_cell,
+                        to: a,
+                        started: now,
+                        duration: 0,
+                        dir16: 0,
+                        dir_stride: 10,
+                        explode: Some((hit.0, hit.1, hit.2, 100, col)),
+                    },
+                ));
             }
         }
         magic_type::HELL_FIRE => {

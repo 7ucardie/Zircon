@@ -1,6 +1,18 @@
 # Research: skills not yet in the Rust server (from the C# reference)
 
-Extracted 2026-09-12. 98 magics implemented in Rust; 92 missing with C#
+Extracted 2026-09-12. Wave four (commit after d06b2d4) implemented the
+passives, self bursts, single-target spells, cell areas and self buffs
+listed in the README; still open: Crushing Wave, Defensive/Offensive Blow,
+Elemental Swords, Shuriken, Hundred Fist, augments (Defiance, Reflect
+Damage, Destructive Surge, Advanced Potion Mastery), Fire Bounce, Lightning
+Strike, Elemental Hurricane, Mirror Image, Frost Bite, Tornado, Ice Aura,
+Burning/Shocked, Empowered Healing, Improved Explosive Talisman, Cursed
+Doll, Thunder Kick, Soul Resonance, taoist augments, Summon Demonic
+Creature, Demon Explosion, Infection, Demonic Recovery, Dark Soul Prison,
+Corpse Exploder, Summon Dead, Binding Talisman, Brain Storm, Dance Of
+Swallow, Dragon Repulse, Stealth, Art Of Shadows, Dragon Blood, Magic
+Combustion, Chain, Dragon Wave, Burning Fire, Chain Of Fire.
+Originally: 98 magics implemented in Rust; 92 missing with C#
 code (Warrior 17, Wizard 18, Taoist 28, Assassin 29); 5 dead enum entries
 (FlameArt 137, UnityWithNature 247, SupremeHealing 351, Unused 438,
 ManaBurn 458); 23 monster-only MagicTypes (501-540). Power/cost/delay come

@@ -483,6 +483,97 @@ pub mod magic_type {
     pub const RELEASE: u16 = 424;
     pub const FLAME_SPLASH: u16 = 425;
     pub const BLOODY_FLOWER: u16 = 426;
+    // Wave four.
+    pub const AUGMENT_DESTRUCTIVE_SURGE: u16 = 119;
+    pub const AUGMENT_DEFIANCE: u16 = 120;
+    pub const AUGMENT_REFLECT_DAMAGE: u16 = 121;
+    pub const ADVANCED_POTION_MASTERY: u16 = 122;
+    pub const SEISMIC_SLAM: u16 = 124;
+    pub const INVINCIBILITY: u16 = 125;
+    pub const CRUSHING_WAVE: u16 = 126;
+    pub const DEFENSIVE_MASTERY: u16 = 127;
+    pub const PHYSICAL_IMMUNITY: u16 = 128;
+    pub const MAGIC_IMMUNITY: u16 = 129;
+    pub const DEFENSIVE_BLOW: u16 = 130;
+    pub const ELEMENTAL_SWORDS: u16 = 131;
+    pub const SHURIKEN: u16 = 132;
+    pub const HUNDRED_FIST: u16 = 133;
+    pub const OFFENSIVE_BLOW: u16 = 134;
+    pub const TAECHEON_SWORD: u16 = 135;
+    pub const FIRE_SWORD: u16 = 136;
+    pub const JUDGEMENT_OF_HEAVEN: u16 = 229;
+    pub const THUNDER_STRIKE: u16 = 230;
+    pub const FIRE_BOUNCE: u16 = 231;
+    pub const ELEMENTAL_HURRICANE: u16 = 232;
+    pub const SUPERIOR_MAGIC_SHIELD: u16 = 233;
+    pub const BURNING: u16 = 234;
+    pub const SHOCKED: u16 = 235;
+    pub const LIGHTNING_STRIKE: u16 = 236;
+    pub const MIRROR_IMAGE: u16 = 237;
+    pub const ICE_RAIN: u16 = 238;
+    pub const FROST_BITE: u16 = 239;
+    pub const ASTEROID: u16 = 240;
+    pub const TORNADO: u16 = 242;
+    pub const ICE_AURA: u16 = 243;
+    pub const ICE_DRAGON: u16 = 244;
+    pub const ICE_BREAKER: u16 = 245;
+    pub const FROZEN_DRAGON: u16 = 246;
+    pub const EMPOWERED_HEALING: u16 = 319;
+    pub const LIFE_STEAL: u16 = 320;
+    pub const IMPROVED_EXPLOSIVE_TALISMAN: u16 = 321;
+    pub const AUGMENT_POISON_DUST: u16 = 322;
+    pub const CURSED_DOLL: u16 = 323;
+    pub const THUNDER_KICK: u16 = 324;
+    pub const SOUL_RESONANCE: u16 = 325;
+    pub const PARASITE: u16 = 326;
+    pub const SPIRITUALISM: u16 = 327;
+    pub const AUGMENT_EXPLOSIVE_TALISMAN: u16 = 328;
+    pub const AUGMENT_EVIL_SLAYER: u16 = 329;
+    pub const AUGMENT_PURIFICATION: u16 = 330;
+    pub const AUGMENT_RESURRECTION: u16 = 331;
+    pub const SUMMON_DEMONIC_CREATURE: u16 = 336;
+    pub const DEMON_EXPLOSION: u16 = 337;
+    pub const INFECTION: u16 = 338;
+    pub const DEMONIC_RECOVERY: u16 = 339;
+    pub const NEUTRALIZE: u16 = 340;
+    pub const AUGMENT_NEUTRALIZE: u16 = 341;
+    pub const DARK_SOUL_PRISON: u16 = 342;
+    pub const SEARING_LIGHT: u16 = 343;
+    pub const AUGMENT_CELESTIAL_LIGHT: u16 = 344;
+    pub const CORPSE_EXPLODER: u16 = 345;
+    pub const SUMMON_DEAD: u16 = 346;
+    pub const BINDING_TALISMAN: u16 = 347;
+    pub const BRAIN_STORM: u16 = 348;
+    pub const HEAVENLY_SKY: u16 = 349;
+    pub const POISON_CLOUD: u16 = 350;
+    pub const THE_NEW_BEGINNING: u16 = 427;
+    pub const DANCE_OF_SWALLOW: u16 = 428;
+    pub const DARK_CONVERSION: u16 = 429;
+    pub const DRAGON_REPULSE: u16 = 430;
+    pub const ADVENT_OF_DEMON: u16 = 431;
+    pub const ADVENT_OF_DEVIL: u16 = 432;
+    pub const ABYSS: u16 = 433;
+    pub const FLASH_OF_LIGHT: u16 = 434;
+    pub const STEALTH: u16 = 435;
+    pub const EVASION: u16 = 436;
+    pub const RAGING_WIND: u16 = 437;
+    pub const MASSACRE: u16 = 439;
+    pub const ART_OF_SHADOWS: u16 = 440;
+    pub const DRAGON_BLOOD: u16 = 441;
+    pub const FATAL_BLOW: u16 = 442;
+    pub const LAST_STAND: u16 = 443;
+    pub const MAGIC_COMBUSTION: u16 = 444;
+    pub const VITALITY: u16 = 445;
+    pub const CHAIN: u16 = 446;
+    pub const CONCENTRATION: u16 = 447;
+    pub const DUAL_WEAPON_SKILLS: u16 = 448;
+    pub const CONTAINMENT: u16 = 449;
+    pub const DRAGON_WAVE: u16 = 450;
+    pub const HEMORRHAGE: u16 = 451;
+    pub const BURNING_FIRE: u16 = 452;
+    pub const CHAIN_OF_FIRE: u16 = 453;
+    pub const FOUR_WHEELS: u16 = 456;
+    pub const CRESCENT_MOON: u16 = 457;
     // Monster-only spells (Zircon 501+; 550+ are this port's own tags).
     pub const MONSTER_SCORCHED_EARTH: u16 = 501;
     pub const MONSTER_ICE_STORM: u16 = 502;
@@ -521,7 +612,39 @@ pub mod magic_type {
                 | RELEASE
                 | CALAMITY_OF_FULL_MOON
                 | WANING_MOON
+                | DEFENSIVE_MASTERY
+                | PHYSICAL_IMMUNITY
+                | MAGIC_IMMUNITY
+                | ADVENT_OF_DEMON
+                | ADVENT_OF_DEVIL
+                | VITALITY
+                | LAST_STAND
+                | FATAL_BLOW
+                | DUAL_WEAPON_SKILLS
+                | MASSACRE
+                | AUGMENT_DESTRUCTIVE_SURGE
+                | AUGMENT_DEFIANCE
+                | AUGMENT_REFLECT_DAMAGE
+                | ADVANCED_POTION_MASTERY
+                | STEALTH
+                | ART_OF_SHADOWS
+                | DRAGON_WAVE
+                | EMPOWERED_HEALING
+                | AUGMENT_POISON_DUST
+                | AUGMENT_EXPLOSIVE_TALISMAN
+                | AUGMENT_EVIL_SLAYER
+                | AUGMENT_PURIFICATION
+                | AUGMENT_RESURRECTION
+                | AUGMENT_CELESTIAL_LIGHT
+                | AUGMENT_NEUTRALIZE
+                | INFECTION
+                | BURNING
+                | SHOCKED
         )
+    }
+    /// Wave-four directional swings: the mouse picks the facing.
+    pub fn is_directional(m: u16) -> bool {
+        matches!(m, SEISMIC_SLAM | FLASH_OF_LIGHT)
     }
     /// Stance skills switched with a hotkey and applied on melee swings.
     pub fn is_toggle(m: u16) -> bool {
@@ -548,6 +671,11 @@ pub mod magic_type {
         matches!(
             m,
             FIRE_BALL
+                | ICE_DRAGON
+                | SEARING_LIGHT
+                | HEMORRHAGE
+                | PARASITE
+                | NEUTRALIZE
                 | ICE_BOLT
                 | FLAMING_DAGGERS
                 | SHREDDING
@@ -592,6 +720,12 @@ pub mod magic_type {
                 | PURIFICATION
                 | WRAITH_GRIP
                 | HELL_FIRE
+                | ICE_DRAGON
+                | SEARING_LIGHT
+                | HEMORRHAGE
+                | ABYSS
+                | NEUTRALIZE
+                | PARASITE
         )
     }
     /// Spells cast on a ground cell.
@@ -599,6 +733,9 @@ pub mod magic_type {
         matches!(
             m,
             FIRE_WALL
+                | ICE_RAIN
+                | ASTEROID
+                | LIFE_STEAL
                 | MAGIC_RESISTANCE
                 | RESILIENCE
                 | MASS_HEAL
@@ -622,6 +759,25 @@ pub mod magic_type {
         matches!(
             m,
             TELEPORTATION
+                | TAECHEON_SWORD
+                | FIRE_SWORD
+                | THUNDER_STRIKE
+                | ICE_BREAKER
+                | FROZEN_DRAGON
+                | HEAVENLY_SKY
+                | POISON_CLOUD
+                | FOUR_WHEELS
+                | CRESCENT_MOON
+                | CONTAINMENT
+                | INVINCIBILITY
+                | EVASION
+                | RAGING_WIND
+                | CONCENTRATION
+                | THE_NEW_BEGINNING
+                | JUDGEMENT_OF_HEAVEN
+                | SUPERIOR_MAGIC_SHIELD
+                | DARK_CONVERSION
+                | SPIRITUALISM
                 | MAGIC_SHIELD
                 | DEFIANCE
                 | MIGHT
@@ -735,6 +891,36 @@ pub mod magic_type {
                 | HELL_FIRE
                 | RAKE
                 | SUMMON_PUPPET
+                | SEISMIC_SLAM
+                | TAECHEON_SWORD
+                | FIRE_SWORD
+                | THUNDER_STRIKE
+                | ICE_BREAKER
+                | FROZEN_DRAGON
+                | HEAVENLY_SKY
+                | POISON_CLOUD
+                | FOUR_WHEELS
+                | CRESCENT_MOON
+                | FLASH_OF_LIGHT
+                | ICE_DRAGON
+                | SEARING_LIGHT
+                | HEMORRHAGE
+                | ABYSS
+                | CONTAINMENT
+                | NEUTRALIZE
+                | PARASITE
+                | ICE_RAIN
+                | ASTEROID
+                | INVINCIBILITY
+                | EVASION
+                | RAGING_WIND
+                | CONCENTRATION
+                | THE_NEW_BEGINNING
+                | JUDGEMENT_OF_HEAVEN
+                | SUPERIOR_MAGIC_SHIELD
+                | DARK_CONVERSION
+                | LIFE_STEAL
+                | SPIRITUALISM
         )
     }
 }
@@ -762,11 +948,24 @@ pub mod buff_type {
     pub const RED_LOTUS: u16 = 403;
     pub const CLOAK: u16 = 404;
     pub const GHOST_WALK: u16 = 405;
+    pub const INVINCIBILITY: u16 = 104;
+    pub const JUDGEMENT_OF_HEAVEN: u16 = 202;
+    pub const SUPERIOR_MAGIC_SHIELD: u16 = 203;
+    pub const LIFE_STEAL: u16 = 309;
+    pub const SPIRITUALISM: u16 = 310;
+    pub const EVASION: u16 = 406;
+    pub const RAGING_WIND: u16 = 407;
+    pub const CONCENTRATION: u16 = 408;
+    pub const THE_NEW_BEGINNING: u16 = 409;
+    pub const DARK_CONVERSION: u16 = 410;
     /// Buffs other players can see (Zircon `visible: true`).
     pub fn is_visible(b: u16) -> bool {
         matches!(
             b,
             MAGIC_SHIELD
+                | SUPERIOR_MAGIC_SHIELD
+                | JUDGEMENT_OF_HEAVEN
+                | LIFE_STEAL
                 | MAGIC_RESISTANCE
                 | RESILIENCE
                 | REFLECT_DAMAGE
@@ -801,6 +1000,7 @@ pub mod effect {
     pub const SWEET_BRIER: u8 = 7;
     pub const KARMA: u8 = 8;
     pub const PUPPET: u8 = 9;
+    pub const FLASH_OF_LIGHT: u8 = 10;
 }
 
 /// A buff as the client sees it.

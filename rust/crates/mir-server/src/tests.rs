@@ -1408,3 +1408,76 @@ fn quest_accept_progress_and_complete() {
     // Requirement HaveNotCompleted now blocks a second run.
     assert!(!world.test_npc_quests(me, npc).iter().any(|q| q.quest == 9));
 }
+
+#[test]
+fn wave_four_bursts_and_buffs() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    // A high-level warrior at the start: Taecheon Sword burns everything
+    // within two cells; Invincibility nulls incoming damage.
+    let mut rec = test_character("Blade");
+    rec.level = 70;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let has_book = |world: &World, name: &str| {
+        world
+            .data
+            .magics
+            .values()
+            .find(|m| m.name == name)
+            .map(|def| {
+                world
+                    .data
+                    .items
+                    .values()
+                    .any(|i| i.item_type == 14 && i.shape == def.index)
+            })
+            .unwrap_or(false)
+    };
+    if !has_book(&world, "Taecheon Sword") || !has_book(&world, "Invincibility") {
+        eprintln!("books missing; skipping");
+        return;
+    }
+    let burst = learn(&mut world, me, "Taecheon Sword");
+    let shield = learn(&mut world, me, "Invincibility");
+    let mut now = 3000;
+    world.tick(now);
+    drain(&mut world);
+    let victim = nearest_chicken(&world, me);
+    let loc = world.objects[&me].location;
+    let cell = Direction::ALL
+        .iter()
+        .map(|d| loc.step(*d, 1))
+        .find(|p| {
+            world.maps[&world.objects[&me].map]
+                .file
+                .is_walkable(p.x, p.y)
+        })
+        .unwrap();
+    world.teleport(victim, cell);
+    let (hp0, _, _) = world.test_hp(victim);
+    world.cast(me, burst, Direction::Down, None, loc);
+    for _ in 0..20 {
+        now += 100;
+        world.teleport(victim, cell);
+        world.tick(now);
+    }
+    let (hp1, _, dead) = world.test_hp(victim);
+    assert!(
+        dead || hp1 < hp0,
+        "Taecheon Sword hurt the chicken: {hp0} -> {hp1}"
+    );
+    // Invincibility: a direct hit does nothing while the buff lasts.
+    world.cast(me, shield, Direction::Down, None, loc);
+    for _ in 0..8 {
+        now += 100;
+        world.tick(now);
+    }
+    assert!(world.objects[&me].has_buff(mir_proto::buff_type::INVINCIBILITY));
+    let (php0, _, _) = world.test_hp(me);
+    world.test_damage(me, victim, 50);
+    let (php1, _, _) = world.test_hp(me);
+    assert_eq!(php0, php1, "invincible");
+}

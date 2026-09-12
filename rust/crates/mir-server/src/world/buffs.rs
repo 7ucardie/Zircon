@@ -83,6 +83,7 @@ impl World {
         let now = self.now;
         let mut expired = Vec::new();
         let mut drains = Vec::new();
+        let mut conversions = Vec::new();
         for o in self.players() {
             if let Some(p) = o.player() {
                 for b in &p.buffs {
@@ -95,6 +96,13 @@ impl World {
                         } else {
                             drains.push((o.id, b.stats.cloak_damage));
                         }
+                    } else if b.kind == buff_type::DARK_CONVERSION && now >= b.tick_at {
+                        // Dark Conversion: MP into twice the HP every 2 s.
+                        if b.stats.pool > p.mp {
+                            expired.push((o.id, b.kind));
+                        } else {
+                            conversions.push((o.id, b.stats.pool));
+                        }
                     }
                 }
             }
@@ -106,6 +114,26 @@ impl World {
                 if let Some(b) = o
                     .player_mut()
                     .and_then(|p| p.buffs.iter_mut().find(|b| b.kind == buff_type::CLOAK))
+                {
+                    b.tick_at = now + 2000;
+                }
+                (o.hp, o.max_hp)
+            };
+            self.events
+                .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+            let stats = self.player_stats(&self.objects[&id]);
+            self.send_to(id, ServerMessage::StatsChanged(stats));
+        }
+        for (id, amount) in conversions {
+            let (hp, max_hp) = {
+                let o = self.objects.get_mut(&id).unwrap();
+                o.hp = (o.hp + amount * 2).min(o.max_hp);
+                let p = o.player_mut().unwrap();
+                p.mp -= amount;
+                if let Some(b) = p
+                    .buffs
+                    .iter_mut()
+                    .find(|b| b.kind == buff_type::DARK_CONVERSION)
                 {
                     b.tick_at = now + 2000;
                 }
@@ -168,7 +196,15 @@ impl World {
                     }
                     p.next_tick = now + 2000;
                     p.ticks_left -= 1;
-                    if p.kind == poison_kind::GREEN || p.kind == poison_kind::HELL_FIRE {
+                    if matches!(
+                        p.kind,
+                        poison_kind::GREEN
+                            | poison_kind::HELL_FIRE
+                            | poison_kind::HEMORRHAGE
+                            | poison_kind::CONTAINMENT
+                            | poison_kind::PARASITE
+                            | poison_kind::BINDING
+                    ) {
                         damage += p.value;
                         owner = p.owner;
                     }

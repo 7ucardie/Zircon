@@ -382,7 +382,7 @@ fn attack_action(magic: Option<u16>) -> Action {
 fn cast_action(magic: u16) -> Action {
     if magic_type::is_stance_anim(magic) || magic == magic_type::MASS_BECKON {
         Action::Stance
-    } else if magic == magic_type::SWIFT_BLADE {
+    } else if magic == magic_type::SWIFT_BLADE || magic_type::is_directional(magic) {
         Action::Attack
     } else if magic == magic_type::RAKE {
         Action::Attack5
@@ -408,6 +408,16 @@ fn buff_icon(kind: u16) -> u32 {
         buff_type::CELESTIAL_LIGHT => 142,
         buff_type::TRANSPARENCY => 160,
         buff_type::CLOAK | buff_type::GHOST_WALK => 160,
+        buff_type::INVINCIBILITY => 97,
+        buff_type::EVASION => 91,
+        buff_type::RAGING_WIND => 95,
+        buff_type::CONCENTRATION => 96,
+        buff_type::THE_NEW_BEGINNING => 160,
+        buff_type::JUDGEMENT_OF_HEAVEN => 94,
+        buff_type::SUPERIOR_MAGIC_SHIELD => 100,
+        buff_type::DARK_CONVERSION => 90,
+        buff_type::LIFE_STEAL => 90,
+        buff_type::SPIRITUALISM => 92,
         buff_type::MAGIC_SHIELD => 100,
         buff_type::HEAL => 78,
         buff_type::MAGIC_RESISTANCE => 92,
