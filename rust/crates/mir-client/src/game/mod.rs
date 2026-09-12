@@ -376,6 +376,7 @@ fn buff_icon(kind: u16) -> u32 {
         buff_type::MIGHT => 96,
         buff_type::ENDURANCE => 95,
         buff_type::REFLECT_DAMAGE => 98,
+        buff_type::RENOUNCE => 94,
         buff_type::MAGIC_SHIELD => 100,
         buff_type::HEAL => 78,
         buff_type::MAGIC_RESISTANCE => 92,

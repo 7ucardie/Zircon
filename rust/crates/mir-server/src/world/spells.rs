@@ -17,7 +17,11 @@ impl World {
             .objects_at(location)
             .iter()
             .copied()
-            .filter(|v| matches!(&self.objects[v].kind, Kind::Spell(s) if s.effect == effect))
+            .filter(|v| {
+                matches!(&self.objects[v].kind, Kind::Spell(s)
+                    if s.effect == effect
+                        || matches!((s.effect, effect), (spell_effect::FIRE_WALL, spell_effect::TEMPEST) | (spell_effect::TEMPEST, spell_effect::FIRE_WALL)))
+            })
             .collect();
         for v in old {
             self.remove_object(v);
@@ -115,6 +119,19 @@ impl World {
                         .collect();
                     for v in victims {
                         self.magic_attack(owner, v, magic, element::FIRE, 60);
+                    }
+                }
+                spell_effect::TEMPEST => {
+                    let victims: Vec<ObjectId> = self.maps[&map]
+                        .objects_at(loc)
+                        .iter()
+                        .copied()
+                        .filter(|v| self.objects[v].is_monster() && !self.objects[v].dead)
+                        .collect();
+                    for v in victims {
+                        if self.magic_attack(owner, v, magic, element::WIND, 80) > 0 {
+                            self.try_repel(v, owner, 5);
+                        }
                     }
                 }
                 spell_effect::POISONOUS_CLOUD => {

@@ -400,7 +400,18 @@ pub mod magic_type {
     pub const FROZEN_EARTH: u16 = 214;
     pub const BLOW_EARTH: u16 = 215;
     pub const FIRE_WALL: u16 = 216;
+    pub const EXPEL_UNDEAD: u16 = 217;
+    pub const GEO_MANIPULATION: u16 = 218;
     pub const MAGIC_SHIELD: u16 = 219;
+    pub const FIRE_STORM: u16 = 220;
+    pub const LIGHTNING_WAVE: u16 = 221;
+    pub const ICE_STORM: u16 = 222;
+    pub const DRAGON_TORNADO: u16 = 223;
+    pub const GREATER_FROZEN_EARTH: u16 = 224;
+    pub const CHAIN_LIGHTNING: u16 = 225;
+    pub const METEOR_SHOWER: u16 = 226;
+    pub const RENOUNCE: u16 = 227;
+    pub const TEMPEST: u16 = 228;
     pub const HEAL: u16 = 300;
     pub const SPIRIT_SWORD: u16 = 301;
     pub const POISON_DUST: u16 = 302;
@@ -467,6 +478,8 @@ pub mod magic_type {
                 | RESILIENCE
                 | BECKON
                 | MASS_BECKON
+                | METEOR_SHOWER
+                | GREATER_FROZEN_EARTH
         )
     }
     /// Spells that fly at or strike a chosen monster.
@@ -489,13 +502,26 @@ pub mod magic_type {
                 | GREATER_EVIL_SLAYER
                 | INTERCHANGE
                 | BECKON
+                | EXPEL_UNDEAD
+                | CHAIN_LIGHTNING
         )
     }
     /// Spells cast on a ground cell.
     pub fn needs_cell(m: u16) -> bool {
         matches!(
             m,
-            FIRE_WALL | MAGIC_RESISTANCE | RESILIENCE | MASS_HEAL | SWIFT_BLADE
+            FIRE_WALL
+                | MAGIC_RESISTANCE
+                | RESILIENCE
+                | MASS_HEAL
+                | SWIFT_BLADE
+                | GEO_MANIPULATION
+                | FIRE_STORM
+                | LIGHTNING_WAVE
+                | ICE_STORM
+                | DRAGON_TORNADO
+                | METEOR_SHOWER
+                | TEMPEST
         )
     }
     /// Spells cast on oneself (no target, own cell).
@@ -512,13 +538,14 @@ pub mod magic_type {
                 | ENDURANCE
                 | REFLECT_DAMAGE
                 | FETTER
+                | RENOUNCE
         )
     }
     /// Spells that only use the facing direction.
     pub fn is_line(m: u16) -> bool {
         matches!(
             m,
-            SCORCHED_EARTH | LIGHTNING_BEAM | FROZEN_EARTH | BLOW_EARTH
+            SCORCHED_EARTH | LIGHTNING_BEAM | FROZEN_EARTH | BLOW_EARTH | GREATER_FROZEN_EARTH
         )
     }
     /// Self buffs cast facing down (Zircon `Combat15`).
@@ -573,6 +600,17 @@ pub mod magic_type {
                 | ENDURANCE
                 | REFLECT_DAMAGE
                 | FETTER
+                | EXPEL_UNDEAD
+                | GEO_MANIPULATION
+                | FIRE_STORM
+                | LIGHTNING_WAVE
+                | ICE_STORM
+                | DRAGON_TORNADO
+                | GREATER_FROZEN_EARTH
+                | CHAIN_LIGHTNING
+                | METEOR_SHOWER
+                | RENOUNCE
+                | TEMPEST
         )
     }
 }
@@ -583,6 +621,7 @@ pub mod buff_type {
     pub const MIGHT: u16 = 101;
     pub const ENDURANCE: u16 = 102;
     pub const REFLECT_DAMAGE: u16 = 103;
+    pub const RENOUNCE: u16 = 200;
     pub const MAGIC_SHIELD: u16 = 201;
     pub const HEAL: u16 = 300;
     pub const MAGIC_RESISTANCE: u16 = 302;
@@ -603,6 +642,7 @@ pub mod buff_type {
 /// Zircon `SpellEffect` values.
 pub mod spell_effect {
     pub const FIRE_WALL: u8 = 2;
+    pub const TEMPEST: u8 = 3;
     pub const POISONOUS_CLOUD: u8 = 7;
 }
 

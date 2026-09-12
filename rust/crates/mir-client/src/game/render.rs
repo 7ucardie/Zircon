@@ -27,6 +27,7 @@ impl Game {
             Appearance::Spell { effect } => {
                 let library = match *effect {
                     mir_proto::spell_effect::FIRE_WALL => effects::MAGIC,
+                    mir_proto::spell_effect::TEMPEST => effects::MAGIC_EX2,
                     mir_proto::spell_effect::POISONOUS_CLOUD => effects::MAGIC_EX4,
                     _ => return None,
                 };
@@ -381,7 +382,12 @@ impl Game {
         let (dx, dy) = view.object_px(o);
         if o.is_spell() {
             let color = match &o.appearance {
-                Appearance::Spell { effect } if *effect == mir_proto::spell_effect::FIRE_WALL => {
+                Appearance::Spell { effect }
+                    if matches!(
+                        *effect,
+                        mir_proto::spell_effect::FIRE_WALL | mir_proto::spell_effect::TEMPEST
+                    ) =>
+                {
                     [1.0, 1.0, 1.0, 0.55]
                 }
                 _ => [139.0 / 255.0, 69.0 / 255.0, 19.0 / 255.0, 1.0],

@@ -40,6 +40,7 @@ impl World {
                 experience: def.experience,
                 exp_owner: None,
                 owner: None,
+                shock_until: 0,
             }),
             map,
             location,

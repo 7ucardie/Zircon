@@ -148,6 +148,8 @@ pub struct BuffStats {
     pub magic_shield: i32,
     /// Percent of melee damage returned to monsters (Zircon `Stat.ReflectDamage`).
     pub reflect: i32,
+    pub hp_pct: i32,
+    pub mc_pct: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).
@@ -249,6 +251,8 @@ pub struct MonsterData {
     pub exp_owner: Option<ObjectId>,
     /// Player this monster fights for (tamed or summoned pets).
     pub owner: Option<ObjectId>,
+    /// Zircon `ShockTime`: cannot move until then; any damage clears it.
+    pub shock_until: u64,
 }
 
 #[derive(Debug)]
@@ -435,6 +439,8 @@ struct PendingMagic {
     direction: Option<Direction>,
     /// Line spells: centre cells hit for full power, flanks for 30 %.
     primary: bool,
+    /// Chain Lightning: (power divisor, cells already struck).
+    chain: Option<(i32, Vec<Point>)>,
 }
 
 /// Outgoing message with routing info.

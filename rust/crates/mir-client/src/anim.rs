@@ -49,6 +49,7 @@ pub fn player_frame(action: Action) -> Frame {
 pub fn spell_frame(effect: u8) -> Frame {
     match effect {
         mir_proto::spell_effect::FIRE_WALL => Frame::new(920, 5, 150),
+        mir_proto::spell_effect::TEMPEST => Frame::new(920, 10, 150),
         mir_proto::spell_effect::POISONOUS_CLOUD => Frame::new(400, 15, 100),
         _ => Frame::new(0, 1, 3_600_000),
     }

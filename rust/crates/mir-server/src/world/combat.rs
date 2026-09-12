@@ -535,6 +535,7 @@ impl World {
                 if m.target.is_none() {
                     m.target = Some(attacker);
                 }
+                m.shock_until = 0;
                 struck = now > m.struck_time + 300;
                 if struck {
                     m.struck_time = now;

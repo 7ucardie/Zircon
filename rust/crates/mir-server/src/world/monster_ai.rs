@@ -175,7 +175,11 @@ impl World {
     pub(super) fn monster_can_move(&self, id: ObjectId) -> bool {
         let o = &self.objects[&id];
         let m = o.monster_ref();
-        !o.dead && m.move_delay > 0 && self.now >= o.action_time && self.now >= o.move_time
+        !o.dead
+            && m.move_delay > 0
+            && self.now >= o.action_time
+            && self.now >= o.move_time
+            && self.now >= m.shock_until
     }
 
     pub(super) fn monster_can_attack(&self, id: ObjectId) -> bool {

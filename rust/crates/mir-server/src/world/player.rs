@@ -399,6 +399,7 @@ impl World {
         let mut pas_dc = 0;
         let mut pas_min_dc = 0;
         let mut life_steal = 0;
+        let mut pas_mc_pct = 0;
         for m in &p.magics {
             let Some(def) = self.data.magics.get(&m.magic) else {
                 continue;
@@ -421,6 +422,8 @@ impl World {
                     pas_min_dc += pmin;
                 }
                 magic_type::BLOODY_FLOWER => life_steal += pmin,
+                // Zircon quirk: owning Renounce grants its MC percent passively.
+                magic_type::RENOUNCE => pas_mc_pct += (m.level as i32 + 1) * 10,
                 _ => {}
             }
         }
@@ -433,9 +436,14 @@ impl World {
             bs.max_ac += b.stats.max_ac;
             bs.max_mr += b.stats.max_mr;
             bs.agility += b.stats.agility;
+            bs.hp_pct += b.stats.hp_pct;
+            bs.mc_pct += b.stats.mc_pct;
         }
+        bs.mc_pct += pas_mc_pct;
         let o = self.objects.get_mut(&id).unwrap();
         o.max_hp = base.health + g(stat::HEALTH);
+        o.max_hp += o.max_hp * bs.hp_pct / 100;
+        o.max_hp = o.max_hp.max(10);
         let mut s = CombatStats {
             accuracy: base.accuracy + g(stat::ACCURACY) + pas_acc,
             agility: base.agility + g(stat::AGILITY) + pas_agi + bs.agility,
@@ -452,6 +460,8 @@ impl World {
         };
         s.min_dc += s.min_dc * bs.dc_pct / 100;
         s.max_dc += s.max_dc * bs.dc_pct / 100;
+        s.min_mc += s.min_mc * bs.mc_pct / 100;
+        s.max_mc += s.max_mc * bs.mc_pct / 100;
         s.min_ac += s.min_ac * bs.phys_def_pct / 100;
         s.max_ac += s.max_ac * bs.phys_def_pct / 100;
         s.min_mr += s.min_mr * bs.mag_def_pct / 100;

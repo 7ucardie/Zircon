@@ -79,6 +79,7 @@ impl World {
                 location,
                 direction: None,
                 primary,
+                chain: None,
             };
         let now = self.now;
         match magic {
@@ -164,6 +165,7 @@ impl World {
                         location: loc.step(d, 1),
                         direction: Some(d),
                         primary: true,
+                        chain: None,
                     });
                 }
             }
@@ -197,6 +199,72 @@ impl World {
             magic_type::DEFIANCE | magic_type::MIGHT | magic_type::POISONOUS_CLOUD => {
                 pending.push(pm(now + 500, None, loc, true))
             }
+            magic_type::RENOUNCE => pending.push(pm(now + 600, None, loc, true)),
+            magic_type::EXPEL_UNDEAD => {
+                let undead = target.filter(|t| match &self.objects[t].kind {
+                    Kind::Monster(m) => self.data.monsters[&m.def].undead,
+                    _ => false,
+                });
+                if let Some(t) = undead {
+                    targets.push(t);
+                    pending.push(pm(now + 500, Some(t), location, true));
+                }
+            }
+            magic_type::GEO_MANIPULATION => {
+                if location.distance(loc) > MAGIC_RANGE {
+                    cast_ok = false;
+                } else {
+                    pending.push(pm(now + 500, None, location, true));
+                }
+            }
+            // 3x3 storms on a cell.
+            magic_type::FIRE_STORM
+            | magic_type::LIGHTNING_WAVE
+            | magic_type::ICE_STORM
+            | magic_type::DRAGON_TORNADO
+            | magic_type::TEMPEST => {
+                if location.distance(loc) > MAGIC_RANGE {
+                    cast_ok = false;
+                } else {
+                    locations.push(location);
+                    let delay = if magic == magic_type::DRAGON_TORNADO {
+                        1200
+                    } else {
+                        500
+                    };
+                    pending.push(pm(now + delay, None, location, true));
+                }
+            }
+            magic_type::METEOR_SHOWER => {
+                let level = um.level as usize;
+                let mut pool: Vec<ObjectId> = self
+                    .objects
+                    .values()
+                    .filter(|o| {
+                        o.map == map
+                            && o.is_monster()
+                            && !o.dead
+                            && o.location.distance(location) <= 3
+                            && o.location.distance(loc) <= MAGIC_RANGE
+                    })
+                    .map(|o| o.id)
+                    .collect();
+                while !pool.is_empty() && targets.len() < 6 + level {
+                    let i = self.rng.random_range(0..pool.len());
+                    let t = pool.swap_remove(i);
+                    targets.push(t);
+                    pending.push(pm(now + 500 + dist(self, t) * 48, Some(t), location, true));
+                }
+            }
+            magic_type::CHAIN_LIGHTNING => {
+                if let Some(t) = target.filter(|t| self.objects[t].is_monster()) {
+                    let cell = self.objects[&t].location;
+                    locations.push(cell);
+                    let mut p = pm(now + 600, None, cell, true);
+                    p.chain = Some((0, Vec::new()));
+                    pending.push(p);
+                }
+            }
             // Lines: 8 cells ahead with flanks; delay 800 (Lightning Beam 500).
             m if magic_type::is_line(m) => {
                 let delay = if m == magic_type::LIGHTNING_BEAM {
@@ -204,12 +272,19 @@ impl World {
                 } else {
                     800
                 };
-                for (i, (cell, primary)) in Self::line_cells(loc, direction).into_iter().enumerate()
-                {
-                    if primary && (m != magic_type::LIGHTNING_BEAM || i == 0) {
-                        locations.push(cell);
+                // Greater Frozen Earth fans three rays (direction -1, 0, +1).
+                let rays: Vec<Direction> = if m == magic_type::GREATER_FROZEN_EARTH {
+                    vec![direction.rotate(-1), direction, direction.rotate(1)]
+                } else {
+                    vec![direction]
+                };
+                for ray in rays {
+                    for (i, (cell, primary)) in Self::line_cells(loc, ray).into_iter().enumerate() {
+                        if primary && (m != magic_type::LIGHTNING_BEAM || i == 0) {
+                            locations.push(cell);
+                        }
+                        pending.push(pm(now + delay, None, cell, primary));
                     }
-                    pending.push(pm(now + delay, None, cell, primary));
                 }
             }
             // Ground casts.
@@ -650,7 +725,7 @@ impl World {
                     let elem = match m {
                         magic_type::SCORCHED_EARTH => element::FIRE,
                         magic_type::LIGHTNING_BEAM => element::LIGHTNING,
-                        magic_type::FROZEN_EARTH => element::ICE,
+                        magic_type::FROZEN_EARTH | magic_type::GREATER_FROZEN_EARTH => element::ICE,
                         _ => element::WIND,
                     };
                     let scale = if pm.primary { 100 } else { 30 };
@@ -659,6 +734,9 @@ impl World {
                         if dealt > 0 {
                             match m {
                                 magic_type::FROZEN_EARTH => self.try_slow(v, pm.caster, 10, 3),
+                                magic_type::GREATER_FROZEN_EARTH => {
+                                    self.try_slow(v, pm.caster, 5, 5)
+                                }
                                 magic_type::BLOW_EARTH => self.try_repel(v, pm.caster, 10),
                                 _ => {}
                             }
@@ -1059,6 +1137,189 @@ impl World {
                         };
                         self.buff_add(t, kind, secs * 1000, stats);
                         self.level_magic(pm.caster, pm.magic);
+                    }
+                }
+                // ---- Wizard wave 3 ----
+                magic_type::RENOUNCE => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    self.buff_add(
+                        pm.caster,
+                        buff_type::RENOUNCE,
+                        (30 + level as u64 * 30) * 1000,
+                        BuffStats {
+                            hp_pct: -(1 + level) * 10,
+                            mc_pct: (1 + level) * 10,
+                            ..BuffStats::default()
+                        },
+                    );
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::EXPEL_UNDEAD => {
+                    let Some(t) = pm.target else { continue };
+                    let Some((mlevel, boss, undead, dead)) =
+                        self.objects.get(&t).and_then(|o| match &o.kind {
+                            Kind::Monster(m) => {
+                                let d = &self.data.monsters[&m.def];
+                                Some((d.level, d.is_boss, d.undead, o.dead))
+                            }
+                            _ => None,
+                        })
+                    else {
+                        continue;
+                    };
+                    if dead || boss || !undead || mlevel >= 70 {
+                        continue;
+                    }
+                    if let Some(m) = self.objects.get_mut(&t).and_then(|o| o.monster_mut()) {
+                        if m.target.is_none() {
+                            m.target = Some(pm.caster);
+                        }
+                    }
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    if mlevel >= clevel - 1 + self.rng.random_range(0..4) {
+                        continue;
+                    }
+                    let chance = 35 + level * 9 + (clevel - mlevel) * 5;
+                    if self.rng.random_range(0..100) >= chance {
+                        continue;
+                    }
+                    let hp = self.objects[&t].hp;
+                    self.damage(t, pm.caster, hp.max(1), element::NONE, true);
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::GEO_MANIPULATION => {
+                    if pm.location == cloc {
+                        continue;
+                    }
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    if self.rng.random_range(0..100) > 25 + level * 25 {
+                        continue;
+                    }
+                    let ok = self.maps[&cmap]
+                        .file
+                        .is_walkable(pm.location.x, pm.location.y)
+                        && !self.cell_blocked(cmap, pm.location, false);
+                    if !ok {
+                        continue;
+                    }
+                    self.teleport_with_effects(pm.caster, pm.location);
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::FIRE_STORM
+                | magic_type::LIGHTNING_WAVE
+                | magic_type::ICE_STORM
+                | magic_type::DRAGON_TORNADO => {
+                    let victims: Vec<ObjectId> = self
+                        .objects
+                        .values()
+                        .filter(|o| {
+                            o.map == cmap
+                                && o.is_monster()
+                                && !o.dead
+                                && o.location.distance(pm.location) <= 1
+                        })
+                        .map(|o| o.id)
+                        .collect();
+                    let elem = match pm.magic {
+                        magic_type::FIRE_STORM => element::FIRE,
+                        magic_type::LIGHTNING_WAVE => element::LIGHTNING,
+                        magic_type::ICE_STORM => element::ICE,
+                        _ => element::WIND,
+                    };
+                    for v in victims {
+                        let dealt = self.magic_attack(pm.caster, v, pm.magic, elem, 100);
+                        if dealt > 0 {
+                            match pm.magic {
+                                magic_type::ICE_STORM => self.try_slow(v, pm.caster, 5, 5),
+                                magic_type::DRAGON_TORNADO => self.try_repel(v, pm.caster, 5),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                magic_type::TEMPEST => {
+                    let level = self.magic_level(pm.caster, pm.magic);
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            let cell = Point::new(pm.location.x + dx, pm.location.y + dy);
+                            if !self.maps[&cmap].file.is_walkable(cell.x, cell.y) {
+                                continue;
+                            }
+                            self.spawn_spell(
+                                cmap,
+                                cell,
+                                spell_effect::TEMPEST,
+                                (level + 2) * 5,
+                                2000,
+                                pm.caster,
+                                pm.magic,
+                            );
+                        }
+                    }
+                    self.level_magic(pm.caster, pm.magic);
+                }
+                magic_type::METEOR_SHOWER => {
+                    if let Some(t) = pm.target {
+                        self.magic_attack(pm.caster, t, pm.magic, element::FIRE, 100);
+                    }
+                }
+                magic_type::CHAIN_LIGHTNING => {
+                    let Some((divisor, mut visited)) = pm.chain.clone() else {
+                        continue;
+                    };
+                    let cell = pm.location;
+                    let victims: Vec<ObjectId> = self.maps[&cmap]
+                        .objects_at(cell)
+                        .iter()
+                        .copied()
+                        .filter(|v| {
+                            let o = &self.objects[v];
+                            o.is_monster() && !o.dead && o.location.distance(cloc) <= MAGIC_RANGE
+                        })
+                        .collect();
+                    // Multiplier 5 / (divisor + 5).
+                    let scale = 500 / (divisor + 5);
+                    let mut any = false;
+                    for v in victims {
+                        if self.magic_attack(pm.caster, v, pm.magic, element::LIGHTNING, scale) >= 1
+                        {
+                            any = true;
+                        }
+                    }
+                    visited.push(cell);
+                    if !any {
+                        continue;
+                    }
+                    let next_div = divisor + 1;
+                    let mut next_cells = Vec::new();
+                    for dy in -1..=1 {
+                        for dx in -1..=1 {
+                            let c = Point::new(cell.x + dx, cell.y + dy);
+                            if visited.contains(&c) || next_cells.contains(&c) {
+                                continue;
+                            }
+                            let has_monster = self.maps[&cmap].objects_at(c).iter().any(|v| {
+                                let o = &self.objects[v];
+                                o.is_monster()
+                                    && !o.dead
+                                    && o.location.distance(cloc) <= MAGIC_RANGE
+                            });
+                            if has_monster && self.rng.random_range(0..next_div) == 0 {
+                                next_cells.push(c);
+                            }
+                        }
+                    }
+                    for c in next_cells {
+                        self.pending_magics.push(PendingMagic {
+                            time: self.now + 200,
+                            caster: pm.caster,
+                            magic: pm.magic,
+                            target: None,
+                            location: c,
+                            direction: None,
+                            primary: true,
+                            chain: Some((next_div, visited.clone())),
+                        });
                     }
                 }
                 _ => {}

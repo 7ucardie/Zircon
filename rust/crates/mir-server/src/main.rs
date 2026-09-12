@@ -1250,6 +1250,8 @@ mod tests {
         );
         now += 3000;
         world.tick(now);
+        // The chicken may have wandered off meanwhile; put it back in reach.
+        world.teleport(victim, loc.step(dir, 1));
         world.cast(me, fetter, dir, None, loc);
         for _ in 0..8 {
             now += 100;
@@ -1262,6 +1264,86 @@ mod tests {
                 .any(|p| p.kind == world::poison_kind::SLOW),
             "Fetter slows monsters within two cells"
         );
+    }
+
+    #[test]
+    fn wizard_storms_renounce_and_tempest() {
+        let Some(mut world) = world() else {
+            return;
+        };
+        let mut rec = test_character("Storm");
+        rec.class = mir_proto::Class::Wizard;
+        rec.level = 54;
+        let me = world.add_player(1, 1, &rec).unwrap();
+        world.tick(0);
+        drain(&mut world);
+        let fire_storm = learn(&mut world, me, "Fire Storm");
+        let renounce = learn(&mut world, me, "Renounce");
+        let tempest = learn(&mut world, me, "Tempest");
+        let victim = nearest_chicken(&world, me);
+        let loc = world.objects[&me].location;
+        let map = world.objects[&me].map;
+        let cell = Direction::ALL
+            .iter()
+            .map(|d| loc.step(*d, 3))
+            .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+            .unwrap();
+        world.teleport(victim, cell);
+        let hp_before = world.objects[&victim].hp;
+        world.cast(
+            me,
+            fire_storm,
+            Direction::from_points(loc, cell),
+            None,
+            cell,
+        );
+        let mut now = 1000;
+        for _ in 0..10 {
+            now += 100;
+            world.teleport(victim, cell);
+            world.tick(now);
+        }
+        let hurt = world
+            .objects
+            .get(&victim)
+            .map(|v| v.dead || v.hp < hp_before)
+            .unwrap_or(true);
+        assert!(hurt, "Fire Storm hits the 3x3 around the cell");
+
+        // Renounce trades max HP for MC.
+        let (hp_max_before, mc_before) = {
+            let o = &world.objects[&me];
+            (o.max_hp, o.stats.max_mc)
+        };
+        now += 3000;
+        world.tick(now);
+        world.cast(me, renounce, Direction::Down, None, loc);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        let o = &world.objects[&me];
+        assert!(
+            o.max_hp < hp_max_before,
+            "Renounce lowers max HP: {hp_max_before} -> {}",
+            o.max_hp
+        );
+        assert!(o.stats.max_mc >= mc_before, "Renounce raises MC");
+
+        // Tempest lays a 3x3 field of spell objects.
+        now += 3000;
+        world.tick(now);
+        world.cast(me, tempest, Direction::from_points(loc, cell), None, cell);
+        for _ in 0..8 {
+            now += 100;
+            world.tick(now);
+        }
+        let fields = world
+            .objects
+            .values()
+            .filter(|o| matches!(o.appearance, Appearance::Spell { effect } if effect == mir_proto::spell_effect::TEMPEST))
+            .count();
+        assert!(fields >= 5, "tempest cells: {fields}");
     }
 
     #[test]

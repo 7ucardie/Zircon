@@ -254,6 +254,18 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         magic_type::ENDURANCE => (MAGIC_EX3, 190, 10, 100, WHITE, false),
         magic_type::REFLECT_DAMAGE => (MAGIC_EX2, 1220, 10, 100, WHITE, false),
         magic_type::FETTER => (MAGIC_EX2, 2370, 10, 100, WHITE, false),
+        magic_type::EXPEL_UNDEAD => (MAGIC, 130, 10, 60, WHITE, false),
+        magic_type::GEO_MANIPULATION => (MAGIC, 110, 10, 60, WHITE, false),
+        magic_type::FIRE_STORM => (MAGIC, 940, 10, 60, FIRE, false),
+        magic_type::LIGHTNING_WAVE | magic_type::CHAIN_LIGHTNING => {
+            (MAGIC, 1430, 12, 50, LIGHTNING, false)
+        }
+        magic_type::ICE_STORM => (MAGIC, 770, 10, 60, ICE, false),
+        magic_type::DRAGON_TORNADO => (MAGIC_EX, 1030, 10, 60, WIND, false),
+        magic_type::GREATER_FROZEN_EARTH => (MAGIC_EX, 0, 10, 50, ICE, true),
+        magic_type::METEOR_SHOWER => (MAGIC, 1560, 9, 65, FIRE, true),
+        magic_type::RENOUNCE => (MAGIC_EX2, 80, 10, 100, WHITE, false),
+        magic_type::TEMPEST => (MAGIC_EX2, 910, 10, 60, WIND, false),
         _ => return None,
     };
     Some(Effect {
@@ -403,6 +415,81 @@ pub fn payload(
             for a in anchors {
                 out.effects
                     .push(Effect::at(MAGIC_EX2, 2330, 16, 100, WHITE, a, now));
+            }
+        }
+        magic_type::EXPEL_UNDEAD => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC, 140, 10, 100, WHITE, a, now));
+            }
+        }
+        magic_type::FIRE_STORM => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC, 950, 7, 100, FIRE, a, now));
+            }
+        }
+        magic_type::LIGHTNING_WAVE => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX, 980, 8, 100, LIGHTNING, a, now));
+            }
+        }
+        magic_type::ICE_STORM => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC, 780, 7, 100, ICE, a, now));
+            }
+        }
+        magic_type::DRAGON_TORNADO => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX, 1040, 16, 100, WIND, a, now));
+            }
+        }
+        magic_type::CHAIN_LIGHTNING => {
+            for a in anchors {
+                out.effects
+                    .push(Effect::at(MAGIC_EX2, 470, 10, 100, LIGHTNING, a, now));
+            }
+        }
+        magic_type::GREATER_FROZEN_EARTH => {
+            for p in locations {
+                let wait = caster_cell.distance(*p) as u64 * 50;
+                let a = Anchor::Cell(*p);
+                out.effects
+                    .push(Effect::at(MAGIC_EX, 90, 20, 50, ICE, a, now + wait));
+                out.effects.push(Effect::at(
+                    PROG_USE,
+                    260,
+                    1,
+                    2500,
+                    [1.0, 1.0, 1.0, 0.8],
+                    a,
+                    now + wait + 1000,
+                ));
+            }
+        }
+        magic_type::METEOR_SHOWER => {
+            for a in anchors {
+                out.projectiles.push((
+                    caster_cell,
+                    a,
+                    Projectile {
+                        library: MAGIC,
+                        start: 1640,
+                        count: 6,
+                        delay_ms: 100,
+                        color: FIRE,
+                        from: caster_cell,
+                        to: a,
+                        started: now,
+                        duration: 0,
+                        dir16: 0,
+                        dir_stride: 10,
+                        explode: Some((MAGIC, 1800, 10, 100, FIRE)),
+                    },
+                ));
             }
         }
         magic_type::SCORCHED_EARTH | magic_type::FROZEN_EARTH => {
