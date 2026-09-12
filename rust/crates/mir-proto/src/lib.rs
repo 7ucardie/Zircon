@@ -211,6 +211,8 @@ pub struct ItemInstance {
 pub enum Grid {
     Inventory,
     Equipment,
+    /// Account storage (safe zones only).
+    Storage,
 }
 
 pub const INVENTORY_SIZE: usize = 48;
@@ -1336,6 +1338,23 @@ pub enum ClientMessage {
     GroupRemove {
         name: String,
     },
+    /// Ask the player in front (facing you) to trade.
+    TradeRequest,
+    TradeResponse {
+        accept: bool,
+    },
+    TradeClose,
+    /// Offer `count` of a cell (Zircon `TradeAddItem`).
+    TradeAddItem {
+        grid: Grid,
+        slot: u8,
+        count: u32,
+    },
+    /// Raise the offered gold to this total.
+    TradeAddGold {
+        gold: u64,
+    },
+    TradeConfirm,
     /// Return to town while dead (Zircon `C.TownRevive`).
     TownRevive,
     NpcCall {
@@ -1587,6 +1606,39 @@ pub enum ServerMessage {
     GroupRemove {
         id: ObjectId,
     },
+    /// Account storage on entry.
+    Storage {
+        size: u32,
+        items: Vec<(u8, ItemInstance)>,
+    },
+    TradeRequest {
+        from: String,
+    },
+    /// A trade with `name` opened.
+    TradeOpen {
+        name: String,
+    },
+    TradeClose,
+    /// Your own offer was accepted.
+    TradeAddItem {
+        grid: Grid,
+        slot: u8,
+        count: u32,
+    },
+    /// Your offered gold total.
+    TradeAddGold {
+        gold: u64,
+    },
+    /// The partner offered an item (`count` = offered amount).
+    TradeItemAdded {
+        item: ItemInstance,
+    },
+    /// The partner's offered gold total.
+    TradeGoldAdded {
+        gold: u64,
+    },
+    /// Your confirmation was cleared; confirm again.
+    TradeUnlock,
     /// Someone spoke; `id` set for local talk shows a bubble over them.
     Say {
         id: Option<ObjectId>,

@@ -74,6 +74,19 @@ divided by the member count, owning what they roll. `!!text` is group
 chat. `ZIRCON_AUTO_GROUP=name` invites that player after entry and
 `ZIRCON_AUTO_GROUP_ACCEPT=1` accepts any invite.
 
+Storage (`B`, or `ZIRCON_OPEN_STORAGE=1`) is the account's 100-slot bank,
+shared by its characters and kept in `accounts.json`: pick up a bag or
+equipment item and click a storage slot to store it, or the reverse to take
+it out. As in Zircon it only works inside a safe zone (`SafeZoneInfo`
+regions), items flagged `CanStore = false` are refused and withdrawing
+never checks weight. Trading (`T`) asks the player standing in the cell in
+front of you who faces you; they get an Accept / Decline prompt. In the
+trade window right-click bag items to offer them (15 at most, `CanTrade`
+only), type a gold amount and press Set gold (it can only be raised), then
+both press Confirm; any change to an offer clears both confirmations, a
+side without enough free bag slots is unlocked to make room, and a step,
+turn, death or disconnect closes the trade.
+
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's

@@ -74,6 +74,11 @@ pub struct Game {
     pub catalog: ItemCatalog,
     inventory: Vec<Option<ItemInstance>>,
     equipment: Vec<Option<ItemInstance>>,
+    /// Account storage (Zircon `Storage`), sized by the server.
+    storage: Vec<Option<ItemInstance>>,
+    /// Open trade, if any.
+    trade: Option<crate::windows::TradeState>,
+    trade_request: Option<String>,
     gold: u64,
     weights: Weights,
     windows: WindowState,
@@ -185,6 +190,9 @@ impl Game {
             catalog,
             input: Input::default(),
             inventory: (0..INVENTORY_SIZE).map(|_| None).collect(),
+            storage: Vec::new(),
+            trade: None,
+            trade_request: None,
             equipment: (0..EQUIPMENT_SIZE).map(|_| None).collect(),
             gold: 0,
             weights: Weights {
@@ -200,6 +208,7 @@ impl Game {
                 w.inventory_open = std::env::var_os("ZIRCON_OPEN_WINDOWS").is_some();
                 w.character_open = w.inventory_open;
                 w.skills_open = std::env::var_os("ZIRCON_OPEN_SKILLS").is_some();
+                w.storage_open = std::env::var_os("ZIRCON_OPEN_STORAGE").is_some();
                 w
             },
             goal: None,

@@ -127,6 +127,11 @@ pub struct WindowState {
     pub skills_open: bool,
     pub quests_open: bool,
     pub quest_scroll: f32,
+    /// Storage window (B): account storage, usable in safe zones.
+    pub storage_open: bool,
+    trade_gold: Option<TextBox>,
+    trade_buttons: Vec<Button>,
+    request_buttons: Vec<Button>,
     /// Group window (P): members, invite box, allow toggle.
     pub group_open: bool,
     group_name: Option<TextBox>,
@@ -154,7 +159,8 @@ pub struct WindowState {
 impl WindowState {
     /// True while a window text box has keyboard focus.
     pub fn typing(&self) -> bool {
-        self.group_open && self.group_name.as_ref().is_some_and(|b| b.focused)
+        (self.group_open && self.group_name.as_ref().is_some_and(|b| b.focused))
+            || self.trade_gold.as_ref().is_some_and(|b| b.focused)
     }
 }
 
@@ -165,6 +171,10 @@ impl Default for WindowState {
             character_open: false,
             skills_open: false,
             quests_open: false,
+            storage_open: false,
+            trade_gold: None,
+            trade_buttons: Vec::new(),
+            request_buttons: Vec::new(),
             group_open: false,
             group_name: None,
             group_buttons: Vec::new(),
@@ -206,6 +216,21 @@ pub struct Bag<'a> {
     pub allow_group: bool,
     pub group_invite: Option<&'a str>,
     pub user: Option<ObjectId>,
+    pub storage: &'a [Option<ItemInstance>],
+    pub trade: Option<&'a TradeState>,
+    pub trade_request: Option<&'a str>,
+}
+
+/// An open trade as the client sees it.
+pub struct TradeState {
+    pub partner: String,
+    /// My offered cells: (grid, slot, count).
+    pub my_items: Vec<(Grid, u8, u32)>,
+    pub my_gold: u64,
+    pub their_items: Vec<ItemInstance>,
+    pub their_gold: u64,
+    /// I pressed Confirm and the server has not unlocked it since.
+    pub confirmed: bool,
 }
 
 /// The few player facts windows need.
@@ -480,6 +505,193 @@ impl WindowState {
             }
             if closed {
                 self.quests_open = false;
+            }
+        }
+
+        // ---- Storage (B): 10 columns, account storage ----
+        if self.storage_open {
+            let cols = 10;
+            let rows = bag.storage.len().div_ceil(cols).max(1);
+            let win = Rect::new(
+                10.0,
+                40.0,
+                20.0 + cols as f32 * PITCH + 20.0,
+                39.0 + rows as f32 * PITCH + 50.0,
+            );
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            let closed = c.window(win, "Storage", true);
+            for i in 0..bag.storage.len() {
+                let (col, row) = (i % cols, i / cols);
+                let r = Rect::new(
+                    win.x + 20.0 + col as f32 * PITCH,
+                    win.y + 39.0 + row as f32 * PITCH,
+                    CELL,
+                    CELL,
+                );
+                let hover = r.contains(mouse.0, mouse.1);
+                let item = bag.storage[i].as_ref();
+                let selected = self.carrying == Some((Grid::Storage, i as u8));
+                draw_item_cell(c, bag.catalog, r, item, hover, selected);
+                if hover {
+                    if let Some(it) = item {
+                        self.tooltip = Some((it.info, mouse.0, mouse.1));
+                    }
+                    if c.input.lmb_pressed {
+                        self.click_slot(Grid::Storage, i as u8, item.is_some(), out);
+                    }
+                }
+            }
+            c.text.draw(
+                "Safe zones only. Pick up a bag item and click a slot to store it.",
+                10,
+                win.x + 20.0,
+                win.y + win.h - 3.0 - 42.0 + 12.0,
+                [160, 160, 160, 255],
+            );
+            if closed {
+                self.storage_open = false;
+                self.carrying = None;
+            }
+        }
+
+        // ---- Trade window ----
+        if let Some(t) = bag.trade {
+            let win = Rect::new(width as f32 / 2.0 - 200.0, 60.0, 400.0, 300.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, &format!("Trade with {}", t.partner), true);
+            let col_w = 180.0;
+            c.text.draw(
+                "You offer (right-click bag items):",
+                11,
+                win.x + 16.0,
+                win.y + 36.0,
+                [255, 255, 0, 255],
+            );
+            for (i, (grid, slot, count)) in t.my_items.iter().enumerate() {
+                let cells = match grid {
+                    Grid::Inventory => bag.inventory,
+                    Grid::Equipment => bag.equipment,
+                    Grid::Storage => bag.storage,
+                };
+                let name = cells
+                    .get(*slot as usize)
+                    .and_then(|c| c.as_ref())
+                    .map(|it| bag.catalog.name(it.info))
+                    .unwrap_or_else(|| "?".into());
+                c.text.draw(
+                    &format!("{name} x{count}"),
+                    11,
+                    win.x + 16.0,
+                    win.y + 54.0 + i as f32 * 15.0,
+                    [255, 255, 255, 255],
+                );
+            }
+            c.text.draw(
+                &format!("{} offers:", t.partner),
+                11,
+                win.x + 16.0 + col_w + 20.0,
+                win.y + 36.0,
+                [255, 255, 0, 255],
+            );
+            for (i, it) in t.their_items.iter().enumerate() {
+                c.text.draw(
+                    &format!("{} x{}", bag.catalog.name(it.info), it.count),
+                    11,
+                    win.x + 16.0 + col_w + 20.0,
+                    win.y + 54.0 + i as f32 * 15.0,
+                    [255, 255, 255, 255],
+                );
+            }
+            let gy = win.y + win.h - 3.0 - 42.0 - 56.0;
+            c.text.draw(
+                &format!("Gold: {}", t.my_gold),
+                12,
+                win.x + 16.0,
+                gy,
+                [218, 165, 32, 255],
+            );
+            c.text.draw(
+                &format!("Gold: {}", t.their_gold),
+                12,
+                win.x + 16.0 + col_w + 20.0,
+                gy,
+                [218, 165, 32, 255],
+            );
+            let gold_box = self
+                .trade_gold
+                .get_or_insert_with(|| TextBox::new(Rect::new(0.0, 0.0, 100.0, 22.0), 12));
+            gold_box.rect = Rect::new(win.x + 16.0, gy + 22.0, 100.0, 22.0);
+            let submitted = gold_box.update(c);
+            gold_box.text.retain(|ch| ch.is_ascii_digit());
+            if self.trade_buttons.is_empty() {
+                self.trade_buttons = vec![
+                    Button::default_style(0.0, 0.0, 70.0, "Set gold"),
+                    Button::default_style(0.0, 0.0, 80.0, "Confirm"),
+                    Button::default_style(0.0, 0.0, 80.0, "Cancel"),
+                ];
+            }
+            let gold: u64 = gold_box.text.parse().unwrap_or(0);
+            let b = &mut self.trade_buttons[0];
+            b.pos = (win.x + 122.0, gy + 20.0);
+            b.enabled = gold > t.my_gold;
+            if (b.update(c) || submitted) && b.enabled {
+                out.push(ClientMessage::TradeAddGold { gold });
+            }
+            let fy = win.y + win.h - 3.0 - 42.0 + 8.0;
+            let b = &mut self.trade_buttons[1];
+            b.pos = (win.x + 110.0, fy);
+            b.enabled = !t.confirmed;
+            b.label = Some(if t.confirmed {
+                "Waiting...".into()
+            } else {
+                "Confirm".into()
+            });
+            if b.update(c) {
+                out.push(ClientMessage::TradeConfirm);
+            }
+            let b = &mut self.trade_buttons[2];
+            b.pos = (win.x + 210.0, fy);
+            if b.update(c) {
+                out.push(ClientMessage::TradeClose);
+            }
+        } else if let Some(b) = &mut self.trade_gold {
+            b.text.clear();
+            b.focused = false;
+        }
+
+        // ---- Trade request prompt ----
+        if let Some(from) = bag.trade_request {
+            let win = Rect::new(width as f32 / 2.0 - 150.0, 240.0, 300.0, 100.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, "Trade request", false);
+            c.text.draw(
+                &format!("{from} wants to trade with you."),
+                12,
+                win.x + 16.0,
+                win.y + 40.0,
+                [255, 255, 255, 255],
+            );
+            if self.request_buttons.is_empty() {
+                self.request_buttons = vec![
+                    Button::default_style(0.0, 0.0, 80.0, "Accept"),
+                    Button::default_style(0.0, 0.0, 80.0, "Decline"),
+                ];
+            }
+            let b = &mut self.request_buttons[0];
+            b.pos = (win.x + 60.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::TradeResponse { accept: true });
+            }
+            let b = &mut self.request_buttons[1];
+            b.pos = (win.x + 160.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::TradeResponse { accept: false });
             }
         }
 
@@ -887,6 +1099,20 @@ impl WindowState {
                     }
                     if c.input.rmb_pressed {
                         if let Some(it) = item {
+                            if let Some(t) = bag.trade {
+                                if !t
+                                    .my_items
+                                    .iter()
+                                    .any(|(g, s, _)| *g == Grid::Inventory && *s == i as u8)
+                                {
+                                    out.push(ClientMessage::TradeAddItem {
+                                        grid: Grid::Inventory,
+                                        slot: i as u8,
+                                        count: it.count,
+                                    });
+                                }
+                                continue;
+                            }
                             let sellable = bag
                                 .catalog
                                 .get(it.info)

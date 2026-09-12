@@ -42,8 +42,13 @@ pub struct StoredItem {
 pub struct Bag {
     pub inventory: Vec<Option<UserItem>>,
     pub equipment: Vec<Option<UserItem>>,
+    /// Account storage (filled by `World::set_storage`).
+    pub storage: Vec<Option<UserItem>>,
     pub gold: u64,
 }
+
+/// Zircon `Globals.StorageSize`: base account storage slots.
+pub const STORAGE_SIZE: u32 = 100;
 
 /// Result of putting an item somewhere: the slots that changed.
 pub type Changed = Vec<(Grid, u8, Option<ItemInstance>)>;
@@ -53,6 +58,7 @@ impl Bag {
         Bag {
             inventory: (0..INVENTORY_SIZE).map(|_| None).collect(),
             equipment: (0..EQUIPMENT_SIZE).map(|_| None).collect(),
+            storage: (0..STORAGE_SIZE).map(|_| None).collect(),
             gold: 0,
         }
     }
@@ -64,6 +70,7 @@ impl Bag {
             let target = match s.grid {
                 Grid::Inventory => b.inventory.get_mut(s.slot as usize),
                 Grid::Equipment => b.equipment.get_mut(s.slot as usize),
+                Grid::Storage => None,
             };
             if let Some(cell) = target {
                 if cell.is_none() {
@@ -101,6 +108,7 @@ impl Bag {
         match g {
             Grid::Inventory => &self.inventory,
             Grid::Equipment => &self.equipment,
+            Grid::Storage => &self.storage,
         }
     }
 
@@ -108,6 +116,7 @@ impl Bag {
         match g {
             Grid::Inventory => &mut self.inventory,
             Grid::Equipment => &mut self.equipment,
+            Grid::Storage => &mut self.storage,
         }
     }
 

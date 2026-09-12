@@ -242,6 +242,35 @@ impl World {
         self.damage(target, attacker, power, mir_proto::element::NONE, false)
     }
 
+    /// Test helper: face a direction without the turn delay.
+    #[cfg(test)]
+    pub fn test_face(&mut self, id: ObjectId, direction: mir_proto::Direction) {
+        if let Some(o) = self.objects.get_mut(&id) {
+            o.direction = direction;
+        }
+    }
+
+    /// Test helper: is the player standing in a safe zone?
+    #[cfg(test)]
+    pub fn test_in_safe_zone(&self, id: ObjectId) -> bool {
+        let o = &self.objects[&id];
+        self.in_safe_zone(o.map, o.location)
+    }
+
+    /// Test helper: storage contents as (slot, info, count).
+    #[cfg(test)]
+    pub fn test_storage(&self, id: ObjectId) -> Vec<(u8, i32, u32)> {
+        self.objects[&id]
+            .player()
+            .unwrap()
+            .bag
+            .storage
+            .iter()
+            .enumerate()
+            .filter_map(|(i, it)| it.as_ref().map(|it| (i as u8, it.info, it.count)))
+            .collect()
+    }
+
     /// Test helper: a monster's experience value.
     #[cfg(test)]
     pub fn test_monster_experience(&self, id: ObjectId) -> i64 {

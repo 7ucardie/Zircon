@@ -245,6 +245,7 @@ impl Sessions {
                     world.snapshot(*object, rec);
                     accounts.mark_dirty();
                 }
+                save_storage(world, accounts, *account, *object);
             }
         }
     }
@@ -270,7 +271,19 @@ fn leave_world(world: &mut World, accounts: &mut Accounts, stage: Stage) {
             world.snapshot(object, rec);
             accounts.mark_dirty();
         }
+        save_storage(world, accounts, account, object);
         world.remove_object(object);
+    }
+}
+
+/// Write the player's account storage back to the account record.
+fn save_storage(world: &World, accounts: &mut Accounts, account: u32, object: mir_proto::ObjectId) {
+    if let Some((items, size)) = world.storage_of(object) {
+        if let Some(acc) = accounts.account_mut(account) {
+            acc.storage = items;
+            acc.storage_size = size;
+            accounts.mark_dirty();
+        }
     }
 }
 
@@ -427,6 +440,11 @@ fn handle_message(
             match world.add_player(conn, account, &rec) {
                 Ok(object) => {
                     tracing::info!(conn, account, name = rec.name, ?object, "entered world");
+                    let (storage, size) = accounts
+                        .account(account)
+                        .map(|a| (a.storage.clone(), a.storage_size))
+                        .unwrap_or_default();
+                    world.set_storage(object, &storage, size);
                     if let Some(r) = accounts.character_mut(account, id) {
                         r.last_login = now_secs();
                         accounts.mark_dirty();
@@ -523,6 +541,18 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::GroupRemove { name }) => {
             world.group_remove(object, name)
         }
+        (Stage::InGame { object, .. }, ClientMessage::TradeRequest) => world.trade_request(object),
+        (Stage::InGame { object, .. }, ClientMessage::TradeResponse { accept }) => {
+            world.trade_response(object, accept)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::TradeClose) => world.trade_close(object),
+        (Stage::InGame { object, .. }, ClientMessage::TradeAddItem { grid, slot, count }) => {
+            world.trade_add_item(object, grid, slot, count)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::TradeAddGold { gold }) => {
+            world.trade_add_gold(object, gold)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::TradeConfirm) => world.trade_confirm(object),
         (Stage::InGame { object, .. }, ClientMessage::NpcCall { id }) => world.npc_call(object, id),
         (Stage::InGame { object, .. }, ClientMessage::NpcButton { button }) => {
             world.npc_button(object, button)

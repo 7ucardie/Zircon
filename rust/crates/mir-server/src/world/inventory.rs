@@ -29,6 +29,20 @@ impl World {
         if from == Grid::Equipment && to == Grid::Equipment {
             return Err("Cannot move between equipment slots".into());
         }
+        if from == Grid::Storage || to == Grid::Storage {
+            if p.trade.is_some() {
+                return Err("Cannot use storage while trading".into());
+            }
+            if !self.in_safe_zone(o.map, o.location) {
+                return Err("You cannot access storage outside of a safe zone".into());
+            }
+            let size = p.storage_size as usize;
+            if (from == Grid::Storage && from_slot as usize >= size)
+                || (to == Grid::Storage && to_slot as usize >= size)
+            {
+                return Err("No such storage slot".into());
+            }
+        }
         let src = p
             .bag
             .grid(from)
@@ -37,6 +51,12 @@ impl World {
             .flatten()
             .ok_or("Nothing there")?;
         let dst = p.bag.grid(to).get(to_slot as usize).cloned().flatten();
+        if to == Grid::Storage {
+            let def = self.data.items.get(&src.info).ok_or("Unknown item")?;
+            if !def.can_store {
+                return Err("That item cannot be stored".into());
+            }
+        }
         if to == Grid::Equipment || from == Grid::Equipment {
             // The item moving INTO equipment must fit; the item moving out
             // (if any) needs no check.

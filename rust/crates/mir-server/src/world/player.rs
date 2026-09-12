@@ -97,6 +97,9 @@ impl World {
                 global_shout_time: 0,
                 allow_group: rec.allow_group,
                 group: None,
+                storage_size: crate::items::STORAGE_SIZE,
+                trade: None,
+                trade_request: None,
                 group_invite: None,
                 quests: rec.quests.clone(),
                 def_mastery: 0,
@@ -354,6 +357,7 @@ impl World {
         p.revive_time = self.now + REVIVE_DELAY;
         let pets = std::mem::take(&mut p.pets);
         self.events.push((id, ServerMessage::ObjectDie { id }));
+        self.trade_close(id);
         for pet in pets {
             if self.objects.get(&pet).map(|o| !o.dead).unwrap_or(false) {
                 self.monster_die(pet, id);

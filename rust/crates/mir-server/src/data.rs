@@ -254,6 +254,8 @@ pub struct ItemDef {
     pub sell_rate: f64,
     pub can_sell: bool,
     pub can_drop: bool,
+    pub can_trade: bool,
+    pub can_store: bool,
     pub description: String,
     pub stats: HashMap<i32, i32>,
 }
@@ -618,6 +620,8 @@ impl GameData {
                     start_item: c.bool_or(r, "StartItem", false),
                     sell_rate: c.float_or(r, "SellRate", 0.0),
                     can_sell: c.bool_or(r, "CanSell", true),
+                    can_trade: c.bool_or(r, "CanTrade", true),
+                    can_store: c.bool_or(r, "CanStore", true),
                     can_drop: c.bool_or(r, "CanDrop", true),
                     description: c.str_or(r, "Description", "").to_string(),
                     stats: item_stats.remove(&index).unwrap_or_default(),

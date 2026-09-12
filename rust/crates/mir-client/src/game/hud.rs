@@ -36,6 +36,9 @@ impl Game {
                 group,
                 allow_group,
                 group_invite,
+                storage,
+                trade,
+                trade_request,
                 ..
             } = self;
             let player_name = character
@@ -87,6 +90,9 @@ impl Game {
                 allow_group: *allow_group,
                 group_invite: group_invite.as_deref(),
                 user: *user,
+                storage,
+                trade: trade.as_ref(),
+                trade_request: trade_request.as_deref(),
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -130,6 +136,16 @@ impl Game {
                     self.group_invite = None;
                     kept.push(ClientMessage::GroupResponse { accept });
                 }
+                ClientMessage::TradeResponse { accept } => {
+                    self.trade_request = None;
+                    kept.push(ClientMessage::TradeResponse { accept });
+                }
+                ClientMessage::TradeConfirm => {
+                    if let Some(t) = &mut self.trade {
+                        t.confirmed = true;
+                    }
+                    kept.push(ClientMessage::TradeConfirm);
+                }
                 other => kept.push(other),
             }
         }
@@ -138,6 +154,8 @@ impl Game {
             || self.windows.character_open
             || self.windows.skills_open
             || self.windows.group_open
+            || self.windows.storage_open
+            || self.trade.is_some()
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);
         if over {

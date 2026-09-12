@@ -1756,3 +1756,97 @@ fn groups_invite_join_share_experience_and_dissolve() {
     assert!(world.objects[&alice].player().unwrap().group.is_none());
     assert!(world.objects[&bob].player().unwrap().group.is_none());
 }
+
+#[test]
+fn storage_in_safe_zone_and_face_to_face_trade() {
+    use mir_proto::Grid;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let bob = world.add_player(2, 2, &test_character("Bob")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    // Storage: the warrior start is a safe zone; a stored item survives a
+    // round trip through the account record.
+    assert!(world.test_in_safe_zone(alice));
+    let info = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .unwrap()
+        .index;
+    world.test_give_item(alice, info, 5);
+    let slot = world.test_slot_of(alice, info).unwrap();
+    world.item_move(alice, Grid::Inventory, slot, Grid::Storage, 3);
+    assert_eq!(world.test_storage(alice).len(), 1);
+    assert_eq!(world.test_storage(alice)[0].0, 3);
+    let (stored, size) = world.storage_of(alice).unwrap();
+    assert_eq!((stored.len(), size), (1, 100));
+    world.item_move(alice, Grid::Storage, 3, Grid::Inventory, slot);
+    assert!(world.test_storage(alice).is_empty());
+    assert_eq!(world.test_slot_of(alice, info), Some(slot));
+    drain(&mut world);
+
+    // Trade: Bob stands in front of Alice, both facing each other.
+    let loc = world.objects[&alice].location;
+    let map = world.objects[&alice].map;
+    let (dir, cell) = Direction::ALL
+        .iter()
+        .map(|d| (*d, loc.step(*d, 1)))
+        .find(|(_, p)| world.maps[&map].file.is_walkable(p.x, p.y))
+        .expect("walkable neighbour");
+    world.teleport(bob, cell);
+    world.test_face(alice, dir);
+    world.test_face(bob, dir.opposite());
+    world.test_set_gold(alice, 500);
+    world.test_set_gold(bob, 0);
+    world.trade_request(alice);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::TradeRequest { from } if from == "Alice")));
+    world.trade_response(bob, true);
+    let msgs = drain(&mut world);
+    assert_eq!(
+        msgs.iter()
+            .filter(|m| matches!(m, ServerMessage::TradeOpen { .. }))
+            .count(),
+        2
+    );
+    // Alice offers her first item and 300 gold; gold can only be raised.
+    world.trade_add_item(alice, Grid::Inventory, slot, 5);
+    world.trade_add_gold(alice, 300);
+    world.trade_add_gold(alice, 100);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::TradeItemAdded { item } if item.info == info)));
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::TradeGoldAdded { gold: 300 })));
+    world.trade_confirm(alice);
+    world.trade_confirm(bob);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(m, ServerMessage::TradeClose)));
+    assert_eq!(world.test_gold(alice), 200);
+    assert_eq!(world.test_gold(bob), 300);
+    assert_eq!(world.test_slot_of(alice, info), None);
+    assert!(world.test_slot_of(bob, info).is_some());
+    assert!(world.objects[&alice].player().unwrap().trade.is_none());
+
+    // A step closes an open trade.
+    world.trade_request(alice);
+    world.trade_response(bob, true);
+    drain(&mut world);
+    world.player_turn(alice, dir.opposite());
+    let msgs = drain(&mut world);
+    assert_eq!(
+        msgs.iter()
+            .filter(|m| matches!(m, ServerMessage::TradeClose))
+            .count(),
+        2
+    );
+}

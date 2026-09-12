@@ -167,6 +167,7 @@ impl Game {
         let cells = match grid {
             Grid::Inventory => &self.inventory,
             Grid::Equipment => &self.equipment,
+            Grid::Storage => &self.storage,
         };
         let sound = cells
             .get(slot as usize)

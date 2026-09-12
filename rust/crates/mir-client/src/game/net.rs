@@ -481,6 +481,7 @@ impl Game {
                 let grid = match grid {
                     mir_proto::Grid::Inventory => &mut self.inventory,
                     mir_proto::Grid::Equipment => &mut self.equipment,
+                    mir_proto::Grid::Storage => &mut self.storage,
                 };
                 if let Some(c) = grid.get_mut(slot as usize) {
                     *c = item;
@@ -553,6 +554,63 @@ impl Game {
             }
             ServerMessage::NpcClose => self.windows.npc = None,
             ServerMessage::Chat { text } => self.say(text, now),
+            ServerMessage::Storage { size, items } => {
+                self.storage = (0..size).map(|_| None).collect();
+                for (slot, item) in items {
+                    if let Some(c) = self.storage.get_mut(slot as usize) {
+                        *c = Some(item);
+                    }
+                }
+            }
+            ServerMessage::TradeRequest { from } => {
+                self.say_colored(
+                    format!("{from} wants to trade with you."),
+                    now,
+                    [0, 255, 255, 255],
+                );
+                self.trade_request = Some(from);
+            }
+            ServerMessage::TradeOpen { name } => {
+                self.say_colored(format!("Trading with {name}."), now, [0, 255, 255, 255]);
+                self.trade = Some(crate::windows::TradeState {
+                    partner: name,
+                    my_items: Vec::new(),
+                    my_gold: 0,
+                    their_items: Vec::new(),
+                    their_gold: 0,
+                    confirmed: false,
+                });
+            }
+            ServerMessage::TradeClose => {
+                if self.trade.take().is_some() {
+                    self.say_colored("Trade closed.".into(), now, [0, 255, 255, 255]);
+                }
+            }
+            ServerMessage::TradeAddItem { grid, slot, count } => {
+                if let Some(t) = &mut self.trade {
+                    t.my_items.push((grid, slot, count));
+                }
+            }
+            ServerMessage::TradeAddGold { gold } => {
+                if let Some(t) = &mut self.trade {
+                    t.my_gold = gold;
+                }
+            }
+            ServerMessage::TradeItemAdded { item } => {
+                if let Some(t) = &mut self.trade {
+                    t.their_items.push(item);
+                }
+            }
+            ServerMessage::TradeGoldAdded { gold } => {
+                if let Some(t) = &mut self.trade {
+                    t.their_gold = gold;
+                }
+            }
+            ServerMessage::TradeUnlock => {
+                if let Some(t) = &mut self.trade {
+                    t.confirmed = false;
+                }
+            }
             ServerMessage::GroupSwitch { allow } => self.allow_group = allow,
             ServerMessage::GroupInvite { from } => {
                 self.say_colored(
@@ -638,6 +696,8 @@ impl Game {
         self.group.clear();
         self.group_invite = None;
         self.auto_group_done = false;
+        self.trade = None;
+        self.trade_request = None;
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

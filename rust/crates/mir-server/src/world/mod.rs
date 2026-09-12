@@ -295,6 +295,10 @@ pub struct PlayerData {
     pub global_shout_time: u64,
     pub allow_group: bool,
     pub group: Option<u32>,
+    pub storage_size: u32,
+    pub trade: Option<trade::Trade>,
+    /// Who asked us to trade (Zircon `TradePartnerRequest`).
+    pub trade_request: Option<ObjectId>,
     /// Who invited us (Zircon `GroupInvitation`).
     pub group_invite: Option<ObjectId>,
     pub quests: Vec<crate::accounts::StoredQuest>,
@@ -651,7 +655,9 @@ mod quests;
 mod skills;
 mod spawn;
 mod spells;
+mod storage;
 mod test_api;
+mod trade;
 mod visibility;
 
 impl World {

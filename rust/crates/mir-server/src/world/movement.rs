@@ -62,6 +62,7 @@ impl World {
         o.action_time = self.now + TURN_TIME;
         self.events
             .push((id, ServerMessage::ObjectTurn { id, direction }));
+        self.trade_close(id);
     }
 
     pub fn player_move(&mut self, id: ObjectId, direction: Direction, run: bool) {
@@ -99,6 +100,7 @@ impl World {
             return;
         }
         self.quest_region_progress(id);
+        self.trade_close(id);
         self.events.push((
             id,
             ServerMessage::ObjectMove {

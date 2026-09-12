@@ -76,6 +76,12 @@ impl Game {
                 'z' => self.windows.belt_open = !self.windows.belt_open,
                 'l' => self.windows.quests_open = !self.windows.quests_open,
                 'p' => self.windows.group_open = !self.windows.group_open,
+                'b' => self.windows.storage_open = !self.windows.storage_open,
+                't' => {
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::TradeRequest);
+                    }
+                }
                 _ => {}
             }
         }
@@ -95,6 +101,12 @@ impl Game {
             self.windows.character_open = false;
             self.windows.skills_open = false;
             self.windows.group_open = false;
+            self.windows.storage_open = false;
+            if self.trade.is_some() {
+                if let Some(c) = conn {
+                    c.send(ClientMessage::TradeClose);
+                }
+            }
             if self.windows.npc.take().is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::NpcClose);

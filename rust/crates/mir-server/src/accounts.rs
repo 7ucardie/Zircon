@@ -96,6 +96,11 @@ pub struct AccountRecord {
     pub created: u64,
     pub last_login: u64,
     pub characters: Vec<CharacterRecord>,
+    /// Account storage (Zircon `Account.Items` with storage slots).
+    #[serde(default)]
+    pub storage: Vec<StoredItem>,
+    #[serde(default)]
+    pub storage_size: u32,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -198,6 +203,8 @@ impl Accounts {
             created: now_secs(),
             last_login: 0,
             characters: Vec::new(),
+            storage: Vec::new(),
+            storage_size: 0,
         });
         self.by_email
             .insert(email.to_lowercase(), self.store.accounts.len() - 1);

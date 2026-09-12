@@ -240,8 +240,9 @@ impl World {
             .collect()
     }
 
-    /// Forget a leaving player: its group slot and invites it sent.
+    /// Forget a leaving player: its group slot, invites it sent, its trade.
     pub(super) fn group_forget(&mut self, id: ObjectId) {
+        self.trade_forget(id);
         self.group_leave(id);
         for o in self.objects.values_mut() {
             if let Some(p) = o.player_mut() {
