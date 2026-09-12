@@ -214,10 +214,7 @@ impl World {
                     .monster_mut()
                     .unwrap()
                     .roam_time = now + ROAM_DELAY;
-                let seen = self
-                    .objects
-                    .values()
-                    .any(|p| p.is_player() && p.visible.contains(&id));
+                let seen = self.players().any(|p| p.visible.contains(&id));
                 if seen && target.is_none() && self.rng.random_range(0..10) == 0 {
                     if self.rng.random_range(0..3) > 0 {
                         let dir = self.objects[&id].direction;
@@ -464,9 +461,8 @@ impl World {
         ));
         if let Some(owner) = owner {
             let victims: Vec<ObjectId> = self
-                .objects
-                .values()
-                .filter(|o| o.map == map && !o.dead && o.location.distance(loc) <= 2)
+                .on_map(map)
+                .filter(|o| !o.dead && o.location.distance(loc) <= 2)
                 .filter(|o| matches!(&o.kind, Kind::Monster(m) if m.owner.is_none()))
                 .map(|o| o.id)
                 .collect();

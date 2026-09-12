@@ -46,6 +46,9 @@ impl World {
         let map = self.maps.get_mut(&obj.map).expect("map loaded");
         map.objects.push(obj.id);
         map.add_to_cell(obj.id, obj.location);
+        if obj.is_player() {
+            self.players.insert(obj.id);
+        }
         self.objects.insert(obj.id, obj);
     }
 
@@ -61,6 +64,7 @@ impl World {
             self.remove_object(pet);
         }
         if let Some(obj) = self.objects.remove(&id) {
+            self.players.remove(&id);
             if let Some(map) = self.maps.get_mut(&obj.map) {
                 map.objects.retain(|o| *o != id);
                 map.remove_from_cell(id, obj.location);
@@ -76,7 +80,8 @@ impl World {
                 }
             }
             // Everyone who saw it gets a remove.
-            for other in self.objects.values_mut() {
+            for pid in &self.players {
+                let other = self.objects.get_mut(pid).expect("player indexed");
                 if other.visible.remove(&id) {
                     if let Some(p) = other.player() {
                         self.outgoing
@@ -95,12 +100,7 @@ impl World {
 
     /// Recompute each player's visible set and emit show/remove.
     pub(super) fn update_visibility(&mut self) {
-        let players: Vec<ObjectId> = self
-            .objects
-            .values()
-            .filter(|o| o.is_player())
-            .map(|o| o.id)
-            .collect();
+        let players: Vec<ObjectId> = self.players().map(|o| o.id).collect();
         for pid in players {
             let (map, loc, conn, account) = {
                 let p = &self.objects[&pid];
@@ -147,8 +147,7 @@ impl World {
     pub(super) fn flush_events(&mut self) {
         let events = std::mem::take(&mut self.events);
         let players: Vec<(ObjectId, ConnId)> = self
-            .objects
-            .values()
+            .players()
             .filter_map(|o| o.player().map(|p| (o.id, p.conn)))
             .collect();
         for (subject, msg) in events {

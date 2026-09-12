@@ -115,8 +115,7 @@ impl World {
     pub(super) fn process_dashes(&mut self) {
         let now = self.now;
         let dashing: Vec<ObjectId> = self
-            .objects
-            .values()
+            .players()
             .filter(|o| {
                 o.player()
                     .and_then(|p| p.dash)

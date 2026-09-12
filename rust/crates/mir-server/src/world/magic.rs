@@ -323,12 +323,10 @@ impl World {
             magic_type::RESURRECTION => {
                 // Dead players near the cell, one talisman each.
                 let dead: Vec<ObjectId> = self
-                    .objects
-                    .values()
+                    .on_map(map)
                     .filter(|o| {
                         o.is_player()
                             && o.dead
-                            && o.map == map
                             && o.location.distance(location) <= 3
                             && o.location.distance(loc) <= MAGIC_RANGE
                     })
@@ -444,11 +442,9 @@ impl World {
             magic_type::METEOR_SHOWER => {
                 let level = um.level as usize;
                 let mut pool: Vec<ObjectId> = self
-                    .objects
-                    .values()
+                    .on_map(map)
                     .filter(|o| {
-                        o.map == map
-                            && o.is_monster()
+                        o.is_monster()
                             && !o.dead
                             && o.location.distance(location) <= 3
                             && o.location.distance(loc) <= MAGIC_RANGE
@@ -1092,9 +1088,8 @@ impl World {
                 magic_type::MASS_BECKON => {
                     let level = self.magic_level(pm.caster, pm.magic);
                     let victims: Vec<(ObjectId, i32, bool)> = self
-                        .objects
-                        .values()
-                        .filter(|o| o.map == cmap && !o.dead && o.location.distance(cloc) <= 9)
+                        .on_map(cmap)
+                        .filter(|o| !o.dead && o.location.distance(cloc) <= 9)
                         .filter_map(|o| match &o.kind {
                             Kind::Monster(m) if m.owner.is_none() => Some((
                                 o.id,
@@ -1142,13 +1137,9 @@ impl World {
                 magic_type::SWIFT_BLADE => {
                     // 7x7 around the cell: a DC-percent melee hit on everything.
                     let victims: Vec<Point> = self
-                        .objects
-                        .values()
+                        .on_map(cmap)
                         .filter(|o| {
-                            o.map == cmap
-                                && o.is_monster()
-                                && !o.dead
-                                && o.location.distance(pm.location) <= 3
+                            o.is_monster() && !o.dead && o.location.distance(pm.location) <= 3
                         })
                         .map(|o| o.location)
                         .collect();
@@ -1195,9 +1186,8 @@ impl World {
                 magic_type::FETTER => {
                     let level = self.magic_level(pm.caster, pm.magic);
                     let victims: Vec<(ObjectId, i32)> = self
-                        .objects
-                        .values()
-                        .filter(|o| o.map == cmap && !o.dead && o.location.distance(cloc) <= 2)
+                        .on_map(cmap)
+                        .filter(|o| !o.dead && o.location.distance(cloc) <= 2)
                         .filter_map(|o| match &o.kind {
                             Kind::Monster(m) if m.owner.is_none() => {
                                 Some((o.id, self.data.monsters[&m.def].level))
@@ -1291,11 +1281,9 @@ impl World {
                         (pmin, pmax, (c.stats.min_sc, c.stats.max_sc))
                     };
                     let players: Vec<ObjectId> = self
-                        .objects
-                        .values()
+                        .on_map(cmap)
                         .filter(|o| {
                             o.is_player()
-                                && o.map == cmap
                                 && o.location.distance(pm.location) <= 2
                                 && !o.dead
                                 && o.hp < o.max_hp
@@ -1330,13 +1318,9 @@ impl World {
                         )
                     };
                     let players: Vec<ObjectId> = self
-                        .objects
-                        .values()
+                        .on_map(cmap)
                         .filter(|o| {
-                            o.is_player()
-                                && o.map == cmap
-                                && !o.dead
-                                && o.location.distance(pm.location) <= 3
+                            o.is_player() && !o.dead && o.location.distance(pm.location) <= 3
                         })
                         .map(|o| o.id)
                         .collect();
@@ -1556,13 +1540,9 @@ impl World {
                         3
                     };
                     let players: Vec<ObjectId> = self
-                        .objects
-                        .values()
+                        .on_map(cmap)
                         .filter(|o| {
-                            o.is_player()
-                                && !o.dead
-                                && o.map == cmap
-                                && o.location.distance(pm.location) <= radius
+                            o.is_player() && !o.dead && o.location.distance(pm.location) <= radius
                         })
                         .map(|o| o.id)
                         .collect();
@@ -1607,11 +1587,8 @@ impl World {
                 magic_type::TRAP_OCTAGON => {
                     let (pmin, pmax, sc) = self.caster_power(pm.caster, pm.magic);
                     let trapped: Vec<ObjectId> = self
-                        .objects
-                        .values()
-                        .filter(|o| {
-                            o.map == cmap && !o.dead && o.location.distance(pm.location) <= 1
-                        })
+                        .on_map(cmap)
+                        .filter(|o| !o.dead && o.location.distance(pm.location) <= 1)
                         .filter_map(|o| match &o.kind {
                             Kind::Monster(m) if m.owner.is_none() => {
                                 Some((o.id, self.data.monsters[&m.def].level))
@@ -2002,13 +1979,9 @@ impl World {
                 | magic_type::ICE_STORM
                 | magic_type::DRAGON_TORNADO => {
                     let victims: Vec<ObjectId> = self
-                        .objects
-                        .values()
+                        .on_map(cmap)
                         .filter(|o| {
-                            o.map == cmap
-                                && o.is_monster()
-                                && !o.dead
-                                && o.location.distance(pm.location) <= 1
+                            o.is_monster() && !o.dead && o.location.distance(pm.location) <= 1
                         })
                         .map(|o| o.id)
                         .collect();

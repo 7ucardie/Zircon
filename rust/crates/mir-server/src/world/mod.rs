@@ -5,7 +5,7 @@
 //! attack delay `max(800, 1500 - AttackSpeed * 47)`, monster AI with 3 s search,
 //! 2 s roam, greedy chase, 1-cell melee. Time is milliseconds since server start.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use mir_formats::mirdb::stat;
@@ -483,6 +483,9 @@ pub struct World {
     /// Ordered maps so ticks iterate deterministically (seeded tests).
     pub maps: BTreeMap<i32, MapState>,
     pub objects: BTreeMap<ObjectId, Object>,
+    /// Ids of every player object, kept in sync by `insert_object` /
+    /// `remove_object`; ordered like `objects` so scans stay deterministic.
+    players: BTreeSet<ObjectId>,
     next_id: u32,
     pub now: u64,
     /// Seeded from `ZIRCON_SEED` when set (tests), otherwise from the OS.
@@ -534,6 +537,7 @@ impl World {
             map_dir: map_dir.as_ref().to_path_buf(),
             maps: BTreeMap::new(),
             objects: BTreeMap::new(),
+            players: BTreeSet::new(),
             next_id: 1,
             now: 0,
             rng: match std::env::var("ZIRCON_SEED")
@@ -552,6 +556,20 @@ impl World {
         }
     }
 
+    /// Objects on a map, in insertion order (empty when the map is not loaded).
+    pub fn on_map(&self, map: i32) -> impl Iterator<Item = &Object> + '_ {
+        self.maps
+            .get(&map)
+            .into_iter()
+            .flat_map(|m| m.objects.iter())
+            .map(|id| &self.objects[id])
+    }
+
+    /// Every player object, in id order.
+    pub fn players(&self) -> impl Iterator<Item = &Object> + '_ {
+        self.players.iter().map(|id| &self.objects[id])
+    }
+
     fn alloc_id(&mut self) -> ObjectId {
         let id = ObjectId(self.next_id);
         self.next_id += 1;
@@ -564,12 +582,7 @@ impl World {
         self.now = now;
 
         // Player timers: regen and revive.
-        let players: Vec<ObjectId> = self
-            .objects
-            .values()
-            .filter(|o| o.is_player())
-            .map(|o| o.id)
-            .collect();
+        let players: Vec<ObjectId> = self.players().map(|o| o.id).collect();
         for id in &players {
             let (dead, revive_time, regen_due) = {
                 let o = &self.objects[id];

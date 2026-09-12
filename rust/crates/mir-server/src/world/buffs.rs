@@ -83,7 +83,7 @@ impl World {
         let now = self.now;
         let mut expired = Vec::new();
         let mut drains = Vec::new();
-        for o in self.objects.values() {
+        for o in self.players() {
             if let Some(p) = o.player() {
                 for b in &p.buffs {
                     if b.expires <= now {

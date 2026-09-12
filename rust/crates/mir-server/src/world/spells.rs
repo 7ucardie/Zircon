@@ -163,9 +163,8 @@ impl World {
                         s.tick_time
                     };
                     let players: Vec<ObjectId> = self
-                        .objects
-                        .values()
-                        .filter(|o| o.is_player() && o.map == map && o.location.distance(loc) <= 2)
+                        .on_map(map)
+                        .filter(|o| o.is_player() && o.location.distance(loc) <= 2)
                         .map(|o| o.id)
                         .collect();
                     for pid in players {

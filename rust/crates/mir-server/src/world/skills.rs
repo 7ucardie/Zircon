@@ -110,8 +110,7 @@ impl World {
     pub(super) fn process_charges(&mut self) {
         let now = self.now;
         let expired: Vec<(ObjectId, u16)> = self
-            .objects
-            .values()
+            .players()
             .filter_map(|o| {
                 let p = o.player()?;
                 let (m, until) = p.charge?;
