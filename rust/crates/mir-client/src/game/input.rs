@@ -173,6 +173,83 @@ impl Game {
             return;
         }
 
+        // Fishing: a click reels; Escape or a move (below) cancels.
+        if let Some(f) = &mut self.fishing {
+            if self.input.lmb_pressed {
+                f.reeled = true;
+            }
+            if self.input.escape {
+                if let Some(c) = conn {
+                    c.send(ClientMessage::FishingCast {
+                        state: mir_proto::fishing_state::CANCEL,
+                        direction: f.direction,
+                        float: f.float,
+                        caught: false,
+                    });
+                }
+                self.fishing = None;
+            }
+            return;
+        }
+        // Gathering: a click on an unwalkable cell swings a pickaxe at an
+        // adjacent wall or casts a rod (or `ZIRCON_DEV_FISHING`) at water.
+        if self.input.lmb_pressed && self.hovered.is_none() {
+            let cell = view.cell_at(self.mouse.0, self.mouse.1);
+            let walkable = self
+                .map
+                .as_ref()
+                .is_some_and(|m| m.is_walkable(cell.x, cell.y));
+            let weapon_effect = self
+                .equipment
+                .get(mir_proto::slot::WEAPON)
+                .and_then(|c| c.as_ref())
+                .and_then(|i| self.catalog.get(i.info))
+                .map(|d| d.effect)
+                .unwrap_or(0);
+            let distance = user_loc.distance(cell);
+            let can_fish = weapon_effect == 82 || std::env::var_os("ZIRCON_DEV_FISHING").is_some();
+            if !walkable && distance >= 1 && now >= self.action_time {
+                let direction = Direction::from_points(user_loc, cell);
+                if weapon_effect == 5 && distance == 1 {
+                    self.action_time = now + ATTACK_TIME;
+                    self.attack_time = now + attack_delay(self.stats.attack_speed as i64).max(800);
+                    if let Some(u) = self.user_mut() {
+                        u.queue.clear();
+                        u.enqueue(Queued {
+                            action: Action::Mining,
+                            direction,
+                            location: user_loc,
+                            distance: 0,
+                        });
+                    }
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::Mining { direction });
+                    }
+                    return;
+                }
+                if can_fish && distance <= 4 {
+                    self.action_time = now + ATTACK_TIME;
+                    self.fishing = Some(FishingUi {
+                        direction,
+                        float: cell,
+                        found: false,
+                        reeled: false,
+                        next_cast: now + 1600,
+                        points: 0,
+                        required: 50,
+                    });
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::FishingCast {
+                            state: mir_proto::fishing_state::CAST,
+                            direction,
+                            float: cell,
+                            caught: false,
+                        });
+                    }
+                    return;
+                }
+            }
+        }
         // Attack a hovered monster in melee range.
         if self.lmb {
             if let Some(target) = self.hovered.and_then(|id| self.objects.get(&id)) {

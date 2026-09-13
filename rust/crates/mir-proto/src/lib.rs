@@ -238,6 +238,11 @@ pub mod slot {
     pub const POISON: usize = 10;
     pub const AMULET: usize = 11;
     pub const SHIELD: usize = 15;
+    pub const HOOK: usize = 17;
+    pub const FLOAT: usize = 18;
+    pub const BAIT: usize = 19;
+    pub const FINDER: usize = 20;
+    pub const REEL: usize = 21;
 }
 
 /// Zircon `ItemType` values.
@@ -260,6 +265,11 @@ pub mod item_type {
     pub const SCROLL: u8 = 15;
     pub const DARK_STONE: u8 = 16;
     pub const SHIELD: u8 = 27;
+    pub const HOOK: u8 = 29;
+    pub const FLOAT: u8 = 30;
+    pub const BAIT: u8 = 31;
+    pub const FINDER: u8 = 32;
+    pub const REEL: u8 = 33;
     pub const CURRENCY: u8 = 34;
 
     /// Equipment slots an item type may occupy (Zircon `Functions.CorrectSlot`).
@@ -276,6 +286,11 @@ pub mod item_type {
             POISON => &[super::slot::POISON],
             AMULET | DARK_STONE => &[super::slot::AMULET],
             SHIELD => &[super::slot::SHIELD],
+            HOOK => &[super::slot::HOOK],
+            FLOAT => &[super::slot::FLOAT],
+            BAIT => &[super::slot::BAIT],
+            FINDER => &[super::slot::FINDER],
+            REEL => &[super::slot::REEL],
             _ => &[],
         }
     }
@@ -447,6 +462,20 @@ pub enum Action {
     Struck,
     Die,
     Dead,
+    /// Zircon `MirAnimation.FishingCast/Wait/Reel`.
+    FishingCast,
+    FishingWait,
+    FishingReel,
+    /// Zircon `MirAction.Mining` (the weapon swing).
+    Mining,
+}
+
+/// Zircon `FishingState`.
+pub mod fishing_state {
+    pub const NONE: u8 = 0;
+    pub const CAST: u8 = 1;
+    pub const REEL: u8 = 2;
+    pub const CANCEL: u8 = 3;
 }
 
 /// Zircon `Element`.
@@ -1111,6 +1140,8 @@ pub mod spell_effect {
     pub const BURNING_FIRE: u8 = 12;
     pub const DARK_SOUL_PRISON: u8 = 13;
     pub const POISONOUS_CLOUD: u8 = 7;
+    /// Mining rubble under the miner (Zircon `SpellEffect.Rubble`).
+    pub const RUBBLE: u8 = 9;
 }
 
 /// Zircon `Effect` values sent with `ObjectEffect` / `MapEffect`.
@@ -1402,6 +1433,19 @@ pub enum ClientMessage {
     /// Zircon `ChangeAttackMode` (`attack_mode::*`).
     AttackMode {
         mode: u8,
+    },
+    /// Zircon `FishingCast`: `state` is `fishing_state::*`; the client
+    /// recasts every attack delay while fishing, `caught` when it reeled on
+    /// a nibble.
+    FishingCast {
+        state: u8,
+        direction: Direction,
+        float: Point,
+        caught: bool,
+    },
+    /// Swing a pickaxe at the cell in front.
+    Mining {
+        direction: Direction,
     },
     /// Found a guild: 7.5M gold plus 1M per member slot.
     GuildCreate {
@@ -1721,6 +1765,28 @@ pub enum ServerMessage {
     },
     AttackMode {
         mode: u8,
+    },
+    /// Someone is fishing (Zircon `ObjectFishing`): `found` means a nibble.
+    ObjectFishing {
+        id: ObjectId,
+        state: u8,
+        direction: Direction,
+        float: Point,
+        found: bool,
+    },
+    /// The caster's own fishing progress (Zircon `FishingStats`).
+    FishingStats {
+        points: i32,
+        required: i32,
+        throw_quality: i32,
+        /// Reel window hint (-1 = unchanged).
+        accuracy: i32,
+    },
+    /// Someone swung a pickaxe; `effect` when rock was actually hit.
+    ObjectMining {
+        id: ObjectId,
+        direction: Direction,
+        effect: bool,
     },
     /// The player's guild (None when not in one); resent after changes.
     GuildInfo(Option<GuildSummary>),

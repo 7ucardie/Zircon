@@ -544,6 +544,18 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::AttackMode { mode }) => {
             world.set_attack_mode(object, mode)
         }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::FishingCast {
+                state,
+                direction,
+                float,
+                caught,
+            },
+        ) => world.fishing_cast(object, state, direction, float, caught),
+        (Stage::InGame { object, .. }, ClientMessage::Mining { direction }) => {
+            world.mining(object, direction)
+        }
         (Stage::InGame { object, .. }, ClientMessage::GuildCreate { name, members }) => {
             world.guild_create(object, name, members)
         }

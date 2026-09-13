@@ -66,6 +66,7 @@ impl World {
         self.events
             .push((id, ServerMessage::ObjectTurn { id, direction }));
         self.trade_close(id);
+        self.fishing_cancel(id);
     }
 
     pub fn player_move(&mut self, id: ObjectId, direction: Direction, run: bool) {
@@ -104,6 +105,7 @@ impl World {
         }
         self.quest_region_progress(id);
         self.trade_close(id);
+        self.fishing_cancel(id);
         self.events.push((
             id,
             ServerMessage::ObjectMove {

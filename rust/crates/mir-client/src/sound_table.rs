@@ -1153,6 +1153,11 @@ pub fn attack_magic(magic: u16) -> &'static [u16] {
 /// Indices the client triggers directly.
 #[allow(dead_code)]
 pub mod idx {
+    pub const FISHING_CAST: u16 = 144;
+    pub const FISHING_BOB: u16 = 145;
+    pub const FISHING_REEL: u16 = 146;
+    pub const MINING_HIT: u16 = 136;
+    pub const MINING_STRUCK: u16 = 137;
     pub const BUTTON_A: u16 = 100;
     pub const BUTTON_C: u16 = 102;
     pub const TELEPORT_OUT: u16 = 111;

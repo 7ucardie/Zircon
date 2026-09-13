@@ -31,6 +31,18 @@ use mir_proto::Grid;
 use mir_proto::{buff_type, magic_type, MagicSummary};
 use sound::{map_effect_sound, music_index, object_effect_sound};
 
+/// Client-side fishing state: the float, whether a fish is on, the reel
+/// click since the last recast, and the server's point tally.
+pub struct FishingUi {
+    pub direction: Direction,
+    pub float: Point,
+    pub found: bool,
+    pub reeled: bool,
+    pub next_cast: u64,
+    pub points: i32,
+    pub required: i32,
+}
+
 /// Zircon `AttackMode` descriptions.
 pub fn attack_mode_name(mode: u8) -> &'static str {
     match mode {
@@ -106,6 +118,8 @@ pub struct Game {
     /// Zircon `AttackMode` (`attack_mode::*`), cycled with H.
     attack_mode: u8,
     guild: Option<mir_proto::GuildSummary>,
+    /// Our own cast in progress (Zircon `MapControl.FishingState`).
+    fishing: Option<FishingUi>,
     /// Mailbox (Zircon `MailList`), newest last.
     mail: Vec<mir_proto::MailSummary>,
     /// Pending guild invite: (who, guild).
@@ -238,6 +252,7 @@ impl Game {
             allow_group: false,
             attack_mode: 0,
             guild: None,
+            fishing: None,
             mail: Vec::new(),
             guild_invite: None,
             group_invite: None,
@@ -496,13 +511,38 @@ impl Game {
             }
         }
         self.handle_input(now, width, height, conn);
+        // Fishing: recast every attack delay, reeling if the player clicked
+        // while a fish was on (Zircon FishingDialog auto-cast).
+        if let Some(f) = &mut self.fishing {
+            if now >= f.next_cast {
+                f.next_cast = now + 1600;
+                let caught = f.reeled && f.found;
+                f.reeled = false;
+                if let Some(c) = conn {
+                    c.send(ClientMessage::FishingCast {
+                        state: mir_proto::fishing_state::CAST,
+                        direction: f.direction,
+                        float: f.float,
+                        caught,
+                    });
+                }
+            }
+        }
         if let Some(u) = self.user() {
+            let fishing = match &self.fishing {
+                Some(f) if f.found => {
+                    format!(" | Fishing: bite, click! {}/{}", f.points, f.required)
+                }
+                Some(f) => format!(" | Fishing: waiting {}/{}", f.points, f.required),
+                None => String::new(),
+            };
             self.status = format!(
-                "{} ({}, {}) | Attack: {}",
+                "{} ({}, {}) | Attack: {}{}",
                 self.map_name,
                 u.location.x,
                 u.location.y,
-                attack_mode_name(self.attack_mode)
+                attack_mode_name(self.attack_mode),
+                fishing
             );
         }
     }

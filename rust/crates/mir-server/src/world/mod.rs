@@ -308,6 +308,8 @@ pub struct PlayerData {
     pub guild_invite: Option<ObjectId>,
     /// Zircon `MailTime`: no mail before this.
     pub mail_time: u64,
+    /// Zircon `Fishing`: the cast in progress.
+    pub fishing: Option<gathering::FishingData>,
     pub storage_size: u32,
     pub trade: Option<trade::Trade>,
     /// Who asked us to trade (Zircon `TradePartnerRequest`).
@@ -665,6 +667,9 @@ pub struct World {
     /// Events raised this tick: (subject object, message).
     events: Vec<(ObjectId, ServerMessage)>,
     pub outgoing: Vec<Outgoing>,
+    /// `ZIRCON_DEV_FISHING`: item every unwalkable cell yields when the
+    /// pack has no fishing zones (tackle checks waived).
+    pub dev_fishing_item: Option<i32>,
     /// Groups by id; the first member leads.
     groups: BTreeMap<u32, Vec<ObjectId>>,
     pub guild_store: guilds::GuildStore,
@@ -679,6 +684,7 @@ mod ai_profile;
 mod buffs;
 mod chat;
 mod combat;
+mod gathering;
 mod groups;
 mod guilds;
 mod inventory;
@@ -772,6 +778,9 @@ impl World {
             next_group: 1,
             last_spawn_check: 0,
             force_map,
+            dev_fishing_item: std::env::var("ZIRCON_DEV_FISHING")
+                .ok()
+                .and_then(|v| v.parse().ok()),
         }
     }
 
@@ -900,6 +909,7 @@ impl World {
         self.process_monster_spells();
         self.process_day_time();
         self.process_pk();
+        self.process_fishing();
 
         if now >= self.last_spawn_check + 1000 {
             self.last_spawn_check = now;

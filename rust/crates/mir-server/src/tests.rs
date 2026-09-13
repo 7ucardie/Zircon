@@ -2114,3 +2114,179 @@ fn mail_send_take_items_and_delete() {
         .iter()
         .any(|m| matches!(m, ServerMessage::MailDelete { index } if *index == mail.index)));
 }
+
+#[test]
+fn mining_a_wall_with_a_pickaxe_yields_ore_and_rubble() {
+    use mir_proto::{slot, spell_effect, Grid};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    // Pick Axes need level 20.
+    let mut rec = test_character("Miner");
+    rec.level = 20;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    // Deserted Mine Lv 1 (136) can be mined: copper 1/50, iron 1/140 ...
+    let (spot, dir) = world.test_wall_spot(136).expect("a wall in the mine");
+    world.test_change_map(me, 136, spot);
+    let pickaxe = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Pick Axe")
+        .unwrap()
+        .index;
+    world.test_give_item(me, pickaxe, 1);
+    let slot_in_bag = world.test_slot_of(me, pickaxe).unwrap();
+    world.item_move(
+        me,
+        Grid::Inventory,
+        slot_in_bag,
+        Grid::Equipment,
+        slot::WEAPON as u8,
+    );
+    let msgs = drain(&mut world);
+    assert_eq!(world.objects[&me].map, 136, "moved to the mine");
+    let def = world.data.items[&pickaxe].clone();
+    assert_eq!(
+        world.test_equipped(me, slot::WEAPON),
+        Some(pickaxe),
+        "pickaxe equipped ({} {} {}): {msgs:?}",
+        def.required_class,
+        def.required_type,
+        def.required_amount
+    );
+    let start_dur = world.test_equipment_durability(me, slot::WEAPON).unwrap();
+    // The mine has monsters and a level-1 tester: clear them out of the way.
+    world.test_clear_monsters(136);
+    // Swing until some ore turns up (1 in 50 for copper alone).
+    let mut now = 1000;
+    let mut swings = 0;
+    let ore_types = [537, 538, 539, 540, 541];
+    while swings < 400 {
+        now += 1600;
+        world.tick(now);
+        if swings % 20 == 0 {
+            world.test_clear_monsters(136);
+        }
+        world.mining(me, dir);
+        swings += 1;
+        if world
+            .test_bag(me)
+            .1
+            .iter()
+            .any(|(info, _)| ore_types.contains(info))
+        {
+            break;
+        }
+    }
+    if swings >= 400 {
+        let msgs = drain(&mut world);
+        let mining: Vec<_> = msgs
+            .iter()
+            .filter(|m| matches!(m, ServerMessage::ObjectMining { .. }))
+            .take(3)
+            .collect();
+        panic!(
+            "no ore after {swings} swings; dur {:?}; can_mine {:?}; front walkable {}; mining {mining:?}",
+            world.test_equipment_durability(me, slot::WEAPON),
+            world.data.maps.get(&136).map(|m| m.can_mine),
+            world.maps[&136].file.is_walkable(spot.step(dir, 1).x, spot.step(dir, 1).y)
+        );
+    }
+    assert_eq!(
+        world.test_equipment_durability(me, slot::WEAPON),
+        Some(start_dur - 4 * swings)
+    );
+    assert!(world.test_spell_at(136, spot, spell_effect::RUBBLE));
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::ObjectMining { effect: true, .. })));
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Say { text, .. } if text.starts_with("You mined"))));
+    // Swinging at open ground does nothing but the animation.
+    if let Some(open) = Direction::ALL.iter().copied().find(|d| {
+        let n = spot.step(*d, 1);
+        world.maps[&136].file.is_walkable(n.x, n.y)
+    }) {
+        world.tick(now + 2000);
+        world.mining(me, open);
+        world.tick(now + 2100);
+        let msgs = drain(&mut world);
+        assert!(msgs
+            .iter()
+            .any(|m| matches!(m, ServerMessage::ObjectMining { effect: false, .. })));
+    }
+}
+
+#[test]
+fn fishing_reels_in_a_catch_with_the_dev_zone() {
+    use mir_proto::fishing_state;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Angler")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    // No fishing zones, rods or bait ship in this pack: without the dev
+    // zone every cast is refused.
+    let map = world.objects[&me].map;
+    // The town centre is open ground: stand next to the nearest wall.
+    let (spot, dir) = world.test_wall_spot(map).expect("a wall on the start map");
+    world.teleport(me, spot);
+    let loc = spot;
+    let water = loc.step(dir, 1);
+    world.fishing_cast(me, fishing_state::CAST, dir, water, false);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Say { text, .. } if text.contains("no fish"))));
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .unwrap()
+        .index;
+    world.dev_fishing_item = Some(potion);
+    // Recast every 1.6 s, always reeling: once a fish nibbles the points
+    // only climb, so the catch is certain and perfect.
+    let mut now = 1000;
+    world.tick(now);
+    world.fishing_cast(me, fishing_state::CAST, dir, water, false);
+    assert!(world.objects[&me].player().unwrap().fishing.is_some());
+    let mut casts = 0;
+    while world.objects[&me].player().unwrap().fishing.is_some() && casts < 500 {
+        now += 1600;
+        world.tick(now);
+        world.fishing_cast(me, fishing_state::CAST, dir, water, true);
+        casts += 1;
+    }
+    assert!(casts < 500, "still fishing after {casts} casts");
+    world.tick(now + 100);
+    assert_eq!(world.test_bag(me).1, vec![(potion, 1)]);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Say { text, .. } if text == "Perfect catch!")));
+    assert!(msgs.iter().any(
+        |m| matches!(m, ServerMessage::ObjectFishing { state, .. } if *state == fishing_state::REEL)
+    ));
+    // A step cancels a cast in progress.
+    world.tick(now + 2000);
+    world.fishing_cast(me, fishing_state::CAST, dir, water, false);
+    assert!(world.objects[&me].player().unwrap().fishing.is_some());
+    world.tick(now + 4000);
+    world.player_turn(me, dir.opposite());
+    world.tick(now + 8000);
+    assert!(world.objects[&me].player().unwrap().fishing.is_none());
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::ObjectFishing { state, .. } if *state == fishing_state::CANCEL)));
+}

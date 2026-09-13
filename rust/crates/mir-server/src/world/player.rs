@@ -105,6 +105,7 @@ impl World {
                 guild: None,
                 guild_invite: None,
                 mail_time: 0,
+                fishing: None,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -384,6 +385,7 @@ impl World {
         let pets = std::mem::take(&mut p.pets);
         self.events.push((id, ServerMessage::ObjectDie { id }));
         self.trade_close(id);
+        self.fishing_cancel(id);
         for pet in pets {
             if self.objects.get(&pet).map(|o| !o.dead).unwrap_or(false) {
                 self.monster_die(pet, id);

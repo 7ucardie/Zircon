@@ -42,6 +42,10 @@ pub fn player_frame(action: Action) -> Frame {
         Action::Struck => Frame::new(1840, 3, 100),
         Action::Die => Frame::new(1920, 10, 100),
         Action::Dead => Frame::new(1929, 1, 1000),
+        Action::FishingCast => Frame::new(2000, 8, 100),
+        Action::FishingWait => Frame::new(2080, 6, 120),
+        Action::FishingReel => Frame::new(2160, 8, 100),
+        Action::Mining => Frame::new(720, 6, 100),
     }
 }
 
@@ -56,6 +60,8 @@ pub fn spell_frame(effect: u8) -> Frame {
         mir_proto::spell_effect::ICE_AURA => Frame::new(640, 10, 100),
         mir_proto::spell_effect::BURNING_FIRE => Frame::new(920, 5, 150),
         mir_proto::spell_effect::DARK_SOUL_PRISON => Frame::new(400, 15, 100),
+        // Rubble (ProgUse 230..234 by pile size; drawn at the smallest).
+        mir_proto::spell_effect::RUBBLE => Frame::new(230, 1, 3_600_000),
         _ => Frame::new(0, 1, 3_600_000),
     }
 }
@@ -88,6 +94,9 @@ pub fn monster_frame(action: Action) -> Frame {
         Action::Struck => Frame::new(240, 2, 100),
         Action::Die => Frame::new(320, 10, 100),
         Action::Dead => Frame::new(329, 1, 1000),
+        Action::FishingCast | Action::FishingWait | Action::FishingReel | Action::Mining => {
+            Frame::new(0, 4, 500)
+        }
     }
 }
 
