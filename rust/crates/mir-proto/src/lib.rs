@@ -1249,6 +1249,8 @@ pub mod buff_type {
 
 /// Zircon `SpellEffect` values.
 pub mod spell_effect {
+    /// Zircon `MonsterDeathCloud`: a monster's poison cloud cell.
+    pub const DEATH_CLOUD: u8 = 14;
     pub const FIRE_WALL: u8 = 2;
     pub const TEMPEST: u8 = 3;
     pub const TRAP_OCTAGON: u8 = 5;

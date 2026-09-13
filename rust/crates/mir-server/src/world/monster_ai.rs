@@ -30,9 +30,28 @@ impl World {
             (o.map, o.location, o.dead, m.dead_time)
         };
         if dead {
+            let (revives, revive_at) = {
+                let m = self.objects[&id].monster_ref();
+                (m.revives_left, m.revive_at)
+            };
+            if revives > 0 && now >= revive_at {
+                self.monster_revive(id);
+                return;
+            }
             if now > dead_time {
                 self.remove_object(id);
             }
+            return;
+        }
+        // Timed summons vanish; gates only sweep players through.
+        if let Some(t) = self.objects[&id].monster_ref().despawn_at {
+            if now >= t {
+                self.despawn_summon(id);
+                return;
+            }
+        }
+        if let Some(gate) = self.ai_profile(self.monster_ai(id)).gate {
+            self.process_gate(id, gate, map, loc);
             return;
         }
         // Paralysis and Silenced stop a monster completely.
@@ -47,13 +66,6 @@ impl World {
                 self.puppet_explode(id);
             }
             return;
-        }
-        // Timed summons vanish.
-        if let Some(t) = self.objects[&id].monster_ref().despawn_at {
-            if now >= t {
-                self.despawn_summon(id);
-                return;
-            }
         }
         // Chained followers stay within two cells of their leader.
         if let Some((leader, until)) = self.objects[&id].monster_ref().chained {
@@ -580,6 +592,47 @@ impl World {
                 self.move_toward(id, loc.step(away, 2), true);
             }
             return;
+        }
+        // Timed curses: weakness on everything within 3, death clouds on
+        // every target in view.
+        if (prof.weakness_every_ms > 0 || prof.death_cloud_every_ms > 0)
+            && now > self.objects[&id].monster_ref().cadence_time
+            && self.monster_can_attack(id)
+        {
+            let every = prof.weakness_every_ms.max(prof.death_cloud_every_ms);
+            self.objects
+                .get_mut(&id)
+                .unwrap()
+                .monster_mut()
+                .unwrap()
+                .cadence_time = now + every;
+            if prof.weakness_every_ms > 0 {
+                let victims = self.hostiles_within(id, loc, 3);
+                for v in victims {
+                    self.apply_poison(
+                        v,
+                        Poison {
+                            kind: poison_kind::MAGIC_WEAKNESS,
+                            value: 0,
+                            ticks_left: 0,
+                            next_tick: now + 10_000,
+                            owner: Some(id),
+                        },
+                    );
+                }
+            }
+            if prof.death_cloud_every_ms > 0 {
+                let view = self.data.monsters[&self.objects[&id].monster_ref().def].view_range;
+                let (hp, max_hp) = (self.objects[&id].hp, self.objects[&id].max_hp);
+                let victims = self.hostiles_within(id, loc, view.max(1));
+                for v in victims {
+                    if hp > max_hp / 2 && self.rng.random_range(0..2) > 0 {
+                        continue;
+                    }
+                    let at = self.objects[&v].location;
+                    self.death_cloud(id, map, at);
+                }
+            }
         }
         // Blink packages.
         if let Some((far, cooldown)) = prof.blink_when_far {
@@ -1299,6 +1352,103 @@ impl World {
     }
 
     /// Zircon `UnTame`: back to the wild at a tenth of its health.
+    /// Voracious ghost: back on its feet with half the HP per death so far.
+    fn monster_revive(&mut self, id: ObjectId) {
+        let now = self.now;
+        let (location, direction, hp) = {
+            let o = self.objects.get_mut(&id).unwrap();
+            o.dead = false;
+            let m = o.monster_mut().unwrap();
+            m.revives_left -= 1;
+            m.revive_at = 0;
+            let deaths = m.death_count.clamp(0, 30);
+            let hp = (o.max_hp >> deaths).max(1);
+            o.hp = hp;
+            o.action_time = now + 1500;
+            (o.location, o.direction, hp)
+        };
+        self.events.push((
+            id,
+            ServerMessage::ObjectRevive {
+                id,
+                location,
+                direction,
+                hp,
+            },
+        ));
+    }
+
+    /// Zircon `DeathCloud`: every cell within 2 of `at` gets a cloud that
+    /// bursts once after 4-6 s on whoever stands there.
+    fn death_cloud(&mut self, caster: ObjectId, map: i32, at: Point) {
+        for dx in -2..=2 {
+            for dy in -2..=2 {
+                let cell = Point::new(at.x + dx, at.y + dy);
+                if !self.maps[&map].file.is_walkable(cell.x, cell.y) {
+                    continue;
+                }
+                let delay = 4000 + self.rng.random_range(0..2000);
+                let sid = self.spawn_spell(
+                    map,
+                    cell,
+                    spell_effect::DEATH_CLOUD,
+                    1,
+                    delay,
+                    caster,
+                    magic_type::MONSTER_DEATH_CLOUD,
+                );
+                // The cloud waits its delay before its single burst.
+                if let Some(Kind::Spell(s)) = self.objects.get_mut(&sid).map(|o| &mut o.kind) {
+                    s.tick_time = self.now + delay;
+                }
+            }
+        }
+    }
+
+    /// Gates (Netherworld Gate, Jinam Stone Gate): every 3 s, players in
+    /// view outside safe zones are sent to the configured region.
+    fn process_gate(&mut self, id: ObjectId, gate: u8, map: i32, loc: Point) {
+        let now = self.now;
+        if now < self.objects[&id].monster_ref().cadence_time {
+            return;
+        }
+        self.objects
+            .get_mut(&id)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .cadence_time = now + 3000;
+        let Some(region) =
+            self.gate_regions[gate as usize].and_then(|r| self.data.regions.get(&r).cloned())
+        else {
+            return;
+        };
+        if self.ensure_map(region.map).is_err() {
+            return;
+        }
+        let points = region.points(self.maps[&region.map].file.width as i32);
+        if points.is_empty() {
+            return;
+        }
+        let view = self.data.monsters[&self.objects[&id].monster_ref().def]
+            .view_range
+            .max(1);
+        let riders: Vec<ObjectId> = self
+            .on_map(map)
+            .filter(|o| {
+                o.player().is_some()
+                    && !o.dead
+                    && !o.in_safe_zone
+                    && o.location.distance(loc) <= view
+            })
+            .map(|o| o.id)
+            .collect();
+        for r in riders {
+            let (x, y) = points[self.rng.random_range(0..points.len())];
+            self.change_map(r, region.map, Point::new(x, y));
+        }
+    }
+
     pub(super) fn untame(&mut self, id: ObjectId) {
         let owner = self.objects[&id].monster_ref().owner;
         if let Some(p) = owner

@@ -74,6 +74,10 @@ impl World {
                 despawn_at: None,
                 link: None,
                 chained: None,
+                revives_left: 0,
+                death_count: 0,
+                revive_at: 0,
+                cadence_time: 0,
                 minions: Vec::new(),
                 master: None,
                 guard: def.ai == -1,
@@ -106,6 +110,22 @@ impl World {
         if let Some(o) = owner {
             if let Some(p) = self.objects.get_mut(&o).and_then(|o| o.player_mut()) {
                 p.pets.push(id);
+            }
+        }
+        // Class quirks set at spawn: ghosts get 0-3 revives, gates last 20 min.
+        let prof = self.ai_profile(def.ai);
+        if prof.revives || prof.gate.is_some() {
+            let revives = if prof.revives {
+                self.rng.random_range(0..4)
+            } else {
+                0
+            };
+            let now = self.now;
+            if let Some(mm) = self.objects.get_mut(&id).and_then(|o| o.monster_mut()) {
+                mm.revives_left = revives;
+                if prof.gate.is_some() {
+                    mm.despawn_at = Some(now + 20 * 60_000);
+                }
             }
         }
         id

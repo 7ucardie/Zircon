@@ -631,7 +631,12 @@ impl World {
                                 bonus *= 3;
                                 power += (max_dc - 100).max(0);
                             }
-                            let mr = self.roll_range(tstats.min_mr, tstats.max_mr);
+                            let mr = if has_poison(&self.objects[&tid], poison_kind::MAGIC_WEAKNESS)
+                            {
+                                0
+                            } else {
+                                self.roll_range(tstats.min_mr, tstats.max_mr)
+                            };
                             power += (bonus - mr).max(0);
                             let (next, fx) = match m {
                                 magic_type::FULL_BLOOM => {
@@ -665,7 +670,9 @@ impl World {
                     }
                 }
                 if elemental {
-                    power -= self.roll_range(tstats.min_mr, tstats.max_mr);
+                    if !has_poison(&self.objects[&tid], poison_kind::MAGIC_WEAKNESS) {
+                        power -= self.roll_range(tstats.min_mr, tstats.max_mr);
+                    }
                 } else if lotus.is_none() && !hit.magics.contains(&magic_type::MASSACRE) {
                     let mut ac = self.roll_ac(tstats);
                     // Defensive Mastery: the defender rolls max AC by chance.
@@ -1122,15 +1129,32 @@ impl World {
     }
 
     pub(super) fn monster_die(&mut self, id: ObjectId, _killer: ObjectId) {
-        let (exp, owner, spawn, pet_of) = {
+        let (exp, owner, spawn, pet_of, revives) = {
             let o = self.objects.get_mut(&id).unwrap();
             o.dead = true;
             o.hp = 0;
             let m = o.monster_mut().unwrap();
             m.dead_time = self.now + DEAD_DURATION;
             m.target = None;
-            (m.experience, m.exp_owner, m.spawn, m.owner)
+            // Voracious ghosts yield half the experience per revive left.
+            let exp = m.experience / 2f64.powi(m.revives_left);
+            (exp, m.exp_owner, m.spawn, m.owner, m.revives_left)
         };
+        if revives > 0 {
+            // The ghost gets up again in 3-7 s; no drops until its last death.
+            let revive_at = self.now + 3000 + self.rng.random_range(0..5000);
+            let m = self.objects.get_mut(&id).unwrap().monster_mut().unwrap();
+            m.revive_at = revive_at;
+            m.dead_time = revive_at + DEAD_DURATION;
+            m.death_count += 1;
+            self.events.push((id, ServerMessage::ObjectDie { id }));
+            if let Some(owner) = owner {
+                if self.objects.get(&owner).is_some_and(|o| !o.dead) {
+                    self.gain_experience(owner, exp as u64);
+                }
+            }
+            return;
+        }
         if let Some(pet_of) = pet_of {
             // Pets yield no experience or drops.
             if let Some(p) = self.objects.get_mut(&pet_of).and_then(|o| o.player_mut()) {

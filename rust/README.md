@@ -334,6 +334,17 @@ prey is close, suicide larvae, corpse spawners and boss summon phases.
 Elemental monster hits ignore dodge and go through MR; monsters that lose
 their target re-search every half second like Zircon does every tick.
 
+Wave two adds the timed class behaviours the first pass skipped: Voracious
+Ghosts revive up to three times with half their HP each time and only drop
+loot at the last death, Crimson Necromancers strip the magic resistance of
+everything within three cells every ten seconds, Jinchon Devils lay death
+clouds around their targets that burst after a few seconds, and the
+Netherworld and Jinam gates stand invulnerable for twenty minutes, sweeping
+players in view to the region named by `ZIRCON_MYSTERY_SHIP_REGION` /
+`ZIRCON_LAIR_REGION` (Zircon's `Config` region indices; unset = no
+teleport). `cargo test -p mir-server report_monster_ai -- --ignored
+--nocapture` prints which AI ids still fall back to the plain melee profile.
+
 ## Editing content
 
 `cargo run -p mir-editor` opens the data editor (egui): every `System.db`

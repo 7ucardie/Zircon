@@ -428,6 +428,56 @@ impl World {
             .is_some_and(|p| p.channel.is_some())
     }
 
+    /// Test helper: a walkable cell near `near` outside safe zones with no
+    /// guard within 12 cells and nothing standing on it (monster tests).
+    #[cfg(test)]
+    pub fn test_quiet_cell(&self, map: i32, near: Point) -> Option<Point> {
+        let file = &self.maps.get(&map)?.file;
+        let guards: Vec<Point> = self
+            .on_map(map)
+            .filter(|o| matches!(&o.kind, Kind::Monster(m) if m.guard))
+            .map(|o| o.location)
+            .collect();
+        for r in 1..120 {
+            for dx in -r..=r {
+                for dy in [-r, r] {
+                    for (x, y) in [(near.x + dx, near.y + dy), (near.x + dy, near.y + dx)] {
+                        let p = Point::new(x, y);
+                        if file.is_walkable(x, y)
+                            && !self.in_safe_zone(map, p)
+                            && self.maps[&map].objects_at(p).is_empty()
+                            && guards.iter().all(|g| g.distance(p) > 12)
+                        {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Test helper: set a ghost's remaining revives.
+    #[cfg(test)]
+    pub fn test_set_revives(&mut self, id: ObjectId, n: i32) {
+        if let Some(m) = self.objects.get_mut(&id).and_then(|o| o.monster_mut()) {
+            m.revives_left = n;
+        }
+    }
+
+    /// Test helper: (revives left, deaths) of a monster.
+    #[cfg(test)]
+    pub fn test_monster_revives(&self, id: ObjectId) -> (i32, i32) {
+        let m = self.objects[&id].monster_ref();
+        (m.revives_left, m.death_count)
+    }
+
+    /// Test helper: when a timed monster vanishes.
+    #[cfg(test)]
+    pub fn test_monster_despawn_at(&self, id: ObjectId) -> Option<u64> {
+        self.objects[&id].monster_ref().despawn_at
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

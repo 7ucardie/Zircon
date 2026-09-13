@@ -2835,3 +2835,113 @@ fn wave_six_frost_bite_chain_hurricane_and_corpses() {
         .iter()
         .any(|m| matches!(m, ServerMessage::ObjectMagic { magic, .. } if *magic == exploder)));
 }
+
+/// Developer report: monsters per AI id and whether the AI has its own
+/// profile (`cargo test -p mir-server report_monster_ai -- --ignored --nocapture`).
+#[test]
+#[ignore]
+fn report_monster_ai_coverage() {
+    let Some(world) = world() else {
+        return;
+    };
+    let base = format!("{:?}", world::ai_profile::profile(15));
+    let mut per_ai: std::collections::BTreeMap<i32, (usize, usize, Vec<String>)> =
+        std::collections::BTreeMap::new();
+    for m in world.data.monsters.values() {
+        let e = per_ai.entry(m.ai).or_default();
+        e.0 += 1;
+        if e.2.len() < 4 {
+            e.2.push(m.name.clone());
+        }
+    }
+    for s in &world.data.respawns {
+        if let Some(m) = world.data.monsters.get(&s.monster) {
+            per_ai.entry(m.ai).or_default().1 += 1;
+        }
+    }
+    for (ai, (defs, spawns, names)) in per_ai {
+        let own = format!("{:?}", world::ai_profile::profile(ai)) != base;
+        eprintln!(
+            "AI {ai:4}: {defs:3} monsters, {spawns:3} spawns, profile {} - {}",
+            if own { "own    " } else { "DEFAULT" },
+            names.join(", ")
+        );
+    }
+}
+
+#[test]
+fn monster_ai_wave_two_ghosts_curses_clouds_and_gates() {
+    use mir_proto::spell_effect;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let mut rec = test_character("Tester");
+    rec.level = 40;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let map = world.objects[&me].map;
+    // Away from the town guards, who kill wild monsters on sight.
+    let start = world.objects[&me].location;
+    let loc = world
+        .test_quiet_cell(map, start)
+        .expect("a quiet cell outside town");
+    world.teleport(me, loc);
+    let mut free = Direction::ALL.iter().map(|d| loc.step(*d, 1)).filter(|p| {
+        world.maps[&map].file.is_walkable(p.x, p.y) && world.maps[&map].objects_at(*p).is_empty()
+    });
+    let a = free.next().unwrap();
+    let b = free.next().unwrap();
+
+    // Voracious ghost: dies, gets up 3-7 s later with half its HP, and only
+    // stays dead once its revives are spent.
+    let ghost = world.test_spawn_ai(11, map, a).expect("a voracious ghost");
+    world.test_set_revives(ghost, 1);
+    let max_hp = world.objects[&ghost].max_hp;
+    world.test_damage(ghost, me, 1_000_000);
+    assert!(world.objects[&ghost].dead);
+    assert_eq!(world.test_monster_revives(ghost), (1, 1));
+    for t in 1..=9 {
+        world.tick(t * 1000);
+    }
+    assert!(!world.objects[&ghost].dead, "the ghost should have revived");
+    assert!(world.objects[&ghost].hp <= max_hp / 2 + 1);
+    assert_eq!(world.test_monster_revives(ghost), (0, 1));
+    world.test_damage(ghost, me, 1_000_000);
+    for t in 10..=18 {
+        world.tick(t * 1000);
+    }
+    assert!(world.objects[&ghost].dead);
+    world.remove_object(ghost);
+
+    // Crimson Necromancer: every 10 s targets within 3 lose their magic
+    // resistance for 10 s.
+    let necro = world.test_spawn_ai(59, map, a).expect("a necromancer");
+    world.test_set_target(necro, me);
+    for t in 19..=22 {
+        world.tick(t * 1000);
+    }
+    assert!(world.objects[&me]
+        .poisons
+        .iter()
+        .any(|p| p.kind == world::poison_kind::MAGIC_WEAKNESS));
+    world.remove_object(necro);
+
+    // Jinchon Devil: death clouds around each target in view.
+    let devil = world.test_spawn_ai(78, map, b).expect("a jinchon devil");
+    // Above half HP it skips each target half the time; wound it first.
+    let max_hp = world.objects[&devil].max_hp;
+    world.test_set_hp(devil, max_hp / 3);
+    world.test_set_target(devil, me);
+    for t in 23..=26 {
+        world.tick(t * 1000);
+    }
+    assert!(world.test_spell_at(map, loc, spell_effect::DEATH_CLOUD));
+    world.remove_object(devil);
+
+    // Gates cannot be hurt and vanish after twenty minutes.
+    let gate = world.test_spawn_ai(30, map, a).expect("a gate");
+    assert_eq!(world.test_damage(gate, me, 500), 0);
+    assert!(world.test_monster_despawn_at(gate).is_some());
+}

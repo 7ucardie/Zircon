@@ -30,6 +30,7 @@ impl Game {
                     mir_proto::spell_effect::TEMPEST => effects::MAGIC_EX2,
                     mir_proto::spell_effect::TRAP_OCTAGON => effects::MAGIC,
                     mir_proto::spell_effect::POISONOUS_CLOUD => effects::MAGIC_EX4,
+                    mir_proto::spell_effect::DEATH_CLOUD => effects::MAGIC_EX4,
                     mir_proto::spell_effect::RUBBLE => effects::PROG_USE,
                     _ => return None,
                 };

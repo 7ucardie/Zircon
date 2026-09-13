@@ -140,6 +140,18 @@ pub struct AiProfile {
     pub die_splash: Option<(i32, i32, i32)>,
     /// Per-class damage taken multipliers in percent: warrior, wizard, taoist, assassin.
     pub class_mitigation: Option<[i32; 4]>,
+    /// Voracious ghost: 0-3 revives at half the HP each time; drops only at
+    /// the final death.
+    pub revives: bool,
+    /// Crimson Necromancer: every n ms every target within 3 loses its
+    /// magic resistance for 10 s.
+    pub weakness_every_ms: u64,
+    /// Jinchon Devil: every n ms a death cloud (radius 2, one tick after
+    /// 4-6 s) on each target in view.
+    pub death_cloud_every_ms: u64,
+    /// Gate: 0 = mystery ship, 1 = lair; teleports players in view every
+    /// 3 s to the configured region, vanishes after 20 minutes.
+    pub gate: Option<u8>,
 }
 
 impl Default for AiProfile {
@@ -177,6 +189,10 @@ impl Default for AiProfile {
             spawn_on_attack: None,
             die_splash: None,
             class_mitigation: None,
+            revives: false,
+            weakness_every_ms: 0,
+            death_cloud_every_ms: 0,
+            gate: None,
         }
     }
 }
@@ -855,6 +871,20 @@ pub fn profile(ai: i32) -> AiProfile {
                 p.spell = Some(line(12, 1, 1, m::MONSTER_DARK_BEAM, element::DARK));
                 p.spell_chance_near = 1;
             }
+        }
+        _ => {}
+    }
+    // ---- Wave two class behaviours ----
+    match ai {
+        11 => p.revives = true,
+        59 => p.weakness_every_ms = 10_000,
+        78 => p.death_cloud_every_ms = 15_000,
+        127 => p.death_cloud_every_ms = 8_000,
+        30 | 69 => {
+            p.gate = Some(if ai == 30 { 0 } else { 1 });
+            p.passive = true;
+            p.immobile = true;
+            p.invulnerable = true;
         }
         _ => {}
     }

@@ -454,7 +454,9 @@ impl World {
                                 s.tick_time = self.now + 60_000;
                             }
                         }
-                        None => self.spawn_spell(map, loc, spell_effect::RUBBLE, 1, 60_000, id, 0),
+                        None => {
+                            self.spawn_spell(map, loc, spell_effect::RUBBLE, 1, 60_000, id, 0);
+                        }
                     }
                     result = true;
                 }

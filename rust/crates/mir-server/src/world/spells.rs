@@ -11,7 +11,7 @@ impl World {
         frequency: u64,
         owner: ObjectId,
         magic: u16,
-    ) {
+    ) -> ObjectId {
         // Zircon: a new fire wall replaces any fire wall on the cell.
         let old: Vec<ObjectId> = self.maps[&map]
             .objects_at(location)
@@ -63,6 +63,7 @@ impl World {
             heal: None,
         };
         self.insert_object(obj);
+        id
     }
 
     /// Zircon `SpellObject.Process`: tick every `frequency` until the count
@@ -128,6 +129,32 @@ impl World {
                         .collect();
                     for v in victims {
                         self.magic_attack(owner, v, magic, element::FIRE, 60);
+                    }
+                }
+                spell_effect::DEATH_CLOUD => {
+                    // The cloud bursts once on whoever stands in it.
+                    let victims: Vec<ObjectId> = self.maps[&map]
+                        .objects_at(loc)
+                        .iter()
+                        .copied()
+                        .filter(|v| {
+                            self.objects
+                                .get(&owner)
+                                .is_some_and(|c| c.hostile_to(&self.objects[v]))
+                        })
+                        .collect();
+                    let dc = self
+                        .objects
+                        .get(&owner)
+                        .map(|c| c.stats)
+                        .map(|s| self.roll_dc(s))
+                        .unwrap_or(0);
+                    for v in victims {
+                        let ts = self.objects[&v].stats;
+                        let dealt = dc - self.roll_range(ts.min_mr, ts.max_mr);
+                        if dealt > 0 {
+                            self.damage(v, owner, dealt, element::DARK, true);
+                        }
                     }
                 }
                 spell_effect::ICE_AURA => {

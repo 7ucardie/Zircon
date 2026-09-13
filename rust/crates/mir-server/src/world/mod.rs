@@ -58,6 +58,8 @@ pub mod poison_kind {
     pub const PARASITE: u16 = 256;
     /// Doubles attack and move delays.
     pub const NEUTRALIZE: u16 = 512;
+    /// Zircon `BuffType.MagicWeakness`: magic resistance counts as zero.
+    pub const MAGIC_WEAKNESS: u16 = 2048;
 }
 
 /// Paralysed objects take no actions.
@@ -424,6 +426,12 @@ pub struct MonsterData {
     pub link: Option<ObjectId>,
     /// Chain: tethered to a leader until the time.
     pub chained: Option<(ObjectId, u64)>,
+    /// Voracious ghosts: revives left, deaths so far, next revive time.
+    pub revives_left: i32,
+    pub death_count: i32,
+    pub revive_at: u64,
+    /// Timed class behaviours (weakness curse, death clouds, gate sweeps).
+    pub cadence_time: u64,
     pub minions: Vec<ObjectId>,
     pub master: Option<ObjectId>,
     /// Town guard (AI -1): fights wild monsters, cannot be hurt.
@@ -711,6 +719,9 @@ pub struct World {
     /// `ZIRCON_DEV_FISHING`: item every unwalkable cell yields when the
     /// pack has no fishing zones (tackle checks waived).
     pub dev_fishing_item: Option<i32>,
+    /// Gate destinations (Zircon `Config.MysteryShipRegionIndex` /
+    /// `LairRegionIndex`): `ZIRCON_MYSTERY_SHIP_REGION`, `ZIRCON_LAIR_REGION`.
+    pub gate_regions: [Option<i32>; 2],
     /// Groups by id; the first member leads.
     groups: BTreeMap<u32, Vec<ObjectId>>,
     pub guild_store: guilds::GuildStore,
@@ -723,7 +734,7 @@ pub struct World {
     drops_by_monster: HashMap<i32, Vec<DropDef>>,
 }
 
-mod ai_profile;
+pub mod ai_profile;
 mod buffs;
 mod chat;
 mod combat;
@@ -833,6 +844,14 @@ impl World {
             dev_fishing_item: std::env::var("ZIRCON_DEV_FISHING")
                 .ok()
                 .and_then(|v| v.parse().ok()),
+            gate_regions: [
+                std::env::var("ZIRCON_MYSTERY_SHIP_REGION")
+                    .ok()
+                    .and_then(|v| v.parse().ok()),
+                std::env::var("ZIRCON_LAIR_REGION")
+                    .ok()
+                    .and_then(|v| v.parse().ok()),
+            ],
         }
     }
 

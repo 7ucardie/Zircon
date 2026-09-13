@@ -3,11 +3,14 @@
 Extracted 2026-09-12. Wave 1 of the port landed the same day in
 `crates/mir-server/src/world/ai_profile.rs` + `monster_ai.rs` (base rules,
 ranged/line/splash/self-area shapes, casters, poisons, blink-strikers,
-hidden monsters, stages, guards, larva, corpse spawns). Still open:
-persistent monster fields (FireWall/PoisonousCloud/DeathCloud), Purification
-and MagicWeakness debuffs, heal/teleport/enrage behaviour flags (not in this
-asset pack), VoraciousGhost revives, gates, Shinsu mode windows, Terracotta
-phasing speed, DoomClaw's part layout, castle classes, ally healers.
+hidden monsters, stages, guards, larva, corpse spawns). Wave two (2026-09-13)
+added VoraciousGhost revives, the MagicWeakness debuff (a poison kind that
+zeroes MR), JinchonDevil DeathCloud fields and the two gates (regions from
+`ZIRCON_MYSTERY_SHIP_REGION` / `ZIRCON_LAIR_REGION`). Still open:
+persistent FireWall/PoisonousCloud monster fields, Purification,
+heal/teleport/enrage behaviour flags (not in this asset pack), Shinsu mode
+windows, Terracotta phasing speed, DoomClaw's part layout, castle classes,
+ally healers.
 File:line references are into the C# projects
 (ServerLibrary/Models/MonsterObject.cs unless a class file is named;
 class files live in ServerLibrary/Models/Monsters/).
