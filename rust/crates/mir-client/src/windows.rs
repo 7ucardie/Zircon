@@ -132,6 +132,16 @@ pub struct WindowState {
     trade_gold: Option<TextBox>,
     trade_buttons: Vec<Button>,
     request_buttons: Vec<Button>,
+    /// Mail window (M): mailbox on the left, the selected mail or the
+    /// compose form on the right.
+    pub mail_open: bool,
+    pub mail_selected: Option<u32>,
+    mail_compose: bool,
+    mail_boxes: Vec<TextBox>,
+    mail_buttons: Vec<Button>,
+    mail_take: Vec<Button>,
+    /// Attachments for the mail being composed: (grid, slot, count).
+    pub mail_attach: Vec<(Grid, u8, u32)>,
     /// Guild window (G): create, members, notice, invite, kick, leave.
     pub guild_open: bool,
     guild_name: Option<TextBox>,
@@ -171,6 +181,7 @@ impl WindowState {
                 && (self.guild_name.as_ref().is_some_and(|b| b.focused)
                     || self.guild_notice.as_ref().is_some_and(|b| b.focused)))
             || self.trade_gold.as_ref().is_some_and(|b| b.focused)
+            || (self.mail_open && self.mail_boxes.iter().any(|b| b.focused))
     }
 }
 
@@ -185,6 +196,13 @@ impl Default for WindowState {
             trade_gold: None,
             trade_buttons: Vec::new(),
             request_buttons: Vec::new(),
+            mail_open: false,
+            mail_selected: None,
+            mail_compose: false,
+            mail_boxes: Vec::new(),
+            mail_buttons: Vec::new(),
+            mail_take: Vec::new(),
+            mail_attach: Vec::new(),
             guild_open: false,
             guild_name: None,
             guild_notice: None,
@@ -237,6 +255,7 @@ pub struct Bag<'a> {
     pub trade_request: Option<&'a str>,
     pub guild: Option<&'a mir_proto::GuildSummary>,
     pub guild_invite: Option<(&'a str, &'a str)>,
+    pub mail: &'a [mir_proto::MailSummary],
 }
 
 /// An open trade as the client sees it.
@@ -710,6 +729,236 @@ impl WindowState {
             b.pos = (win.x + 160.0, win.y + 66.0);
             if b.update(c) {
                 out.push(ClientMessage::TradeResponse { accept: false });
+            }
+        }
+
+        // ---- Mail (M) ----
+        if self.mail_open {
+            let win = Rect::new(width as f32 / 2.0 - 260.0, 40.0, 520.0, 360.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            let closed = c.window(win, "Mail", true);
+            if self.mail_buttons.is_empty() {
+                self.mail_buttons = vec![
+                    Button::default_style(0.0, 0.0, 80.0, "Compose"),
+                    Button::default_style(0.0, 0.0, 70.0, "Delete"),
+                    Button::default_style(0.0, 0.0, 70.0, "Send"),
+                    Button::default_style(0.0, 0.0, 90.0, "Take gold"),
+                ];
+            }
+            if self.mail_boxes.is_empty() {
+                self.mail_boxes = vec![
+                    TextBox::new(Rect::new(0.0, 0.0, 200.0, 22.0), 20),
+                    TextBox::new(Rect::new(0.0, 0.0, 200.0, 22.0), 30),
+                    TextBox::new(Rect::new(0.0, 0.0, 300.0, 22.0), 300),
+                    TextBox::new(Rect::new(0.0, 0.0, 100.0, 22.0), 12),
+                ];
+            }
+            // Left: the mailbox.
+            let list_w = 190.0;
+            c.text.draw(
+                &format!("Mailbox ({})", bag.mail.len()),
+                12,
+                win.x + 14.0,
+                win.y + 36.0,
+                [255, 255, 200, 255],
+            );
+            let mut y = win.y + 56.0;
+            for m in bag.mail.iter().rev().take(14) {
+                let r = Rect::new(win.x + 12.0, y - 2.0, list_w, 18.0);
+                let hover = r.contains(mouse.0, mouse.1);
+                let selected = self.mail_selected == Some(m.index);
+                if selected {
+                    c.fill(r, [0.3, 0.3, 0.5, 0.8]);
+                } else if hover {
+                    c.fill(r, [0.25, 0.25, 0.35, 0.6]);
+                }
+                let col = if m.opened {
+                    [200, 200, 200, 255]
+                } else {
+                    [255, 255, 0, 255]
+                };
+                let mut label = format!("{}: {}", m.sender, m.subject);
+                if !m.items.is_empty() || m.gold > 0 {
+                    label.push_str(" *");
+                }
+                c.text.draw(&label, 11, win.x + 16.0, y, col);
+                if hover && c.input.lmb_pressed {
+                    self.mail_selected = Some(m.index);
+                    self.mail_compose = false;
+                    if !m.opened {
+                        out.push(ClientMessage::MailOpened { index: m.index });
+                    }
+                }
+                y += 18.0;
+            }
+            let fy = win.y + win.h - 3.0 - 42.0 + 8.0;
+            let b = &mut self.mail_buttons[0];
+            b.pos = (win.x + 12.0, fy);
+            b.label = Some(if self.mail_compose {
+                "Back".into()
+            } else {
+                "Compose".into()
+            });
+            if b.update(c) {
+                self.mail_compose = !self.mail_compose;
+                if self.mail_compose {
+                    self.mail_selected = None;
+                }
+            }
+            // Right: the selected mail, or the compose form.
+            let rx = win.x + list_w + 30.0;
+            let rw = win.w - list_w - 44.0;
+            if self.mail_compose {
+                let labels = ["To:", "Subject:", "Message:", "Gold:"];
+                let mut by = win.y + 40.0;
+                for (i, label) in labels.iter().enumerate() {
+                    c.text.draw(label, 11, rx, by + 3.0, [220, 220, 220, 255]);
+                    let bw = if i == 2 { rw - 70.0 } else { 160.0 };
+                    let bx = self.mail_boxes.get_mut(i).unwrap();
+                    bx.rect = Rect::new(rx + 64.0, by, bw, 22.0);
+                    bx.update(c);
+                    if i == 3 {
+                        bx.text.retain(|ch| ch.is_ascii_digit());
+                    }
+                    by += 28.0;
+                }
+                c.text.draw(
+                    "Attachments (right-click bag items, 5 max):",
+                    10,
+                    rx,
+                    by + 4.0,
+                    [160, 160, 160, 255],
+                );
+                by += 18.0;
+                let mut remove = None;
+                for (i, (grid, slot, count)) in self.mail_attach.iter().enumerate() {
+                    let cells = match grid {
+                        Grid::Inventory => bag.inventory,
+                        Grid::Equipment => bag.equipment,
+                        Grid::Storage => bag.storage,
+                    };
+                    let name = cells
+                        .get(*slot as usize)
+                        .and_then(|c| c.as_ref())
+                        .map(|it| bag.catalog.name(it.info))
+                        .unwrap_or_else(|| "?".into());
+                    let r = Rect::new(rx, by, rw, 16.0);
+                    let hover = r.contains(mouse.0, mouse.1);
+                    c.text.draw(
+                        &format!("{name} x{count}  (click to remove)"),
+                        11,
+                        rx,
+                        by,
+                        if hover {
+                            [255, 150, 150, 255]
+                        } else {
+                            [255, 255, 255, 255]
+                        },
+                    );
+                    if hover && c.input.lmb_pressed {
+                        remove = Some(i);
+                    }
+                    by += 16.0;
+                }
+                if let Some(i) = remove {
+                    self.mail_attach.remove(i);
+                }
+                let recipient = self.mail_boxes[0].text.trim().to_string();
+                let b = &mut self.mail_buttons[2];
+                b.pos = (rx, fy);
+                b.enabled = !recipient.is_empty();
+                if b.update(c) && b.enabled {
+                    out.push(ClientMessage::MailSend {
+                        recipient,
+                        subject: self.mail_boxes[1].text.clone(),
+                        message: self.mail_boxes[2].text.clone(),
+                        gold: self.mail_boxes[3].text.parse().unwrap_or(0),
+                        items: self.mail_attach.clone(),
+                    });
+                    for bx in &mut self.mail_boxes {
+                        bx.text.clear();
+                    }
+                    self.mail_attach.clear();
+                    self.mail_compose = false;
+                }
+            } else if let Some(m) = self
+                .mail_selected
+                .and_then(|i| bag.mail.iter().find(|m| m.index == i))
+            {
+                c.text.draw(
+                    &format!("From {}: {}", m.sender, m.subject),
+                    12,
+                    rx,
+                    win.y + 40.0,
+                    [255, 255, 0, 255],
+                );
+                let mut by = win.y + 60.0;
+                for line in wrap_text(c, &m.message, rw, 11).into_iter().take(8) {
+                    c.text.draw(&line, 11, rx, by, [220, 220, 220, 255]);
+                    by += 14.0;
+                }
+                by += 8.0;
+                if self.mail_take.len() != m.items.len() {
+                    self.mail_take = m
+                        .items
+                        .iter()
+                        .map(|_| Button::default_style(0.0, 0.0, 50.0, "Take"))
+                        .collect();
+                }
+                for (i, it) in m.items.iter().enumerate() {
+                    c.text.draw(
+                        &format!("{} x{}", bag.catalog.name(it.info), it.count),
+                        11,
+                        rx,
+                        by + 2.0,
+                        [255, 255, 255, 255],
+                    );
+                    let b = &mut self.mail_take[i];
+                    b.pos = (rx + rw - 56.0, by - 2.0);
+                    if b.update(c) {
+                        out.push(ClientMessage::MailGetItem {
+                            index: m.index,
+                            slot: i as u8,
+                        });
+                    }
+                    by += 22.0;
+                }
+                if m.gold > 0 {
+                    c.text.draw(
+                        &format!("{} gold", m.gold),
+                        11,
+                        rx,
+                        by + 2.0,
+                        [218, 165, 32, 255],
+                    );
+                    let b = &mut self.mail_buttons[3];
+                    b.pos = (rx + rw - 96.0, by - 2.0);
+                    if b.update(c) {
+                        out.push(ClientMessage::MailGetItem {
+                            index: m.index,
+                            slot: 255,
+                        });
+                    }
+                }
+                let b = &mut self.mail_buttons[1];
+                b.pos = (rx, fy);
+                b.enabled = m.items.is_empty() && m.gold == 0;
+                if b.update(c) && b.enabled {
+                    out.push(ClientMessage::MailDelete { index: m.index });
+                }
+            } else {
+                c.text.draw(
+                    "Select a mail, or Compose a new one.",
+                    11,
+                    rx,
+                    win.y + 40.0,
+                    [160, 160, 160, 255],
+                );
+            }
+            if closed {
+                self.mail_open = false;
             }
         }
 
@@ -1307,6 +1556,17 @@ impl WindowState {
                                         slot: i as u8,
                                         count: it.count,
                                     });
+                                }
+                                continue;
+                            }
+                            if self.mail_open && self.mail_compose {
+                                if self.mail_attach.len() < 5
+                                    && !self
+                                        .mail_attach
+                                        .iter()
+                                        .any(|(g, s, _)| *g == Grid::Inventory && *s == i as u8)
+                                {
+                                    self.mail_attach.push((Grid::Inventory, i as u8, it.count));
                                 }
                                 continue;
                             }

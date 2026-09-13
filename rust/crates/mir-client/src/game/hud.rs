@@ -41,6 +41,7 @@ impl Game {
                 trade_request,
                 guild,
                 guild_invite,
+                mail,
                 ..
             } = self;
             let player_name = character
@@ -97,6 +98,7 @@ impl Game {
                 trade_request: trade_request.as_deref(),
                 guild: guild.as_ref(),
                 guild_invite: guild_invite.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
+                mail,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -148,6 +150,12 @@ impl Game {
                     self.guild_invite = None;
                     kept.push(ClientMessage::GuildResponse { accept });
                 }
+                ClientMessage::MailOpened { index } => {
+                    if let Some(m) = self.mail.iter_mut().find(|m| m.index == index) {
+                        m.opened = true;
+                    }
+                    kept.push(ClientMessage::MailOpened { index });
+                }
                 ClientMessage::TradeConfirm => {
                     if let Some(t) = &mut self.trade {
                         t.confirmed = true;
@@ -164,6 +172,7 @@ impl Game {
             || self.windows.group_open
             || self.windows.storage_open
             || self.windows.guild_open
+            || self.windows.mail_open
             || self.trade.is_some()
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);

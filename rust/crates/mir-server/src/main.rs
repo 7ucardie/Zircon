@@ -574,6 +574,28 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::GuildIncreaseMember) => {
             world.guild_increase_member(object)
         }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::MailSend {
+                recipient,
+                subject,
+                message,
+                gold,
+                items,
+            },
+        ) => {
+            let to = accounts.find_character(&recipient);
+            world.mail_send(object, to, subject, message, gold, items)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::MailOpened { index }) => {
+            world.mail_opened(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::MailGetItem { index, slot }) => {
+            world.mail_get_item(object, index, slot)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::MailDelete { index }) => {
+            world.mail_delete(object, index)
+        }
         (Stage::InGame { object, .. }, ClientMessage::TradeRequest) => world.trade_request(object),
         (Stage::InGame { object, .. }, ClientMessage::TradeResponse { accept }) => {
             world.trade_response(object, accept)

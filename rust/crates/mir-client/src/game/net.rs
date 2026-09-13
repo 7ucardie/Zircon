@@ -622,6 +622,40 @@ impl Game {
                     [255, 200, 120, 255],
                 );
             }
+            ServerMessage::MailList(list) => {
+                let unread = list.iter().filter(|m| !m.opened).count();
+                if unread > 0 {
+                    self.say_colored(
+                        format!("You have {unread} unread mail (M)."),
+                        now,
+                        [255, 200, 120, 255],
+                    );
+                }
+                self.mail = list;
+            }
+            ServerMessage::MailNew(m) => {
+                self.say_colored(
+                    format!("New mail from {}: {} (M)", m.sender, m.subject),
+                    now,
+                    [255, 200, 120, 255],
+                );
+                self.mail.push(m);
+            }
+            ServerMessage::MailDelete { index } => {
+                self.mail.retain(|m| m.index != index);
+                if self.windows.mail_selected == Some(index) {
+                    self.windows.mail_selected = None;
+                }
+            }
+            ServerMessage::MailItemDelete { index, slot } => {
+                if let Some(m) = self.mail.iter_mut().find(|m| m.index == index) {
+                    if slot == 255 {
+                        m.gold = 0;
+                    } else if (slot as usize) < m.items.len() {
+                        m.items.remove(slot as usize);
+                    }
+                }
+            }
             ServerMessage::GuildInfo(info) => {
                 if self.guild.is_some() && info.is_none() {
                     self.windows.guild_open = false;
@@ -760,6 +794,7 @@ impl Game {
         self.trade_request = None;
         self.guild = None;
         self.guild_invite = None;
+        self.mail.clear();
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

@@ -337,6 +337,16 @@ impl Accounts {
         Ok(())
     }
 
+    /// Account id and proper name of a living character, by name.
+    pub fn find_character(&self, name: &str) -> Option<(u32, String)> {
+        self.store.accounts.iter().find_map(|a| {
+            a.characters
+                .iter()
+                .find(|c| !c.deleted && c.name.eq_ignore_ascii_case(name))
+                .map(|c| (a.id, c.name.clone()))
+        })
+    }
+
     pub fn character(&self, account: u32, id: u32) -> Option<&CharacterRecord> {
         self.account(account)?
             .characters

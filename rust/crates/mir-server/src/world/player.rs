@@ -104,6 +104,7 @@ impl World {
                 brown: false,
                 guild: None,
                 guild_invite: None,
+                mail_time: 0,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -249,6 +250,7 @@ impl World {
         self.send_to(id, ServerMessage::AttackMode { mode });
         self.refresh_safe_zone(id);
         self.guild_login(id);
+        self.mail_login(id);
         self.refresh_appearance(id);
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });

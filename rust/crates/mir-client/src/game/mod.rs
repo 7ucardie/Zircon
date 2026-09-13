@@ -106,6 +106,8 @@ pub struct Game {
     /// Zircon `AttackMode` (`attack_mode::*`), cycled with H.
     attack_mode: u8,
     guild: Option<mir_proto::GuildSummary>,
+    /// Mailbox (Zircon `MailList`), newest last.
+    mail: Vec<mir_proto::MailSummary>,
     /// Pending guild invite: (who, guild).
     guild_invite: Option<(String, String)>,
     /// Pending invite: who asked.
@@ -236,6 +238,7 @@ impl Game {
             allow_group: false,
             attack_mode: 0,
             guild: None,
+            mail: Vec::new(),
             guild_invite: None,
             group_invite: None,
             auto_group_done: false,

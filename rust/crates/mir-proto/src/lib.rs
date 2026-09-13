@@ -397,6 +397,20 @@ pub struct GuildMemberSummary {
     pub online: bool,
 }
 
+/// A mail as the client sees it (Zircon `ClientMailInfo`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MailSummary {
+    pub index: u32,
+    pub opened: bool,
+    /// Unix seconds.
+    pub date: u64,
+    pub sender: String,
+    pub subject: String,
+    pub message: String,
+    pub gold: u64,
+    pub items: Vec<ItemInstance>,
+}
+
 /// Zircon `MessageType` (chat line colour and routing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChatKind {
@@ -1417,6 +1431,26 @@ pub enum ClientMessage {
         tax: i32,
     },
     GuildIncreaseMember,
+    /// Send mail to a character by name (offline is fine); items are
+    /// (grid, slot, count) cells, at most 5, from a safe zone.
+    MailSend {
+        recipient: String,
+        subject: String,
+        message: String,
+        gold: u64,
+        items: Vec<(Grid, u8, u32)>,
+    },
+    MailOpened {
+        index: u32,
+    },
+    /// Take an attachment (slot 255 = the gold).
+    MailGetItem {
+        index: u32,
+        slot: u8,
+    },
+    MailDelete {
+        index: u32,
+    },
     /// Ask the player in front (facing you) to trade.
     TradeRequest,
     TradeResponse {
@@ -1708,6 +1742,17 @@ pub enum ServerMessage {
     },
     GuildMemberOffline {
         index: u32,
+    },
+    /// The mailbox on entry.
+    MailList(Vec<MailSummary>),
+    MailNew(MailSummary),
+    MailDelete {
+        index: u32,
+    },
+    /// An attachment was taken (slot 255 = the gold).
+    MailItemDelete {
+        index: u32,
+        slot: u8,
     },
     /// Account storage on entry.
     Storage {

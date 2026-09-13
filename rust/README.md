@@ -107,6 +107,14 @@ the guild and rank show under the player's name, and the Guild attack
 mode spares guild mates. Guilds persist in `guilds.json` under the data
 directory; see `docs/research/guilds.md` for the rest of the C# rules.
 
+Mail (`M`) works like Zircon's: compose to a character name (offline is
+fine) with a subject, message, gold and up to five bag items (right-click
+them while composing; items need a safe zone), one mail per ten seconds.
+Mail arrives live or waits in the account's box in `mail.json`; unread
+mails show yellow, attachments are taken one by one in a safe zone with
+bag room, and a mail can be deleted once it is empty. Recipients' boxes
+hold fifty attachments.
+
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's

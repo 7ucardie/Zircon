@@ -306,6 +306,8 @@ pub struct PlayerData {
     /// Guild id (resolved from `guilds.json` on entry).
     pub guild: Option<u32>,
     pub guild_invite: Option<ObjectId>,
+    /// Zircon `MailTime`: no mail before this.
+    pub mail_time: u64,
     pub storage_size: u32,
     pub trade: Option<trade::Trade>,
     /// Who asked us to trade (Zircon `TradePartnerRequest`).
@@ -666,6 +668,7 @@ pub struct World {
     /// Groups by id; the first member leads.
     groups: BTreeMap<u32, Vec<ObjectId>>,
     pub guild_store: guilds::GuildStore,
+    pub mail_store: mail::MailStore,
     next_group: u32,
     last_spawn_check: u64,
     force_map: Option<String>,
@@ -682,6 +685,7 @@ mod inventory;
 mod magic;
 mod magic_wave4;
 mod magic_wave5;
+mod mail;
 mod maps;
 mod monster_ai;
 mod movement;
@@ -764,6 +768,7 @@ impl World {
             outgoing: Vec::new(),
             groups: BTreeMap::new(),
             guild_store: guilds::GuildStore::default(),
+            mail_store: mail::MailStore::default(),
             next_group: 1,
             last_spawn_check: 0,
             force_map,
@@ -774,6 +779,7 @@ impl World {
     pub fn set_store_dir(&mut self, dir: &Path) {
         self.npc_store = NpcStore::load(dir.join("npc_lists.json"));
         self.guild_store = guilds::GuildStore::load(dir.join("guilds.json"));
+        self.mail_store = mail::MailStore::load(dir.join("mail.json"));
     }
 
     /// Objects on a map, in insertion order (empty when the map is not loaded).

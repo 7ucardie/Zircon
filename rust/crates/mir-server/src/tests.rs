@@ -2038,3 +2038,79 @@ fn guild_create_invite_notice_kick_and_leave() {
     assert!(world.guild_store.guilds.is_empty());
     assert!(world.objects[&alice].player().unwrap().guild.is_none());
 }
+
+#[test]
+fn mail_send_take_items_and_delete() {
+    use mir_proto::Grid;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let bob = world.add_player(2, 2, &test_character("Bob")).unwrap();
+    world.tick(0);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::MailList(l) if l.is_empty())));
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .unwrap()
+        .index;
+    world.test_give_item(alice, potion, 4);
+    world.test_set_gold(alice, 1000);
+    let slot = world.test_slot_of(alice, potion).unwrap();
+    // Self mail and unknown recipients are refused; Bob gets the mail live.
+    world.mail_send(
+        alice,
+        Some((1, "Alice".into())),
+        "hi".into(),
+        "me".into(),
+        0,
+        vec![],
+    );
+    world.mail_send(alice, None, "hi".into(), "nobody".into(), 0, vec![]);
+    assert!(world.mail_store.boxes.values().all(|b| b.is_empty()));
+    world.tick(20_000);
+    drain(&mut world);
+    world.mail_send(
+        alice,
+        Some((2, "Bob".into())),
+        "Potions".into(),
+        "Three for you".into(),
+        250,
+        vec![(Grid::Inventory, slot, 3)],
+    );
+    assert_eq!(world.test_gold(alice), 750);
+    assert_eq!(world.test_bag(alice).1, vec![(potion, 1)]);
+    let msgs = drain(&mut world);
+    let mail = msgs
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::MailNew(m) => Some(m.clone()),
+            _ => None,
+        })
+        .expect("bob's new mail");
+    assert_eq!(
+        (mail.sender.as_str(), mail.gold, mail.items[0].count),
+        ("Alice", 250, 3)
+    );
+    // Bob opens it, cannot delete it with items inside, takes gold and
+    // items (the start is a safe zone), then deletes it.
+    world.mail_opened(bob, mail.index);
+    world.mail_delete(bob, mail.index);
+    assert_eq!(world.mail_store.boxes[&2].len(), 1);
+    world.mail_get_item(bob, mail.index, 255); // the gold pseudo slot
+    assert_eq!(world.test_gold(bob), 250);
+    world.mail_get_item(bob, mail.index, 0);
+    assert_eq!(world.test_bag(bob).1, vec![(potion, 3)]);
+    world.mail_delete(bob, mail.index);
+    assert!(world.mail_store.boxes[&2].is_empty());
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::MailDelete { index } if *index == mail.index)));
+}

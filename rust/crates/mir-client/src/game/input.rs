@@ -78,6 +78,7 @@ impl Game {
                 'p' => self.windows.group_open = !self.windows.group_open,
                 'b' => self.windows.storage_open = !self.windows.storage_open,
                 'g' => self.windows.guild_open = !self.windows.guild_open,
+                'm' => self.windows.mail_open = !self.windows.mail_open,
                 'h' => {
                     if let Some(c) = conn {
                         c.send(ClientMessage::AttackMode {
@@ -111,6 +112,7 @@ impl Game {
             self.windows.group_open = false;
             self.windows.storage_open = false;
             self.windows.guild_open = false;
+            self.windows.mail_open = false;
             if self.trade.is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::TradeClose);
