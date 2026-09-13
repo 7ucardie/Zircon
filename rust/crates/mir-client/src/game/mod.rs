@@ -105,6 +105,9 @@ pub struct Game {
     allow_group: bool,
     /// Zircon `AttackMode` (`attack_mode::*`), cycled with H.
     attack_mode: u8,
+    guild: Option<mir_proto::GuildSummary>,
+    /// Pending guild invite: (who, guild).
+    guild_invite: Option<(String, String)>,
     /// Pending invite: who asked.
     group_invite: Option<String>,
     auto_group_done: bool,
@@ -232,6 +235,8 @@ impl Game {
             group: Vec::new(),
             allow_group: false,
             attack_mode: 0,
+            guild: None,
+            guild_invite: None,
             group_invite: None,
             auto_group_done: false,
             toggles: HashSet::new(),

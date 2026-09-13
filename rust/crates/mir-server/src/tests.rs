@@ -1929,3 +1929,112 @@ fn pvp_attack_modes_brown_and_pk_points() {
     assert!(world.objects[&guard].hostile_to(&world.objects[&alice]));
     assert!(!world.objects[&guard].hostile_to(&world.objects[&bob]));
 }
+
+#[test]
+fn guild_create_invite_notice_kick_and_leave() {
+    use mir_proto::{guild_permission, ChatKind};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    // Guild membership is keyed by character id: give Bob his own.
+    let mut bob_rec = test_character("Bob");
+    bob_rec.id = 2;
+    let bob = world.add_player(2, 2, &bob_rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let conn_of = |world: &World, id: ObjectId| world.objects[&id].player().unwrap().conn;
+    let (ca, cb) = (conn_of(&world, alice), conn_of(&world, bob));
+    let to = |world: &mut World| -> Vec<(world::ConnId, ServerMessage)> {
+        world
+            .outgoing
+            .drain(..)
+            .map(|o| match o {
+                Outgoing::To(c, m) => (c, m),
+            })
+            .collect()
+    };
+    // Creation needs 7.5M + 1M per member slot; bad names are refused.
+    world.guild_create(alice, "Bad Name!".into(), 5);
+    assert!(world.objects[&alice].player().unwrap().guild.is_none());
+    world.test_set_gold(alice, 20_000_000);
+    world.guild_create(alice, "Knights".into(), 5);
+    assert_eq!(world.test_gold(alice), 20_000_000 - 7_500_000 - 5_000_000);
+    let out = to(&mut world);
+    let info = out.iter().find_map(|(c, m)| match m {
+        ServerMessage::GuildInfo(Some(g)) if *c == ca => Some(g.clone()),
+        _ => None,
+    });
+    let info = info.expect("guild info");
+    assert_eq!(info.name, "Knights");
+    assert_eq!(info.members[0].permission, guild_permission::LEADER);
+    assert_eq!(info.user_index, 1);
+    world.guild_create(bob, "Knights".into(), 1);
+    assert!(world.objects[&bob].player().unwrap().guild.is_none());
+
+    // Invite and accept: Bob joins with the default rank.
+    world.guild_invite(alice, "bob".into());
+    let out = to(&mut world);
+    assert!(out.iter().any(|(c, m)| *c == cb
+        && matches!(m, ServerMessage::GuildInvite { from, guild } if from == "Alice" && guild == "Knights")));
+    world.guild_response(bob, true);
+    let out = to(&mut world);
+    let bob_info = out
+        .iter()
+        .find_map(|(c, m)| match m {
+            ServerMessage::GuildInfo(Some(g)) if *c == cb => Some(g.clone()),
+            _ => None,
+        })
+        .expect("bob's guild info");
+    assert_eq!(bob_info.members.len(), 2);
+    assert_eq!(bob_info.members[1].rank, "New Member");
+    assert!(bob_info.members.iter().all(|m| m.online));
+    world.tick(1);
+    let out = to(&mut world);
+    assert!(out.iter().any(|(_, m)| matches!(m,
+        ServerMessage::ObjectAppearance { id, appearance: Appearance::Player { guild, guild_rank, .. } }
+            if *id == bob && guild == "Knights" && guild_rank == "New Member")));
+
+    // Guild chat reaches both; the notice needs the EditNotice permission.
+    world.chat(bob, "!~hail".into());
+    let out = to(&mut world);
+    assert_eq!(
+        out.iter()
+            .filter(|(_, m)| matches!(
+                m,
+                ServerMessage::Say {
+                    kind: ChatKind::Guild,
+                    ..
+                }
+            ))
+            .count(),
+        2
+    );
+    world.guild_edit_notice(bob, "Bob was here".into());
+    assert_eq!(world.guild_store.guilds[0].notice, "");
+    world.guild_edit_member(alice, 2, "Officer".into(), guild_permission::EDIT_NOTICE);
+    world.guild_edit_notice(bob, "Bob was here".into());
+    assert_eq!(world.guild_store.guilds[0].notice, "Bob was here");
+    drain(&mut world);
+
+    // Tax on picked-up gold feeds the funds.
+    world.guild_tax(alice, 10);
+    assert_eq!(world.guild_tax_gold_test(bob, 1000), 900);
+    assert_eq!(world.guild_store.guilds[0].funds, 100);
+
+    // Only the leader kicks; the leader cannot leave while alone in charge.
+    world.guild_kick(bob, 1);
+    assert_eq!(world.guild_store.guilds[0].members.len(), 2);
+    world.guild_leave(alice);
+    assert_eq!(world.guild_store.guilds[0].members.len(), 2);
+    world.guild_kick(alice, 2);
+    let out = to(&mut world);
+    assert!(out
+        .iter()
+        .any(|(c, m)| *c == cb && matches!(m, ServerMessage::GuildInfo(None))));
+    assert!(world.objects[&bob].player().unwrap().guild.is_none());
+    world.guild_leave(alice);
+    assert!(world.guild_store.guilds.is_empty());
+    assert!(world.objects[&alice].player().unwrap().guild.is_none());
+}

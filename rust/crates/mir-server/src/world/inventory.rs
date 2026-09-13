@@ -356,9 +356,11 @@ impl World {
                 continue;
             };
             if item.info == self.data.gold_item {
+                // The guild's tax comes off the top (Zircon CalculateGuildTax).
+                let gold = self.guild_tax_gold(id, item.count as u64);
                 let o = self.objects.get_mut(&id).unwrap();
                 let p = o.player_mut().unwrap();
-                p.bag.gold += item.count as u64;
+                p.bag.gold += gold;
                 self.remove_object(cid);
                 self.send_gold(id);
                 self.send_to(

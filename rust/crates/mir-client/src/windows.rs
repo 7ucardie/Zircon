@@ -132,6 +132,13 @@ pub struct WindowState {
     trade_gold: Option<TextBox>,
     trade_buttons: Vec<Button>,
     request_buttons: Vec<Button>,
+    /// Guild window (G): create, members, notice, invite, kick, leave.
+    pub guild_open: bool,
+    guild_name: Option<TextBox>,
+    guild_notice: Option<TextBox>,
+    guild_buttons: Vec<Button>,
+    guild_kick: Vec<Button>,
+    guild_invite_buttons: Vec<Button>,
     /// Group window (P): members, invite box, allow toggle.
     pub group_open: bool,
     group_name: Option<TextBox>,
@@ -160,6 +167,9 @@ impl WindowState {
     /// True while a window text box has keyboard focus.
     pub fn typing(&self) -> bool {
         (self.group_open && self.group_name.as_ref().is_some_and(|b| b.focused))
+            || (self.guild_open
+                && (self.guild_name.as_ref().is_some_and(|b| b.focused)
+                    || self.guild_notice.as_ref().is_some_and(|b| b.focused)))
             || self.trade_gold.as_ref().is_some_and(|b| b.focused)
     }
 }
@@ -175,6 +185,12 @@ impl Default for WindowState {
             trade_gold: None,
             trade_buttons: Vec::new(),
             request_buttons: Vec::new(),
+            guild_open: false,
+            guild_name: None,
+            guild_notice: None,
+            guild_buttons: Vec::new(),
+            guild_kick: Vec::new(),
+            guild_invite_buttons: Vec::new(),
             group_open: false,
             group_name: None,
             group_buttons: Vec::new(),
@@ -219,6 +235,8 @@ pub struct Bag<'a> {
     pub storage: &'a [Option<ItemInstance>],
     pub trade: Option<&'a TradeState>,
     pub trade_request: Option<&'a str>,
+    pub guild: Option<&'a mir_proto::GuildSummary>,
+    pub guild_invite: Option<(&'a str, &'a str)>,
 }
 
 /// An open trade as the client sees it.
@@ -692,6 +710,185 @@ impl WindowState {
             b.pos = (win.x + 160.0, win.y + 66.0);
             if b.update(c) {
                 out.push(ClientMessage::TradeResponse { accept: false });
+            }
+        }
+
+        // ---- Guild (G) ----
+        if self.guild_open {
+            let win = Rect::new(width as f32 - 340.0 - 10.0, 30.0, 340.0, 400.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            let title = bag
+                .guild
+                .map(|g| format!("Guild: {}", g.name))
+                .unwrap_or_else(|| "Guild".into());
+            let closed = c.window(win, &title, true);
+            let name_box = self
+                .guild_name
+                .get_or_insert_with(|| TextBox::new(Rect::new(0.0, 0.0, 150.0, 22.0), 15));
+            if self.guild_buttons.is_empty() {
+                self.guild_buttons = vec![
+                    Button::default_style(0.0, 0.0, 70.0, "Create"),
+                    Button::default_style(0.0, 0.0, 60.0, "Invite"),
+                    Button::default_style(0.0, 0.0, 60.0, "Leave"),
+                    Button::default_style(0.0, 0.0, 80.0, "Set notice"),
+                ];
+            }
+            let fy = win.y + win.h - 3.0 - 42.0 + 8.0;
+            match bag.guild {
+                None => {
+                    c.text.draw(
+                        "You are not in a guild. Founding one costs",
+                        12,
+                        win.x + 16.0,
+                        win.y + 40.0,
+                        [220, 220, 220, 255],
+                    );
+                    c.text.draw(
+                        "7,500,000 gold plus 1,000,000 per member slot (10 here).",
+                        12,
+                        win.x + 16.0,
+                        win.y + 58.0,
+                        [220, 220, 220, 255],
+                    );
+                    name_box.rect = Rect::new(win.x + 16.0, fy + 2.0, 150.0, 22.0);
+                    let submitted = name_box.update(c);
+                    let name = name_box.text.trim().to_string();
+                    let b = &mut self.guild_buttons[0];
+                    b.pos = (win.x + 176.0, fy);
+                    b.enabled = !name.is_empty();
+                    if (b.update(c) || submitted) && b.enabled {
+                        out.push(ClientMessage::GuildCreate { name, members: 10 });
+                    }
+                }
+                Some(g) => {
+                    let me = g.members.iter().find(|m| m.index == g.user_index);
+                    let leader = me.is_some_and(|m| m.permission == -1);
+                    let can_invite =
+                        me.is_some_and(|m| m.permission == -1 || m.permission & 2 != 0);
+                    let can_notice =
+                        me.is_some_and(|m| m.permission == -1 || m.permission & 1 != 0);
+                    c.text.draw(
+                        &format!(
+                            "Members {}/{}   Funds {}   Tax {}%",
+                            g.members.len(),
+                            g.member_limit,
+                            g.funds,
+                            g.tax
+                        ),
+                        11,
+                        win.x + 16.0,
+                        win.y + 38.0,
+                        [255, 255, 200, 255],
+                    );
+                    let mut y = win.y + 56.0;
+                    for line in wrap_text(c, &g.notice, 300.0, 11).into_iter().take(3) {
+                        c.text
+                            .draw(&line, 11, win.x + 16.0, y, [200, 200, 255, 255]);
+                        y += 14.0;
+                    }
+                    y = win.y + 104.0;
+                    if self.guild_kick.len() != g.members.len() {
+                        self.guild_kick = g
+                            .members
+                            .iter()
+                            .map(|_| Button::default_style(0.0, 0.0, 50.0, "Kick"))
+                            .collect();
+                    }
+                    for (i, m) in g.members.iter().enumerate().take(11) {
+                        let col = if m.index == g.user_index {
+                            [255, 255, 0, 255]
+                        } else if m.online {
+                            [255, 255, 255, 255]
+                        } else {
+                            [140, 140, 140, 255]
+                        };
+                        c.text.draw(
+                            &format!("{} - {}", m.name, m.rank),
+                            11,
+                            win.x + 16.0,
+                            y,
+                            col,
+                        );
+                        if leader && m.index != g.user_index {
+                            let b = &mut self.guild_kick[i];
+                            b.pos = (win.x + win.w - 66.0, y - 2.0);
+                            if b.update(c) {
+                                out.push(ClientMessage::GuildKickMember { index: m.index });
+                            }
+                        }
+                        y += 18.0;
+                    }
+                    // Footer: invite box, Leave, and the notice box above.
+                    let notice_box = self
+                        .guild_notice
+                        .get_or_insert_with(|| TextBox::new(Rect::new(0.0, 0.0, 220.0, 22.0), 200));
+                    let ny = win.y + win.h - 3.0 - 42.0 - 30.0;
+                    notice_box.rect = Rect::new(win.x + 16.0, ny, 220.0, 22.0);
+                    let notice_submitted = notice_box.update(c);
+                    let b = &mut self.guild_buttons[3];
+                    b.pos = (win.x + 244.0, ny - 2.0);
+                    b.enabled = can_notice;
+                    if (b.update(c) || notice_submitted) && b.enabled {
+                        out.push(ClientMessage::GuildEditNotice {
+                            notice: notice_box.text.clone(),
+                        });
+                    }
+                    name_box.rect = Rect::new(win.x + 16.0, fy + 2.0, 150.0, 22.0);
+                    let submitted = name_box.update(c);
+                    let name = name_box.text.trim().to_string();
+                    let b = &mut self.guild_buttons[1];
+                    b.pos = (win.x + 176.0, fy);
+                    b.enabled = can_invite && !name.is_empty();
+                    if (b.update(c) || submitted) && b.enabled {
+                        out.push(ClientMessage::GuildInviteMember { name });
+                        if let Some(nb) = &mut self.guild_name {
+                            nb.text.clear();
+                        }
+                    }
+                    let b = &mut self.guild_buttons[2];
+                    b.pos = (win.x + 244.0, fy);
+                    b.enabled = true;
+                    if b.update(c) {
+                        out.push(ClientMessage::GuildLeave);
+                    }
+                }
+            }
+            if closed {
+                self.guild_open = false;
+            }
+        }
+
+        // ---- Guild invite prompt ----
+        if let Some((from, guild)) = bag.guild_invite {
+            let win = Rect::new(width as f32 / 2.0 - 160.0, 360.0, 320.0, 100.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, "Guild invite", false);
+            c.text.draw(
+                &format!("{from} invites you to join {guild}."),
+                12,
+                win.x + 16.0,
+                win.y + 40.0,
+                [255, 255, 255, 255],
+            );
+            if self.guild_invite_buttons.is_empty() {
+                self.guild_invite_buttons = vec![
+                    Button::default_style(0.0, 0.0, 80.0, "Accept"),
+                    Button::default_style(0.0, 0.0, 80.0, "Decline"),
+                ];
+            }
+            let b = &mut self.guild_invite_buttons[0];
+            b.pos = (win.x + 70.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::GuildResponse { accept: true });
+            }
+            let b = &mut self.guild_invite_buttons[1];
+            b.pos = (win.x + 170.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::GuildResponse { accept: false });
             }
         }
 

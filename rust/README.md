@@ -95,6 +95,18 @@ for a minute; killing one adds 50 PK points (yellow name at 50, red at
 200, one point fades per minute) and red names are attacked by guards.
 See `docs/research/pvp.md` for what the C# does beyond that.
 
+Guilds (`G`) follow Zircon's `PlayerObject.Social`: founding one costs
+7,500,000 gold plus 1,000,000 per member slot (the window buys ten) and
+needs a unique 2-15 character alphanumeric name; the founder is "Guild
+Leader" with every permission, joiners get the default rank "New Member".
+Members with the AddMember permission invite by name (the invitee gets a
+prompt), leaders kick, set ranks and permissions, the tax (a cut of every
+gold pickup that feeds the guild funds) and buy member slots from the
+funds; anyone with EditNotice sets the notice. `!~text` is guild chat,
+the guild and rank show under the player's name, and the Guild attack
+mode spares guild mates. Guilds persist in `guilds.json` under the data
+directory; see `docs/research/guilds.md` for the rest of the C# rules.
+
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's

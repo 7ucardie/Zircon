@@ -37,6 +37,8 @@ impl Game {
                         helmet: 0,
                         shield: None,
                         name_color: 0,
+                        guild: String::new(),
+                        guild_rank: String::new(),
                     },
                     location,
                     direction,
@@ -620,6 +622,55 @@ impl Game {
                     [255, 200, 120, 255],
                 );
             }
+            ServerMessage::GuildInfo(info) => {
+                if self.guild.is_some() && info.is_none() {
+                    self.windows.guild_open = false;
+                }
+                self.guild = info;
+            }
+            ServerMessage::GuildNoticeChanged { notice } => {
+                if let Some(g) = &mut self.guild {
+                    g.notice = notice;
+                }
+                self.say_colored(
+                    "The guild notice changed.".into(),
+                    now,
+                    [255, 200, 255, 255],
+                );
+            }
+            ServerMessage::GuildUpdate {
+                member_limit,
+                funds,
+                tax,
+            } => {
+                if let Some(g) = &mut self.guild {
+                    g.member_limit = member_limit;
+                    g.funds = funds;
+                    g.tax = tax;
+                }
+            }
+            ServerMessage::GuildKick { index } => {
+                if let Some(g) = &mut self.guild {
+                    g.members.retain(|m| m.index != index);
+                }
+            }
+            ServerMessage::GuildMemberOffline { index } => {
+                if let Some(m) = self
+                    .guild
+                    .as_mut()
+                    .and_then(|g| g.members.iter_mut().find(|m| m.index == index))
+                {
+                    m.online = false;
+                }
+            }
+            ServerMessage::GuildInvite { from, guild } => {
+                self.say_colored(
+                    format!("{from} invites you to the guild {guild} (G to answer)."),
+                    now,
+                    [255, 200, 255, 255],
+                );
+                self.guild_invite = Some((from, guild));
+            }
             ServerMessage::GroupSwitch { allow } => self.allow_group = allow,
             ServerMessage::GroupInvite { from } => {
                 self.say_colored(
@@ -707,6 +758,8 @@ impl Game {
         self.auto_group_done = false;
         self.trade = None;
         self.trade_request = None;
+        self.guild = None;
+        self.guild_invite = None;
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

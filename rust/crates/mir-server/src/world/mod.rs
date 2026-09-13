@@ -303,6 +303,9 @@ pub struct PlayerData {
     /// Zircon brown buff: end time and current state (kept in sync each tick).
     pub brown_until: u64,
     pub brown: bool,
+    /// Guild id (resolved from `guilds.json` on entry).
+    pub guild: Option<u32>,
+    pub guild_invite: Option<ObjectId>,
     pub storage_size: u32,
     pub trade: Option<trade::Trade>,
     /// Who asked us to trade (Zircon `TradePartnerRequest`).
@@ -514,10 +517,10 @@ impl Object {
             return match me.attack_mode {
                 mir_proto::attack_mode::PEACE => false,
                 mir_proto::attack_mode::GROUP => me.group.is_none() || me.group != them.group,
+                mir_proto::attack_mode::GUILD => me.guild.is_none() || me.guild != them.guild,
                 mir_proto::attack_mode::WAR_RED_BROWN => {
                     them.brown || them.pk_points >= pvp::RED_POINT
                 }
-                // Guild mode: no guilds yet, so everyone is an outsider.
                 _ => true,
             };
         }
@@ -662,6 +665,7 @@ pub struct World {
     pub outgoing: Vec<Outgoing>,
     /// Groups by id; the first member leads.
     groups: BTreeMap<u32, Vec<ObjectId>>,
+    pub guild_store: guilds::GuildStore,
     next_group: u32,
     last_spawn_check: u64,
     force_map: Option<String>,
@@ -673,6 +677,7 @@ mod buffs;
 mod chat;
 mod combat;
 mod groups;
+mod guilds;
 mod inventory;
 mod magic;
 mod magic_wave4;
@@ -758,6 +763,7 @@ impl World {
             events: Vec::new(),
             outgoing: Vec::new(),
             groups: BTreeMap::new(),
+            guild_store: guilds::GuildStore::default(),
             next_group: 1,
             last_spawn_check: 0,
             force_map,
@@ -767,6 +773,7 @@ impl World {
     /// Persist NPC lists/values under `dir` (`npc_lists.json`).
     pub fn set_store_dir(&mut self, dir: &Path) {
         self.npc_store = NpcStore::load(dir.join("npc_lists.json"));
+        self.guild_store = guilds::GuildStore::load(dir.join("guilds.json"));
     }
 
     /// Objects on a map, in insertion order (empty when the map is not loaded).

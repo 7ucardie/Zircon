@@ -66,6 +66,15 @@ impl World {
             for m in members {
                 self.send_to(m, say(None, ChatKind::Group, line.clone()));
             }
+        } else if let Some(rest) = text.strip_prefix("!~") {
+            let members = self.guild_members_online(id);
+            if members.is_empty() {
+                return;
+            }
+            let line = format!("{name}: {}", rest.trim_start());
+            for m in members {
+                self.send_to(m, say(None, ChatKind::Guild, line.clone()));
+            }
         } else if let Some(rest) = text.strip_prefix("!@") {
             let p = self.objects[&id].player().unwrap();
             if self.now < p.global_shout_time {

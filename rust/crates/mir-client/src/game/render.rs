@@ -346,6 +346,20 @@ impl Game {
                     name_y as f32,
                     name_color,
                 );
+                if let Appearance::Player {
+                    guild, guild_rank, ..
+                } = &o.appearance
+                {
+                    if !guild.is_empty() {
+                        text.draw_centered(
+                            &format!("{guild} [{guild_rank}]"),
+                            10,
+                            dx as f32 + 24.0,
+                            name_y as f32 + 13.0,
+                            [200, 200, 255, 255],
+                        );
+                    }
+                }
                 let show_bar = !o.is_player()
                     && !o.dead
                     && (my_pet || now < o.health_time || self.hovered == Some(id));

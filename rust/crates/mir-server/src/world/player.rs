@@ -102,6 +102,8 @@ impl World {
                 pk_tick: if rec.pk_points > 0 { 1 } else { 0 },
                 brown_until: 0,
                 brown: false,
+                guild: None,
+                guild_invite: None,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -142,6 +144,8 @@ impl World {
                 } else {
                     0
                 },
+                guild: String::new(),
+                guild_rank: String::new(),
             },
             visible: HashSet::new(),
             poisons: Vec::new(),
@@ -244,6 +248,8 @@ impl World {
         let mode = self.objects[&id].player().unwrap().attack_mode;
         self.send_to(id, ServerMessage::AttackMode { mode });
         self.refresh_safe_zone(id);
+        self.guild_login(id);
+        self.refresh_appearance(id);
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });
         self.send_magics(id);
@@ -684,6 +690,8 @@ impl World {
             helmet,
             shield,
             name_color: pvp::name_color(p),
+            guild: self.guild_tag(p).0,
+            guild_rank: self.guild_tag(p).1,
         };
         if o.appearance != appearance {
             let o = self.objects.get_mut(&id).unwrap();

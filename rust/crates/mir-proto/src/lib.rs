@@ -175,6 +175,9 @@ pub enum Appearance {
         shield: Option<u16>,
         /// Name colour: 0 white, 1 yellow (PK points), 2 brown, 3 red.
         name_color: u8,
+        /// Guild name and rank shown under the name ("" when none).
+        guild: String,
+        guild_rank: String,
     },
     Monster {
         name: String,
@@ -359,6 +362,39 @@ pub mod attack_mode {
     pub const GUILD: u8 = 2;
     pub const WAR_RED_BROWN: u8 = 3;
     pub const ALL: u8 = 4;
+}
+
+/// Zircon `GuildPermission` bits (`LEADER` has every permission).
+pub mod guild_permission {
+    pub const NONE: i32 = 0;
+    pub const LEADER: i32 = -1;
+    pub const EDIT_NOTICE: i32 = 1;
+    pub const ADD_MEMBER: i32 = 2;
+    pub const REMOVE_MEMBER: i32 = 4;
+    pub const STORAGE: i32 = 8;
+}
+
+/// A guild as its members see it (Zircon `ClientGuildInfo`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GuildSummary {
+    pub name: String,
+    pub notice: String,
+    pub member_limit: i32,
+    pub funds: i64,
+    pub tax: i32,
+    pub default_rank: String,
+    pub default_permission: i32,
+    pub user_index: u32,
+    pub members: Vec<GuildMemberSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GuildMemberSummary {
+    pub index: u32,
+    pub name: String,
+    pub rank: String,
+    pub permission: i32,
+    pub online: bool,
 }
 
 /// Zircon `MessageType` (chat line colour and routing).
@@ -1353,6 +1389,34 @@ pub enum ClientMessage {
     AttackMode {
         mode: u8,
     },
+    /// Found a guild: 7.5M gold plus 1M per member slot.
+    GuildCreate {
+        name: String,
+        members: i32,
+    },
+    GuildEditNotice {
+        notice: String,
+    },
+    /// Leader edits a member's rank/permission (index 0 = defaults).
+    GuildEditMember {
+        index: u32,
+        rank: String,
+        permission: i32,
+    },
+    GuildInviteMember {
+        name: String,
+    },
+    GuildKickMember {
+        index: u32,
+    },
+    GuildResponse {
+        accept: bool,
+    },
+    GuildLeave,
+    GuildTax {
+        tax: i32,
+    },
+    GuildIncreaseMember,
     /// Ask the player in front (facing you) to trade.
     TradeRequest,
     TradeResponse {
@@ -1623,6 +1687,27 @@ pub enum ServerMessage {
     },
     AttackMode {
         mode: u8,
+    },
+    /// The player's guild (None when not in one); resent after changes.
+    GuildInfo(Option<GuildSummary>),
+    GuildNoticeChanged {
+        notice: String,
+    },
+    GuildUpdate {
+        member_limit: i32,
+        funds: i64,
+        tax: i32,
+    },
+    /// A member (by index) left or was kicked.
+    GuildKick {
+        index: u32,
+    },
+    GuildInvite {
+        from: String,
+        guild: String,
+    },
+    GuildMemberOffline {
+        index: u32,
     },
     /// Account storage on entry.
     Storage {

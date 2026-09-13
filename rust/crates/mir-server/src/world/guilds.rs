@@ -1,0 +1,662 @@
+//! Guilds (Zircon `PlayerObject.Social` guild section): create for gold,
+//! invite with the AddMember permission, ranks and permissions edited by
+//! leaders, notice, tax on picked-up gold feeding the funds, member limit
+//! bought from the funds. Persisted in `guilds.json` under the data dir.
+
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+use super::*;
+use mir_proto::{guild_permission, ChatKind, GuildMemberSummary, GuildSummary};
+
+/// Zircon `Globals`: creation 7,500,000 gold plus 1,000,000 per member
+/// slot; names 2-15 alphanumerics; notice up to 4000 chars.
+pub const GUILD_CREATION_COST: u64 = 7_500_000;
+pub const GUILD_MEMBER_COST: u64 = 1_000_000;
+pub const MAX_NOTICE: usize = 4000;
+pub const MAX_MEMBER_LIMIT: i32 = 100;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildMember {
+    pub index: u32,
+    /// Character id (Zircon keys members by account).
+    pub character: u32,
+    pub name: String,
+    pub rank: String,
+    pub permission: i32,
+    pub joined: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Guild {
+    pub id: u32,
+    pub name: String,
+    pub notice: String,
+    pub member_limit: i32,
+    pub funds: i64,
+    /// Percent of picked-up gold paid to the guild.
+    pub tax: i32,
+    pub default_rank: String,
+    pub default_permission: i32,
+    pub next_index: u32,
+    pub members: Vec<GuildMember>,
+}
+
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct GuildStore {
+    pub guilds: Vec<Guild>,
+    pub next_id: u32,
+    #[serde(skip)]
+    path: Option<PathBuf>,
+}
+
+impl GuildStore {
+    pub(super) fn load(path: PathBuf) -> GuildStore {
+        let mut store: GuildStore = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
+        store.path = Some(path);
+        store
+    }
+
+    fn save(&self) {
+        if let Some(p) = &self.path {
+            if let Ok(json) = serde_json::to_vec_pretty(self) {
+                let _ = std::fs::write(p, json);
+            }
+        }
+    }
+
+    pub fn get(&self, id: u32) -> Option<&Guild> {
+        self.guilds.iter().find(|g| g.id == id)
+    }
+
+    fn get_mut(&mut self, id: u32) -> Option<&mut Guild> {
+        self.guilds.iter_mut().find(|g| g.id == id)
+    }
+
+    /// The guild a character belongs to.
+    pub fn of_character(&self, character: u32) -> Option<u32> {
+        self.guilds
+            .iter()
+            .find(|g| g.members.iter().any(|m| m.character == character))
+            .map(|g| g.id)
+    }
+}
+
+fn has(permission: i32, bit: i32) -> bool {
+    if bit == guild_permission::LEADER {
+        return permission == guild_permission::LEADER;
+    }
+    permission == guild_permission::LEADER || permission & bit != 0
+}
+
+fn valid_name(name: &str) -> bool {
+    (2..=15).contains(&name.chars().count()) && name.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+impl World {
+    fn guild_line(&mut self, id: ObjectId, text: String) {
+        self.send_to(
+            id,
+            ServerMessage::Say {
+                id: None,
+                kind: ChatKind::System,
+                text,
+            },
+        );
+    }
+
+    fn guild_of(&self, id: ObjectId) -> Option<u32> {
+        self.objects.get(&id)?.player()?.guild
+    }
+
+    fn character_of(&self, id: ObjectId) -> Option<u32> {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .map(|p| p.character)
+    }
+
+    /// Online player object for a character id.
+    fn online_character(&self, character: u32) -> Option<ObjectId> {
+        self.players()
+            .find(|o| o.player().is_some_and(|p| p.character == character))
+            .map(|o| o.id)
+    }
+
+    /// Online members of a guild.
+    fn guild_online(&self, guild: u32) -> Vec<ObjectId> {
+        self.players()
+            .filter(|o| o.player().is_some_and(|p| p.guild == Some(guild)))
+            .map(|o| o.id)
+            .collect()
+    }
+
+    fn guild_summary(&self, guild: u32, viewer: ObjectId) -> Option<GuildSummary> {
+        let g = self.guild_store.get(guild)?;
+        let me = self.character_of(viewer)?;
+        Some(GuildSummary {
+            name: g.name.clone(),
+            notice: g.notice.clone(),
+            member_limit: g.member_limit,
+            funds: g.funds,
+            tax: g.tax,
+            default_rank: g.default_rank.clone(),
+            default_permission: g.default_permission,
+            user_index: g
+                .members
+                .iter()
+                .find(|m| m.character == me)
+                .map(|m| m.index)
+                .unwrap_or(0),
+            members: g
+                .members
+                .iter()
+                .map(|m| GuildMemberSummary {
+                    index: m.index,
+                    name: m.name.clone(),
+                    rank: m.rank.clone(),
+                    permission: m.permission,
+                    online: self.online_character(m.character).is_some(),
+                })
+                .collect(),
+        })
+    }
+
+    /// Send the full guild view to every online member (after any change).
+    fn guild_broadcast_info(&mut self, guild: u32) {
+        for m in self.guild_online(guild) {
+            let info = self.guild_summary(guild, m);
+            self.send_to(m, ServerMessage::GuildInfo(info));
+        }
+    }
+
+    /// Guild name and rank shown under the player's name.
+    pub(super) fn guild_tag(&self, p: &PlayerData) -> (String, String) {
+        p.guild
+            .and_then(|g| self.guild_store.get(g))
+            .map(|g| {
+                let rank = g
+                    .members
+                    .iter()
+                    .find(|m| m.character == p.character)
+                    .map(|m| m.rank.clone())
+                    .unwrap_or_default();
+                (g.name.clone(), rank)
+            })
+            .unwrap_or_default()
+    }
+
+    /// On entry: resolve membership, send the guild view, tell the others.
+    pub(super) fn guild_login(&mut self, id: ObjectId) {
+        let Some(character) = self.character_of(id) else {
+            return;
+        };
+        let guild = self.guild_store.of_character(character);
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.guild = guild;
+        }
+        let Some(guild) = guild else {
+            return;
+        };
+        if let Some(g) = self.guild_store.get_mut(guild) {
+            // Keep the stored name current (renames are not a thing yet).
+            if let Some(m) = g.members.iter_mut().find(|m| m.character == character) {
+                m.name = self.objects[&id].player().unwrap().name.clone();
+            }
+        }
+        self.guild_broadcast_info(guild);
+    }
+
+    pub(super) fn guild_logout(&mut self, id: ObjectId) {
+        let Some(guild) = self.guild_of(id) else {
+            return;
+        };
+        let others: Vec<ObjectId> = self
+            .guild_online(guild)
+            .into_iter()
+            .filter(|m| *m != id)
+            .collect();
+        let index = self
+            .character_of(id)
+            .and_then(|c| {
+                self.guild_store
+                    .get(guild)?
+                    .members
+                    .iter()
+                    .find(|m| m.character == c)
+                    .map(|m| m.index)
+            })
+            .unwrap_or(0);
+        for m in others {
+            self.send_to(m, ServerMessage::GuildMemberOffline { index });
+        }
+        for o in self.objects.values_mut() {
+            if let Some(p) = o.player_mut() {
+                if p.guild_invite == Some(id) {
+                    p.guild_invite = None;
+                }
+            }
+        }
+    }
+
+    pub fn guild_create(&mut self, id: ObjectId, name: String, members: i32) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        if p.guild.is_some() {
+            self.guild_line(id, "You are already in a guild.".into());
+            return;
+        }
+        if !valid_name(&name) {
+            self.guild_line(id, "Guild names are 2 to 15 letters or digits.".into());
+            return;
+        }
+        if !(1..=MAX_MEMBER_LIMIT).contains(&members) {
+            return;
+        }
+        if self
+            .guild_store
+            .guilds
+            .iter()
+            .any(|g| g.name.eq_ignore_ascii_case(&name))
+        {
+            self.guild_line(id, "That guild name is taken.".into());
+            return;
+        }
+        let cost = GUILD_CREATION_COST + members as u64 * GUILD_MEMBER_COST;
+        if p.bag.gold < cost {
+            self.guild_line(id, format!("Creating that guild costs {cost} gold."));
+            return;
+        }
+        let (character, pname) = (p.character, p.name.clone());
+        let now = self.now;
+        let gid = {
+            let store = &mut self.guild_store;
+            store.next_id += 1;
+            let gid = store.next_id;
+            store.guilds.push(Guild {
+                id: gid,
+                name: name.clone(),
+                notice: String::new(),
+                member_limit: members,
+                funds: 0,
+                tax: 0,
+                default_rank: "New Member".into(),
+                default_permission: guild_permission::NONE,
+                next_index: 2,
+                members: vec![GuildMember {
+                    index: 1,
+                    character,
+                    name: pname,
+                    rank: "Guild Leader".into(),
+                    permission: guild_permission::LEADER,
+                    joined: now,
+                }],
+            });
+            store.save();
+            gid
+        };
+        let p = self
+            .objects
+            .get_mut(&id)
+            .and_then(|o| o.player_mut())
+            .unwrap();
+        p.bag.gold -= cost;
+        p.guild = Some(gid);
+        self.send_gold(id);
+        self.guild_line(id, format!("Guild {name} created."));
+        self.guild_broadcast_info(gid);
+        self.refresh_appearance(id);
+    }
+
+    fn member_permission(&self, id: ObjectId) -> Option<(u32, i32, u32)> {
+        let guild = self.guild_of(id)?;
+        let character = self.character_of(id)?;
+        let m = self
+            .guild_store
+            .get(guild)?
+            .members
+            .iter()
+            .find(|m| m.character == character)?;
+        Some((guild, m.permission, m.index))
+    }
+
+    pub fn guild_edit_notice(&mut self, id: ObjectId, notice: String) {
+        let Some((guild, permission, _)) = self.member_permission(id) else {
+            return;
+        };
+        if !has(permission, guild_permission::EDIT_NOTICE) {
+            self.guild_line(id, "You do not have permission to edit the notice.".into());
+            return;
+        }
+        if notice.chars().count() > MAX_NOTICE {
+            return;
+        }
+        if let Some(g) = self.guild_store.get_mut(guild) {
+            g.notice = notice.clone();
+        }
+        self.guild_store.save();
+        for m in self.guild_online(guild) {
+            self.send_to(
+                m,
+                ServerMessage::GuildNoticeChanged {
+                    notice: notice.clone(),
+                },
+            );
+        }
+    }
+
+    /// Leader sets a member's rank and permission (index 0 edits the
+    /// defaults for new members); nobody changes their own permission.
+    pub fn guild_edit_member(&mut self, id: ObjectId, index: u32, rank: String, permission: i32) {
+        let Some((guild, my_permission, my_index)) = self.member_permission(id) else {
+            return;
+        };
+        if !has(my_permission, guild_permission::LEADER) {
+            self.guild_line(id, "Only a guild leader can edit members.".into());
+            return;
+        }
+        if rank.is_empty() || rank.chars().count() > 15 {
+            self.guild_line(id, "Ranks are 1 to 15 characters.".into());
+            return;
+        }
+        let mut changed_character = None;
+        {
+            let Some(g) = self.guild_store.get_mut(guild) else {
+                return;
+            };
+            if index == 0 {
+                g.default_rank = rank;
+                g.default_permission = permission;
+            } else {
+                let Some(m) = g.members.iter_mut().find(|m| m.index == index) else {
+                    self.guild_line(id, "No such member.".into());
+                    return;
+                };
+                if m.index != my_index {
+                    m.permission = permission;
+                }
+                m.rank = rank;
+                changed_character = Some(m.character);
+            }
+        }
+        self.guild_store.save();
+        self.guild_broadcast_info(guild);
+        if let Some(o) = changed_character.and_then(|c| self.online_character(c)) {
+            self.refresh_appearance(o);
+        }
+    }
+
+    pub fn guild_invite(&mut self, id: ObjectId, name: String) {
+        let Some((guild, permission, _)) = self.member_permission(id) else {
+            self.guild_line(id, "You are not in a guild.".into());
+            return;
+        };
+        if !has(permission, guild_permission::ADD_MEMBER) {
+            self.guild_line(id, "You do not have permission to invite members.".into());
+            return;
+        }
+        let target = self
+            .players()
+            .find(|o| {
+                o.player()
+                    .is_some_and(|p| p.name.eq_ignore_ascii_case(&name))
+            })
+            .map(|o| o.id);
+        let Some(target) = target else {
+            self.guild_line(id, format!("Could not find {name}."));
+            return;
+        };
+        let tp = self.objects[&target].player().unwrap();
+        let tname = tp.name.clone();
+        if tp.guild.is_some() {
+            self.guild_line(id, format!("{tname} is already in a guild."));
+            return;
+        }
+        if tp.guild_invite.is_some() {
+            self.guild_line(id, format!("{tname} has already been invited to a guild."));
+            return;
+        }
+        let g = self.guild_store.get(guild).unwrap();
+        if g.members.len() as i32 >= g.member_limit {
+            self.guild_line(id, "Your guild has no room for more members.".into());
+            return;
+        }
+        let gname = g.name.clone();
+        let from = self.objects[&id].player().unwrap().name.clone();
+        self.objects
+            .get_mut(&target)
+            .and_then(|o| o.player_mut())
+            .unwrap()
+            .guild_invite = Some(id);
+        self.send_to(target, ServerMessage::GuildInvite { from, guild: gname });
+    }
+
+    pub fn guild_response(&mut self, id: ObjectId, accept: bool) {
+        let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+            return;
+        };
+        let inviter = p.guild_invite.take();
+        if !accept || p.guild.is_some() {
+            return;
+        }
+        let (character, name) = (p.character, p.name.clone());
+        let Some(inviter) = inviter else {
+            return;
+        };
+        let Some((guild, permission, _)) = self.member_permission(inviter) else {
+            return;
+        };
+        if !has(permission, guild_permission::ADD_MEMBER) {
+            return;
+        }
+        let now = self.now;
+        let (gname, ok) = {
+            let g = self.guild_store.get_mut(guild).unwrap();
+            if g.members.len() as i32 >= g.member_limit {
+                (g.name.clone(), false)
+            } else {
+                let index = g.next_index;
+                g.next_index += 1;
+                g.members.push(GuildMember {
+                    index,
+                    character,
+                    name: name.clone(),
+                    rank: g.default_rank.clone(),
+                    permission: g.default_permission,
+                    joined: now,
+                });
+                (g.name.clone(), true)
+            }
+        };
+        if !ok {
+            self.guild_line(id, format!("{gname} has no room for you."));
+            return;
+        }
+        self.guild_store.save();
+        self.objects
+            .get_mut(&id)
+            .and_then(|o| o.player_mut())
+            .unwrap()
+            .guild = Some(guild);
+        self.guild_line(id, format!("Welcome to {gname}."));
+        for m in self.guild_online(guild) {
+            if m != id {
+                self.guild_line(m, format!("{name} has joined the guild."));
+            }
+        }
+        self.guild_broadcast_info(guild);
+        self.refresh_appearance(id);
+    }
+
+    /// Leave; the last leader cannot leave a guild with other members.
+    pub fn guild_leave(&mut self, id: ObjectId) {
+        let Some((guild, permission, index)) = self.member_permission(id) else {
+            return;
+        };
+        let g = self.guild_store.get(guild).unwrap();
+        if has(permission, guild_permission::LEADER)
+            && g.members.len() > 1
+            && !g
+                .members
+                .iter()
+                .any(|m| m.index != index && has(m.permission, guild_permission::LEADER))
+        {
+            self.guild_line(id, "Appoint another leader before leaving.".into());
+            return;
+        }
+        let name = self.objects[&id].player().unwrap().name.clone();
+        self.guild_remove_member(guild, index);
+        self.guild_line(id, "You have left the guild.".into());
+        for m in self.guild_online(guild) {
+            self.guild_line(m, format!("{name} has left the guild."));
+        }
+    }
+
+    pub fn guild_kick(&mut self, id: ObjectId, index: u32) {
+        let Some((guild, permission, my_index)) = self.member_permission(id) else {
+            return;
+        };
+        if !has(permission, guild_permission::LEADER) {
+            self.guild_line(id, "Only a guild leader can kick members.".into());
+            return;
+        }
+        if index == my_index {
+            self.guild_line(id, "You cannot kick yourself.".into());
+            return;
+        }
+        let Some(m) = self
+            .guild_store
+            .get(guild)
+            .and_then(|g| g.members.iter().find(|m| m.index == index))
+            .cloned()
+        else {
+            self.guild_line(id, "No such member.".into());
+            return;
+        };
+        let kicker = self.objects[&id].player().unwrap().name.clone();
+        self.guild_remove_member(guild, index);
+        if let Some(o) = self.online_character(m.character) {
+            self.guild_line(
+                o,
+                format!("You have been kicked from the guild by {kicker}."),
+            );
+        }
+        for o in self.guild_online(guild) {
+            self.guild_line(
+                o,
+                format!("{} was kicked from the guild by {kicker}.", m.name),
+            );
+        }
+    }
+
+    fn guild_remove_member(&mut self, guild: u32, index: u32) {
+        let removed = {
+            let Some(g) = self.guild_store.get_mut(guild) else {
+                return;
+            };
+            let Some(pos) = g.members.iter().position(|m| m.index == index) else {
+                return;
+            };
+            let m = g.members.remove(pos);
+            if g.members.is_empty() {
+                self.guild_store.guilds.retain(|x| x.id != guild);
+            }
+            m
+        };
+        self.guild_store.save();
+        if let Some(o) = self.online_character(removed.character) {
+            if let Some(p) = self.objects.get_mut(&o).and_then(|x| x.player_mut()) {
+                p.guild = None;
+            }
+            self.send_to(o, ServerMessage::GuildInfo(None));
+            self.refresh_appearance(o);
+        }
+        for m in self.guild_online(guild) {
+            self.send_to(m, ServerMessage::GuildKick { index });
+        }
+    }
+
+    pub fn guild_tax(&mut self, id: ObjectId, tax: i32) {
+        let Some((guild, permission, _)) = self.member_permission(id) else {
+            return;
+        };
+        if !has(permission, guild_permission::LEADER) || !(0..=100).contains(&tax) {
+            return;
+        }
+        if let Some(g) = self.guild_store.get_mut(guild) {
+            g.tax = tax;
+        }
+        self.guild_store.save();
+        self.guild_send_update(guild);
+    }
+
+    pub fn guild_increase_member(&mut self, id: ObjectId) {
+        let Some((guild, permission, _)) = self.member_permission(id) else {
+            return;
+        };
+        if !has(permission, guild_permission::LEADER) {
+            return;
+        }
+        let Some(g) = self.guild_store.get_mut(guild) else {
+            return;
+        };
+        if g.member_limit >= MAX_MEMBER_LIMIT {
+            self.guild_line(id, "The guild is at the member limit.".into());
+            return;
+        }
+        if g.funds < GUILD_MEMBER_COST as i64 {
+            self.guild_line(id, "The guild cannot afford another member slot.".into());
+            return;
+        }
+        g.funds -= GUILD_MEMBER_COST as i64;
+        g.member_limit += 1;
+        self.guild_store.save();
+        self.guild_send_update(guild);
+    }
+
+    fn guild_send_update(&mut self, guild: u32) {
+        let Some(g) = self.guild_store.get(guild) else {
+            return;
+        };
+        let (member_limit, funds, tax) = (g.member_limit, g.funds, g.tax);
+        for m in self.guild_online(guild) {
+            self.send_to(
+                m,
+                ServerMessage::GuildUpdate {
+                    member_limit,
+                    funds,
+                    tax,
+                },
+            );
+        }
+    }
+
+    /// Zircon `CalculateGuildTax`: the guild's cut of picked-up gold.
+    pub(super) fn guild_tax_gold(&mut self, id: ObjectId, gold: u64) -> u64 {
+        let Some(guild) = self.guild_of(id) else {
+            return gold;
+        };
+        let Some(g) = self.guild_store.get_mut(guild) else {
+            return gold;
+        };
+        if g.tax <= 0 {
+            return gold;
+        }
+        let cut = gold * g.tax as u64 / 100;
+        g.funds += cut as i64;
+        self.guild_store.save();
+        gold - cut
+    }
+
+    /// Online members for guild chat (`!~`).
+    pub(super) fn guild_members_online(&self, id: ObjectId) -> Vec<ObjectId> {
+        self.guild_of(id)
+            .map(|g| self.guild_online(g))
+            .unwrap_or_default()
+    }
+}

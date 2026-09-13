@@ -544,6 +544,36 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::AttackMode { mode }) => {
             world.set_attack_mode(object, mode)
         }
+        (Stage::InGame { object, .. }, ClientMessage::GuildCreate { name, members }) => {
+            world.guild_create(object, name, members)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GuildEditNotice { notice }) => {
+            world.guild_edit_notice(object, notice)
+        }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::GuildEditMember {
+                index,
+                rank,
+                permission,
+            },
+        ) => world.guild_edit_member(object, index, rank, permission),
+        (Stage::InGame { object, .. }, ClientMessage::GuildInviteMember { name }) => {
+            world.guild_invite(object, name)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GuildKickMember { index }) => {
+            world.guild_kick(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GuildResponse { accept }) => {
+            world.guild_response(object, accept)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GuildLeave) => world.guild_leave(object),
+        (Stage::InGame { object, .. }, ClientMessage::GuildTax { tax }) => {
+            world.guild_tax(object, tax)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GuildIncreaseMember) => {
+            world.guild_increase_member(object)
+        }
         (Stage::InGame { object, .. }, ClientMessage::TradeRequest) => world.trade_request(object),
         (Stage::InGame { object, .. }, ClientMessage::TradeResponse { accept }) => {
             world.trade_response(object, accept)

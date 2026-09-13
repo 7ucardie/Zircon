@@ -297,6 +297,12 @@ impl World {
         self.in_safe_zone(map, p)
     }
 
+    /// Test helper: apply the guild tax to a gold amount.
+    #[cfg(test)]
+    pub fn guild_tax_gold_test(&mut self, id: ObjectId, gold: u64) -> u64 {
+        self.guild_tax_gold(id, gold)
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

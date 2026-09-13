@@ -39,6 +39,8 @@ impl Game {
                 storage,
                 trade,
                 trade_request,
+                guild,
+                guild_invite,
                 ..
             } = self;
             let player_name = character
@@ -93,6 +95,8 @@ impl Game {
                 storage,
                 trade: trade.as_ref(),
                 trade_request: trade_request.as_deref(),
+                guild: guild.as_ref(),
+                guild_invite: guild_invite.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -140,6 +144,10 @@ impl Game {
                     self.trade_request = None;
                     kept.push(ClientMessage::TradeResponse { accept });
                 }
+                ClientMessage::GuildResponse { accept } => {
+                    self.guild_invite = None;
+                    kept.push(ClientMessage::GuildResponse { accept });
+                }
                 ClientMessage::TradeConfirm => {
                     if let Some(t) = &mut self.trade {
                         t.confirmed = true;
@@ -155,6 +163,7 @@ impl Game {
             || self.windows.skills_open
             || self.windows.group_open
             || self.windows.storage_open
+            || self.windows.guild_open
             || self.trade.is_some()
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);
