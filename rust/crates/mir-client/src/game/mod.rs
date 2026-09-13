@@ -224,8 +224,9 @@ mod render;
 mod sound;
 
 impl Game {
-    pub fn new(assets: Assets, catalog: ItemCatalog) -> Game {
+    pub fn new(mut assets: Assets, catalog: ItemCatalog) -> Game {
         let audio = crate::audio::Audio::new(assets.root());
+        crate::anim::set_fishing_frames(assets.info(lib::M_HUM, 2000).is_some());
         Game {
             assets,
             audio,
@@ -530,6 +531,37 @@ impl Game {
                     c.send(ClientMessage::GroupResponse { accept: true });
                 }
                 self.windows.group_open = true;
+            }
+        }
+        // ZIRCON_AUTO_MINE=1 swings the pickaxe at the nearest wall (walking
+        // up to it first); ZIRCON_AUTO_FISH=1 casts at the nearest water
+        // within 4 cells and reels every bite.
+        if std::env::var_os("ZIRCON_AUTO_MINE").is_some() && now > 2000 && self.user.is_some() {
+            if let Some(wall) = self.nearest_wall(12) {
+                let user_loc = self.user().map(|u| u.location).unwrap();
+                if user_loc.distance(wall) <= 1 {
+                    if now >= self.action_time && now >= self.attack_time {
+                        self.swing_pickaxe(wall, now, conn);
+                    }
+                } else if now >= self.action_time && now >= self.move_time {
+                    self.step_toward(now, user_loc, wall, false, conn);
+                }
+            }
+        }
+        if std::env::var_os("ZIRCON_AUTO_FISH").is_some() && now > 2000 && self.user.is_some() {
+            match &mut self.fishing {
+                Some(f) => {
+                    if f.found {
+                        f.reeled = true;
+                    }
+                }
+                None => {
+                    if now >= self.action_time {
+                        if let Some(water) = self.nearest_wall(4) {
+                            self.cast_rod(water, now, conn);
+                        }
+                    }
+                }
             }
         }
         // ZIRCON_AUTO_MOUNT=1 mounts 2 s after entering the world.

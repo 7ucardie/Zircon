@@ -3239,3 +3239,36 @@ fn monster_ai_wave_three_shinsu_terracotta_and_doom_claw() {
     world.teleport(me, close);
     assert!(world.test_damage(claw, me, 500) > 0);
 }
+
+#[test]
+#[ignore]
+fn report_mine_maps() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let mines: Vec<(i32, String, String)> = world
+        .data
+        .maps
+        .values()
+        .filter(|m| m.can_mine)
+        .map(|m| (m.index, m.file_name.clone(), m.description.clone()))
+        .collect();
+    for (index, file, desc) in mines {
+        if world.ensure_map(index).is_err() {
+            continue;
+        }
+        if let Some((cell, dir)) = world.test_wall_spot(index) {
+            eprintln!(
+                "MINE {desc:?} file {file} wall spot {:?} facing {:?}",
+                cell, dir
+            );
+        }
+    }
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .map(|d| d.index);
+    eprintln!("POTION {potion:?}");
+}

@@ -273,7 +273,18 @@ level n, `ZIRCON_DEV_SKILLS=1` grants every class skill the level allows, and
 `ZIRCON_DEV_ITEMS="Bronze Helmet;Healing Potion*5"` hands out (and wears)
 the named items on entry, `ZIRCON_DEV_HORSE=2` gives a horse (Zircon
 `HorseType`), `ZIRCON_DEV_START=2:150,182` starts new characters on that
-map file and cell; client side `ZIRCON_AUTO_MOUNT=1` mounts after entry.
+map file and cell; client side `ZIRCON_AUTO_MOUNT=1` mounts after entry,
+`ZIRCON_AUTO_MINE=1` walks to the nearest wall and keeps swinging the
+pickaxe at it, `ZIRCON_AUTO_FISH=1` casts at the nearest water within four
+cells and reels every bite. Mining check: server
+`ZIRCON_DEV_LEVEL=30 ZIRCON_DEV_ITEMS="Pick Axe" ZIRCON_DEV_START=D201:227,28`
+(Deserted Mine Lv 1), client `ZIRCON_AUTO_MINE=1`. Fishing check: server
+`ZIRCON_DEV_FISHING=133` (Healing Potion as the catch), client
+`ZIRCON_DEV_FISHING=1 ZIRCON_AUTO_FISH=1` (start next to a wall, e.g.
+server `ZIRCON_DEV_START=0:168,240`); both with `ZIRCON_HEADLESS=1
+ZIRCON_SCREENSHOT=out.png:8 ZIRCON_AUTOLOGIN=... ZIRCON_AUTOSTART=...`.
+This asset pack's body libraries have no fishing frames (2000-2239), so
+the client shows the swing and standing poses while fishing.
 
 `cargo run -p mir-server -- --inspect` prints the start map, player stats and
 spawn table without opening a port. `--map <file>` forces a start map.
