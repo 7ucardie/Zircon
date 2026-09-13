@@ -310,9 +310,10 @@ everything (also used by the screenshot runs).
 Dialog pages run Zircon's checks and actions: levels, class, gold, items,
 random rolls, currencies by name (`CurrencyInfo`), named data lists and
 values (`GameNPCList`, persisted in `npc_lists.json` under `--data`) and
-rebirth at level 86 + rebirths. `NPCRequirement` rows hide an NPC from
-players who do not meet them. Weapon refining, horses, marriage, fame and
-Lua script actions wait for their systems.
+rebirth at level 86 + rebirths, weapon level/element/added stats from
+refining, horses and marriage. `NPCRequirement` rows hide an NPC from
+players who do not meet them. Fame and Lua script actions have no system
+behind them yet.
 
 ## Quests
 

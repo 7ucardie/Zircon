@@ -478,6 +478,21 @@ impl World {
         self.objects[&id].monster_ref().despawn_at
     }
 
+    /// Test helper: stamp a refine level and added stats on the equipped weapon.
+    #[cfg(test)]
+    pub fn test_set_weapon_refine(&mut self, id: ObjectId, level: i32, added: Vec<(i32, i32)>) {
+        if let Some(w) = self
+            .objects
+            .get_mut(&id)
+            .and_then(|o| o.player_mut())
+            .and_then(|p| p.bag.equipment.get_mut(mir_proto::slot::WEAPON))
+            .and_then(|w| w.as_mut())
+        {
+            w.level = level;
+            w.added = added;
+        }
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

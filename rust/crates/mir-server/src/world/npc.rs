@@ -155,13 +155,53 @@ impl World {
                 cmp(c.operator, 0, threshold)
             }
             6 => weapon.is_some() == equal,
-            // Weapon level / element / added stats: no refining yet, so the
-            // weapon counts as level 0 with no element (Zircon would throw
-            // without a weapon; treat that as failing).
-            7 => weapon.is_some() && cmp(c.operator, 0, c.int1 as i64),
-            8 => weapon.is_some() && cmp(c.operator, 0, c.int2 as i64),
-            9 => weapon.is_some() && !equal,
-            16 => weapon.is_some() && cmp(c.operator, 0, c.int1 as i64),
+            // Weapon level: successful refines (Zircon `UserItem.Level`).
+            7 => weapon.is_some_and(|w| cmp(c.operator, w.level as i64, c.int1 as i64)),
+            // Weapon element: value of the weapon's element (added stats plus
+            // the item's own), only counted when it matches `int1` (0 = any).
+            8 => weapon.is_some_and(|w| {
+                let def = self.data.items.get(&w.info);
+                let added = |stat: i32| {
+                    w.added
+                        .iter()
+                        .find(|(s, _)| *s == stat)
+                        .map(|(_, v)| *v)
+                        .unwrap_or(0)
+                };
+                let base = |stat: i32| def.map(|d| d.stat(stat)).unwrap_or(0);
+                let elem_stat = |v: i32| -> Option<i32> {
+                    (1..=7)
+                        .contains(&v)
+                        .then(|| super::refine::FIRE_ATTACK_STAT + (v - 1) * 2)
+                };
+                // The weapon's element: WeaponElement stat, else the first
+                // elemental attack stat it carries.
+                let element = elem_stat(added(super::refine::WEAPON_ELEMENT_STAT))
+                    .or_else(|| elem_stat(base(super::refine::WEAPON_ELEMENT_STAT)))
+                    .or_else(|| {
+                        (0..7)
+                            .map(|i| super::refine::FIRE_ATTACK_STAT + i * 2)
+                            .find(|s| added(*s) > 0 || base(*s) > 0)
+                    });
+                let value = match (element, elem_stat(c.int1)) {
+                    (Some(e), None) => added(e) + base(e),
+                    (Some(e), Some(want)) if e == want => added(e) + base(e),
+                    _ => 0,
+                };
+                cmp(c.operator, value as i64, c.int2 as i64)
+            }),
+            // Weapon can refine: every weapon here is refinable.
+            9 => weapon.is_some() && equal,
+            // Weapon added stat `stat1` compared with `int1`.
+            16 => weapon.is_some_and(|w| {
+                let v = w
+                    .added
+                    .iter()
+                    .find(|(s, _)| *s == c.stat1)
+                    .map(|(_, v)| *v)
+                    .unwrap_or(0);
+                cmp(c.operator, v as i64, c.int1 as i64)
+            }),
             // Horse type owned (NPC pages compare the HorseType value).
             10 => cmp(c.operator, p.horse as i64, c.int1 as i64),
             // Marriage: Equal means married; anything else means single.

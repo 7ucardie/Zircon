@@ -757,7 +757,7 @@ mod npc;
 mod player;
 mod pvp;
 mod quests;
-mod refine;
+pub mod refine;
 mod skills;
 mod spawn;
 mod spells;

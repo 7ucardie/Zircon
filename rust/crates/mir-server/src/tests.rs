@@ -2945,3 +2945,65 @@ fn monster_ai_wave_two_ghosts_curses_clouds_and_gates() {
     assert_eq!(world.test_damage(gate, me, 500), 0);
     assert!(world.test_monster_despawn_at(gate).is_some());
 }
+
+#[test]
+fn npc_weapon_checks_read_refine_level_element_and_added_stats() {
+    use crate::data::NpcCheckDef;
+    use mir_proto::Grid;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Smith")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let check = |t: i32, op: i32, i1: i32, i2: i32, stat1: i32| NpcCheckDef {
+        check_type: t,
+        operator: op,
+        string1: String::new(),
+        int1: i1,
+        int2: i2,
+        item1: 0,
+        stat1,
+        fail_page: 0,
+    };
+    let weapon = world
+        .data
+        .items
+        .values()
+        .filter(|d| d.item_type == mir_proto::item_type::WEAPON && d.required_amount <= 1)
+        .filter(|d| {
+            crate::items::can_use(d, mir_proto::Class::Warrior, mir_proto::Gender::Male, 1).is_ok()
+                && (0..7).all(|i| d.stat(world::refine::FIRE_ATTACK_STAT + i * 2) == 0)
+        })
+        .min_by_key(|d| d.index)
+        .map(|d| d.index)
+        .expect("a plain starter weapon");
+    world.test_give_item(me, weapon, 1);
+    let wslot = world.test_slot_of(me, weapon).unwrap();
+    world.item_move(me, Grid::Inventory, wslot, Grid::Equipment, 0);
+    // Fresh weapon: level 0, refinable, no element, no added stats.
+    assert!(world.test_npc_check(me, &check(7, 0, 0, 0, 0)));
+    assert!(!world.test_npc_check(me, &check(7, 5, 3, 0, 0)));
+    assert!(world.test_npc_check(me, &check(9, 0, 0, 0, 0)));
+    assert!(world.test_npc_check(me, &check(8, 0, 0, 0, 0)));
+    // Three refines, a fire element of 5 and +3 added DC (stat 2).
+    let fire = world::refine::FIRE_ATTACK_STAT;
+    world.test_set_weapon_refine(
+        me,
+        3,
+        vec![(world::refine::WEAPON_ELEMENT_STAT, 1), (fire, 5), (2, 3)],
+    );
+    assert!(world.test_npc_check(me, &check(7, 5, 3, 0, 0)));
+    assert!(
+        world.test_npc_check(me, &check(8, 5, 0, 5, 0)),
+        "any element >= 5"
+    );
+    assert!(world.test_npc_check(me, &check(8, 0, 1, 5, 0)), "fire == 5");
+    assert!(world.test_npc_check(me, &check(8, 0, 2, 0, 0)), "ice == 0");
+    assert!(
+        world.test_npc_check(me, &check(16, 0, 3, 0, 2)),
+        "added DC == 3"
+    );
+    assert!(!world.test_npc_check(me, &check(16, 4, 3, 0, 2)));
+}
