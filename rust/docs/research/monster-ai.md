@@ -8,10 +8,15 @@ added VoraciousGhost revives, the MagicWeakness debuff (a poison kind that
 zeroes MR), JinchonDevil DeathCloud fields and the two gates (regions from
 `ZIRCON_MYSTERY_SHIP_REGION` / `ZIRCON_LAIR_REGION`). Wave three added Shinsu
 mode windows, Terracotta phasing and DoomClaw's parts (the class
-percentages are damage dealt to players, not taken). Still open:
-persistent FireWall/PoisonousCloud monster fields, Purification,
-heal/teleport/enrage behaviour flags (not in this asset pack), castle
-classes, ally healers.
+percentages are damage dealt to players, not taken). Wave four added
+the persistent FireWall/PoisonousCloud monster fields (the cloud's ally
+buff is not modelled since monsters carry no buffs), Purification for
+BanyoCaptain/BanyoLordGuzak, HealerAnt ally healing (a tenth of the ally's
+health over ten seconds, since the pack's ant carries no Healing stats),
+FrostLordHwa's scatter curse (the weekday affinity element is not
+applied) and QueenOfDawn's map-wide scatter, and the Behaviours flags
+(Heals/Teleports/Enrages; the pack's MonsterInfo has no such column, so
+they only fire when a definition sets them). Still open: castle classes.
 File:line references are into the C# projects
 (ServerLibrary/Models/MonsterObject.cs unless a class file is named;
 class files live in ServerLibrary/Models/Monsters/).

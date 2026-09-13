@@ -113,6 +113,10 @@ pub struct MonsterDef {
     pub attack_delay: i64,
     pub move_delay: i64,
     pub is_boss: bool,
+    /// Zircon `MonsterBehaviour` flags (HasPoison 1, Summons 2, Heals 4,
+    /// Teleports 8, AOEAttack 16, RangeAttack 32, Enrages 64); 0 when the
+    /// pack's `MonsterInfo` has no such column.
+    pub behaviours: i32,
     stats: HashMap<i32, i32>,
 }
 
@@ -588,6 +592,7 @@ impl GameData {
                     attack_delay: c.int_or(r, "AttackDelay", 0),
                     move_delay: c.int_or(r, "MoveDelay", 0),
                     is_boss: c.bool_or(r, "IsBoss", false),
+                    behaviours: c.int_or(r, "Behaviours", 0) as i32,
                     stats: monster_stats.remove(&index).unwrap_or_default(),
                 };
                 (index, m)

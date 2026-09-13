@@ -437,6 +437,12 @@ pub struct MonsterData {
     pub mode_time: u64,
     /// Terracotta: earliest next phase-out.
     pub phase_time: u64,
+    /// `MonsterBehaviour` state: next self-heal, one-shot teleport and
+    /// enrage used, enrage end.
+    pub behaviour_heal_time: u64,
+    pub behaviour_teleported: bool,
+    pub behaviour_enraged: bool,
+    pub rage_until: u64,
     pub minions: Vec<ObjectId>,
     pub master: Option<ObjectId>,
     /// Town guard (AI -1): fights wild monsters, cannot be hurt.

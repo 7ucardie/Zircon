@@ -196,6 +196,19 @@ impl World {
             return;
         }
 
+        // MonsterInfo.Behaviours: periodic self-heal, one-shot escape and
+        // enrage at a quarter HP.
+        self.process_behaviours(id);
+        // Long timers: Hwa's scatter curse, the Queen's map-wide scatter,
+        // Guzak's mass purification.
+        if prof.scatter_curse || prof.map_scatter || prof.purify_every_ms > 0 {
+            self.process_long_cadence(id, &prof, map, loc);
+        }
+        // Healer ants tend injured allies before anything else.
+        if prof.heals_allies && self.heal_ally(id, map, loc) {
+            return;
+        }
+
         // Regen: 2 % every 10 s, never while bleeding.
         if !has_poison(&self.objects[&id], poison_kind::HEMORRHAGE) {
             let o = self.objects.get_mut(&id).unwrap();
@@ -614,6 +627,36 @@ impl World {
             }
             return;
         }
+        // Banyo Captain: every 3 s a 1-in-n chance to purify the target.
+        if prof.purify_chance > 0
+            && now > self.objects[&id].monster_ref().cadence_time
+            && self.monster_can_attack(id)
+        {
+            self.objects
+                .get_mut(&id)
+                .unwrap()
+                .monster_mut()
+                .unwrap()
+                .cadence_time = now + 3000;
+            if self.rng.random_range(0..prof.purify_chance) == 0 {
+                let dir = Direction::from_points(loc, tloc);
+                self.face_and_swing(id, dir, None);
+                self.events.push((
+                    id,
+                    ServerMessage::ObjectMagic {
+                        id,
+                        direction: dir,
+                        location: loc,
+                        magic: magic_type::PURIFICATION,
+                        targets: vec![t],
+                        locations: Vec::new(),
+                        cast: true,
+                    },
+                ));
+                self.purify(id, t);
+                return;
+            }
+        }
         // Timed curses: weakness on everything within 3, death clouds on
         // every target in view.
         if (prof.weakness_every_ms > 0 || prof.death_cloud_every_ms > 0)
@@ -1024,7 +1067,7 @@ impl World {
 
     /// Zircon monster spells: queue the landing(s) and tell clients to play
     /// the cast with the payload on the affected targets/cells.
-    fn monster_cast(&mut self, id: ObjectId, t: ObjectId, spell: Spell) {
+    pub(super) fn monster_cast(&mut self, id: ObjectId, t: ObjectId, spell: Spell) {
         let spell = match spell {
             Spell::Random(list) if !list.is_empty() => {
                 let i = self.rng.random_range(0..list.len());
@@ -1182,24 +1225,72 @@ impl World {
                     map,
                 });
             }
-            Spell::PoisonousCloud | Spell::FireWall => {
-                // Persistent monster fields are not modelled yet: a burst
-                // around the target stands in.
-                magic = magic_type::FIRE_STORM;
-                locations.push(tloc);
-                let cells: Vec<(Point, i32)> = (-1..=1)
-                    .flat_map(|dx| (-1..=1).map(move |dy| Point::new(tloc.x + dx, tloc.y + dy)))
-                    .map(|p| (p, 100))
-                    .collect();
-                self.pending_monster_spells.push(PendingMonsterSpell {
-                    time: now + 500,
-                    caster: id,
-                    targets: Vec::new(),
-                    cells,
-                    power: dc,
-                    element: element::FIRE,
-                    map,
-                });
+            Spell::FireWall => {
+                // Zircon `FireWall`: a cross of five walls on a random
+                // target's cell, 15 ticks every 2 s, fire from the caster's
+                // DC on whoever stands in them.
+                magic = magic_type::FIRE_WALL;
+                let victims = self.hostiles_within(id, loc, 20);
+                if victims.is_empty() {
+                    return;
+                }
+                let centre =
+                    self.objects[&victims[self.rng.random_range(0..victims.len())]].location;
+                locations.push(centre);
+                let cells = [
+                    centre,
+                    centre.step(Direction::Up, 1),
+                    centre.step(Direction::Down, 1),
+                    centre.step(Direction::Left, 1),
+                    centre.step(Direction::Right, 1),
+                ];
+                for cell in cells {
+                    if !self.maps[&map].file.is_walkable(cell.x, cell.y) {
+                        continue;
+                    }
+                    let sid = self.spawn_spell(
+                        map,
+                        cell,
+                        spell_effect::FIRE_WALL,
+                        15,
+                        2000,
+                        id,
+                        magic_type::FIRE_WALL,
+                    );
+                    if let Some(Kind::Spell(s)) = self.objects.get_mut(&sid).map(|o| &mut o.kind) {
+                        s.tick_time = now + 500;
+                    }
+                }
+            }
+            Spell::PoisonousCloud => {
+                // Zircon `PoisonousCloud`: a 5x5 cloud around the caster for
+                // 20 s; its +20 agility goes to the caster's allies, which
+                // monsters do not model, so the field is visible only.
+                magic = magic_type::POISONOUS_CLOUD;
+                locations.push(loc);
+                for dx in -2..=2 {
+                    for dy in -2..=2 {
+                        let cell = Point::new(loc.x + dx, loc.y + dy);
+                        if !self.maps[&map].file.is_walkable(cell.x, cell.y) {
+                            continue;
+                        }
+                        let sid = self.spawn_spell(
+                            map,
+                            cell,
+                            spell_effect::POISONOUS_CLOUD,
+                            1,
+                            20_000,
+                            id,
+                            magic_type::POISONOUS_CLOUD,
+                        );
+                        if let Some(Kind::Spell(s)) =
+                            self.objects.get_mut(&sid).map(|o| &mut o.kind)
+                        {
+                            s.tick_time = now + 20_000;
+                        }
+                    }
+                }
+                let _ = dc;
             }
             Spell::Random(_) => return,
         }
@@ -1525,6 +1616,276 @@ impl World {
                 self.push_back(v, pdir, cells);
             }
         }
+    }
+
+    /// Zircon `ProcessBehaviours` (`MonsterInfo.Behaviours`): Heals (4) 10 %
+    /// of max HP every 30 s while hurt, Teleports (8) once 5-15 cells away
+    /// at a quarter HP, Enrages (64) once at a quarter HP (attack delay
+    /// x0.6 for 10 minutes).
+    fn process_behaviours(&mut self, id: ObjectId) {
+        let now = self.now;
+        let (flags, hp, max_hp) = {
+            let o = &self.objects[&id];
+            (
+                self.data.monsters[&o.monster_ref().def].behaviours,
+                o.hp,
+                o.max_hp,
+            )
+        };
+        if flags == 0 {
+            return;
+        }
+        if flags & 4 != 0
+            && hp < max_hp
+            && now >= self.objects[&id].monster_ref().behaviour_heal_time
+        {
+            let o = self.objects.get_mut(&id).unwrap();
+            o.monster_mut().unwrap().behaviour_heal_time = now + 30_000;
+            o.hp = (o.hp + (o.max_hp as f32 * 0.10).max(1.0) as i32).min(o.max_hp);
+            let (hp, max_hp) = (o.hp, o.max_hp);
+            self.events
+                .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+        }
+        if flags & 8 != 0
+            && hp <= max_hp / 4
+            && !self.objects[&id].monster_ref().behaviour_teleported
+        {
+            self.objects
+                .get_mut(&id)
+                .unwrap()
+                .monster_mut()
+                .unwrap()
+                .behaviour_teleported = true;
+            self.teleport_nearby(id, 5, 15);
+        }
+        if flags & 64 != 0 && hp <= max_hp / 4 && !self.objects[&id].monster_ref().behaviour_enraged
+        {
+            let m = self.objects.get_mut(&id).unwrap().monster_mut().unwrap();
+            m.behaviour_enraged = true;
+            m.attack_delay = (m.attack_delay as f32 * 0.6) as u64;
+            m.rage_until = now + 10 * 60_000;
+        }
+    }
+
+    /// Frost Lord Hwa, Queen Of Dawn and Banyo Lord Guzak's minute timers.
+    fn process_long_cadence(&mut self, id: ObjectId, prof: &AiProfile, map: i32, loc: Point) {
+        let now = self.now;
+        if now < self.objects[&id].monster_ref().cadence_time {
+            return;
+        }
+        let every = if prof.purify_every_ms > 0 {
+            prof.purify_every_ms
+        } else {
+            60_000
+        };
+        // The first cadence starts a full period after spawn.
+        let first = self.objects[&id].monster_ref().cadence_time == 0;
+        self.objects
+            .get_mut(&id)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .cadence_time = now + every;
+        if first {
+            return;
+        }
+        if prof.purify_every_ms > 0 {
+            let victims = self.hostiles_within(id, loc, MAX_VIEW_RANGE);
+            if !victims.is_empty() {
+                let dir = self.objects[&id].direction;
+                self.events.push((
+                    id,
+                    ServerMessage::ObjectMagic {
+                        id,
+                        direction: dir,
+                        location: loc,
+                        magic: magic_type::PURIFICATION,
+                        targets: victims.clone(),
+                        locations: Vec::new(),
+                        cast: true,
+                    },
+                ));
+                for v in victims {
+                    self.purify(id, v);
+                }
+            }
+        }
+        if prof.scatter_curse {
+            // Zircon `FrostLordHwa`: scatter everything in view within view
+            // range, then Abyss, Silenced and Red for 10 s and Wraith Grip
+            // for 5 s.
+            let victims = self.hostiles_within(id, loc, MAX_VIEW_RANGE);
+            for v in victims {
+                for _ in 0..20 {
+                    let d = self.rng.random_range(1..=MAX_VIEW_RANGE);
+                    let dir = Direction::from_index(self.rng.random_range(0..8));
+                    let cell = loc.step(dir, d);
+                    if self.maps[&map].file.is_walkable(cell.x, cell.y)
+                        && !self.cell_blocked(map, cell, false)
+                    {
+                        self.teleport_with_effects(v, cell);
+                        break;
+                    }
+                }
+                for (kind, secs) in [
+                    (poison_kind::ABYSS, 10u64),
+                    (poison_kind::SILENCED, 10),
+                    (poison_kind::RED, 10),
+                    (poison_kind::WRAITH_GRIP, 5),
+                ] {
+                    let (value, ticks) = if kind == poison_kind::RED {
+                        (1, 5)
+                    } else {
+                        (0, 0)
+                    };
+                    self.apply_poison(
+                        v,
+                        Poison {
+                            kind,
+                            value,
+                            ticks_left: ticks,
+                            next_tick: now + secs * 1000,
+                            owner: Some(id),
+                        },
+                    );
+                }
+            }
+        }
+        if prof.map_scatter {
+            // Zircon `QueenOfDawn`: every attackable object on the map lands
+            // on a random cell.
+            let victims: Vec<ObjectId> = self
+                .on_map(map)
+                .filter(|o| self.objects[&id].hostile_to(o))
+                .map(|o| o.id)
+                .collect();
+            let (w, h) = {
+                let f = &self.maps[&map].file;
+                (f.width as i32, f.height as i32)
+            };
+            for v in victims {
+                for _ in 0..200 {
+                    let cell = Point::new(self.rng.random_range(0..w), self.rng.random_range(0..h));
+                    if self.maps[&map].file.is_walkable(cell.x, cell.y)
+                        && !self.cell_blocked(map, cell, false)
+                    {
+                        self.teleport_with_effects(v, cell);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Zircon `Purify`: on an enemy strip the helpful buffs (always when
+    /// the target is no higher level, else 42 %); on an ally clear poisons
+    /// except Parasite.
+    pub(super) fn purify(&mut self, caster: ObjectId, target: ObjectId) {
+        let Some(t) = self.objects.get(&target) else {
+            return;
+        };
+        if t.dead {
+            return;
+        }
+        let hostile = self.objects[&caster].hostile_to(t);
+        if hostile {
+            let (clevel, tlevel) = (
+                self.level_of(&self.objects[&caster]),
+                self.level_of(&self.objects[&target]),
+            );
+            if tlevel > clevel && self.rng.random_range(0..100) >= 42 {
+                return;
+            }
+            const STRIPPED: [u16; 24] = [
+                buff_type::HEAL,
+                buff_type::INVISIBILITY,
+                buff_type::MAGIC_RESISTANCE,
+                buff_type::RESILIENCE,
+                buff_type::MAGIC_SHIELD,
+                buff_type::SUPERIOR_MAGIC_SHIELD,
+                buff_type::ELEMENTAL_SUPERIORITY,
+                buff_type::BLOOD_LUST,
+                buff_type::DEFIANCE,
+                buff_type::MIGHT,
+                buff_type::REFLECT_DAMAGE,
+                buff_type::JUDGEMENT_OF_HEAVEN,
+                buff_type::STRENGTH_OF_FAITH,
+                buff_type::CELESTIAL_LIGHT,
+                buff_type::TRANSPARENCY,
+                buff_type::RENOUNCE,
+                buff_type::CLOAK,
+                buff_type::GHOST_WALK,
+                buff_type::LIFE_STEAL,
+                buff_type::DARK_CONVERSION,
+                buff_type::EVASION,
+                buff_type::RAGING_WIND,
+                buff_type::INVINCIBILITY,
+                buff_type::ENDURANCE,
+            ];
+            let held: Vec<u16> = self.objects[&target]
+                .player()
+                .map(|p| p.buffs.iter().map(|b| b.kind).collect())
+                .unwrap_or_default();
+            for kind in held {
+                if STRIPPED.contains(&kind) {
+                    self.buff_remove(target, kind);
+                }
+            }
+            if self.objects[&target].heal.is_some() {
+                self.objects.get_mut(&target).unwrap().heal = None;
+            }
+        } else {
+            let o = self.objects.get_mut(&target).unwrap();
+            o.poisons.retain(|p| p.kind == poison_kind::PARASITE);
+            if o.poisons.is_empty() {
+                self.events.push((
+                    target,
+                    ServerMessage::ObjectPoisoned {
+                        id: target,
+                        poisoned: false,
+                    },
+                ));
+            }
+        }
+    }
+
+    /// Zircon `HealerAnt`: shoot a ticking heal at the nearest injured ally
+    /// in view that is not already being healed. Returns true when a heal
+    /// was sent this tick.
+    fn heal_ally(&mut self, id: ObjectId, map: i32, loc: Point) -> bool {
+        if !self.monster_can_attack(id) {
+            return false;
+        }
+        let view = self.monster_view_range(id).max(1);
+        let ally = self
+            .on_map(map)
+            .filter(|o| {
+                o.id != id
+                    && !o.dead
+                    && o.heal.is_none()
+                    && o.hp < o.max_hp
+                    && o.location.distance(loc) <= view
+                    && matches!(&o.kind, Kind::Monster(m) if m.owner.is_none() && !m.guard)
+            })
+            .min_by_key(|o| o.location.distance(loc))
+            .map(|o| (o.id, o.location, o.max_hp));
+        let Some((ally, aloc, amax)) = ally else {
+            return false;
+        };
+        let dir = Direction::from_points(loc, aloc);
+        self.face_and_swing(id, dir, Some(ally));
+        // Zircon ticks Stat.Healing per second up to HealingCap; the ant's
+        // stats carry none in this pack, so heal a tenth of the ally's
+        // health over ten seconds.
+        let delay = 400 + aloc.distance(loc) as u64 * PROJECTILE_MS;
+        if let Some(o) = self.objects.get_mut(&ally) {
+            o.heal = Some(HealBuff {
+                pool: (amax / 10).max(10),
+                cap: (amax / 100).max(1),
+                next_tick: self.now + delay,
+            });
+        }
+        true
     }
 
     /// Voracious ghost: back on its feet with half the HP per death so far.
