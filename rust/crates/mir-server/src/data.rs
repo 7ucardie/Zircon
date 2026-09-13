@@ -22,6 +22,34 @@ pub struct MapDef {
     /// Zircon `CanHorse` / `CanMarriageRecall`.
     pub can_horse: bool,
     pub can_marriage_recall: bool,
+    /// `MapInfo.CanMine`: pickaxes work on the map's walls.
+    pub can_mine: bool,
+}
+
+/// `MineInfo`: one ore roll per swing on a map (1 in `chance`).
+#[derive(Debug, Clone)]
+pub struct MineDef {
+    pub map: i32,
+    pub item: i32,
+    pub chance: i32,
+}
+
+/// `FishingInfo`: a fishing zone (a map region) with its drop table.
+#[derive(Debug, Clone)]
+pub struct FishingZoneDef {
+    pub index: i32,
+    pub name: String,
+    pub region: i32,
+}
+
+/// `FishingDropInfo`: 1 in `chance` per catch; `throw_quality` 0 = any.
+#[derive(Debug, Clone)]
+pub struct FishingDropDef {
+    pub fishing: i32,
+    pub item: i32,
+    pub chance: i32,
+    pub throw_quality: i32,
+    pub perfect_catch: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -396,6 +424,9 @@ pub struct GameData {
     pub respawns: Vec<RespawnDef>,
     pub monsters: HashMap<i32, MonsterDef>,
     pub safe_zones: Vec<SafeZoneDef>,
+    pub mines: Vec<MineDef>,
+    pub fishing_zones: Vec<FishingZoneDef>,
+    pub fishing_drops: Vec<FishingDropDef>,
     pub guards: Vec<GuardDef>,
     pub currencies: Vec<CurrencyDef>,
     pub quests: HashMap<i32, QuestDef>,
@@ -452,6 +483,7 @@ impl GameData {
                     music: i32_of(c, r, "Music"),
                     can_horse: c.bool_or(r, "CanHorse", false),
                     can_marriage_recall: c.bool_or(r, "CanMarriageRecall", false),
+                    can_mine: c.bool_or(r, "CanMine", false),
                 };
                 (m.index, m)
             })
@@ -793,6 +825,44 @@ impl GameData {
             .map(|i| i.index)
             .unwrap_or(0);
 
+        let mines = match db.collection("MineInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| MineDef {
+                    map: i32_of(c, r, "Map"),
+                    item: i32_of(c, r, "Item"),
+                    chance: i32_of(c, r, "Chance"),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let fishing_zones = match db.collection("FishingInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| FishingZoneDef {
+                    index: c.index(r),
+                    name: c.str_or(r, "Name", "").to_string(),
+                    region: i32_of(c, r, "Region"),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let fishing_drops = match db.collection("FishingDropInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| FishingDropDef {
+                    fishing: i32_of(c, r, "Fishing"),
+                    item: i32_of(c, r, "Item"),
+                    chance: i32_of(c, r, "Chance"),
+                    throw_quality: i32_of(c, r, "ThrowQuality"),
+                    perfect_catch: c.bool_or(r, "PerfectCatch", false),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let guards = match db.collection("GuardInfo") {
             Some(c) => c
                 .records
@@ -918,6 +988,9 @@ impl GameData {
             respawns,
             monsters,
             safe_zones,
+            mines,
+            fishing_zones,
+            fishing_drops,
             guards,
             currencies,
             quests,

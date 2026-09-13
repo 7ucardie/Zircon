@@ -282,6 +282,24 @@ pub fn map_effect(kind: u8, cell: Point, now: u64) -> Vec<Effect> {
     }
 }
 
+/// The fishing float on the water (Zircon `MagicEx5` 1420/1430; 1400/1410
+/// while a fish nibbles), replayed on every wait cycle.
+pub fn fishing_float(float: Point, found: bool, now: u64) -> Vec<Effect> {
+    let base = if found { 1400 } else { 1420 };
+    vec![
+        Effect::at(MAGIC_EX5, base, 6, 120, WHITE, Anchor::Cell(float), now),
+        Effect::at(
+            MAGIC_EX5,
+            base + 10,
+            6,
+            120,
+            WHITE,
+            Anchor::Cell(float),
+            now,
+        ),
+    ]
+}
+
 /// Looping Magic Shield ring on a shielded player (`Magic` 850..852).
 pub fn shield_frame(now: u64) -> u32 {
     850 + ((now / 200) % 3) as u32

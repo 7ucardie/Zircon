@@ -111,6 +111,7 @@ impl World {
                 wedding_ring: (rec.wedding_ring != 0).then_some(rec.wedding_ring),
                 marriage_invite: None,
                 marriage_teleport_time: 0,
+                fishing: None,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -402,6 +403,7 @@ impl World {
         self.events.push((id, ServerMessage::ObjectDie { id }));
         self.trade_close(id);
         self.remove_mount(id);
+        self.fishing_cancel(id);
         for pet in pets {
             if self.objects.get(&pet).map(|o| !o.dead).unwrap_or(false) {
                 self.monster_die(pet, id);

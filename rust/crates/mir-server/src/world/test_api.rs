@@ -303,6 +303,81 @@ impl World {
         self.guild_tax_gold(id, gold)
     }
 
+    /// Test helper: move a player to another map.
+    #[cfg(test)]
+    pub fn test_change_map(&mut self, id: ObjectId, map: i32, to: Point) {
+        self.change_map(id, map, to);
+    }
+
+    /// Test helper: a walkable cell of `map` with an unwalkable neighbour,
+    /// and the direction of that neighbour.
+    #[cfg(test)]
+    pub fn test_wall_spot(&mut self, map: i32) -> Option<(Point, Direction)> {
+        self.ensure_map(map).ok()?;
+        let file = &self.maps.get(&map)?.file;
+        for y in 1..file.height as i32 - 1 {
+            for x in 1..file.width as i32 - 1 {
+                if !file.is_walkable(x, y) {
+                    continue;
+                }
+                let p = Point::new(x, y);
+                for d in Direction::ALL {
+                    let n = p.step(d, 1);
+                    if !file.is_walkable(n.x, n.y) {
+                        return Some((p, d));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Test helper: the item info equipped in a slot.
+    #[cfg(test)]
+    pub fn test_equipped(&self, id: ObjectId, slot: usize) -> Option<i32> {
+        self.objects[&id]
+            .player()?
+            .bag
+            .equipment
+            .get(slot)?
+            .as_ref()
+            .map(|i| i.info)
+    }
+
+    /// Test helper: remove every monster on a map.
+    #[cfg(test)]
+    pub fn test_clear_monsters(&mut self, map: i32) {
+        let ids: Vec<ObjectId> = self
+            .on_map(map)
+            .filter(|o| o.is_monster() && !o.dead)
+            .map(|o| o.id)
+            .collect();
+        for id in ids {
+            self.remove_object(id);
+        }
+    }
+
+    /// Test helper: the durability of an equipped item.
+    #[cfg(test)]
+    pub fn test_equipment_durability(&self, id: ObjectId, slot: usize) -> Option<i32> {
+        self.objects[&id]
+            .player()?
+            .bag
+            .equipment
+            .get(slot)?
+            .as_ref()
+            .map(|i| i.durability)
+    }
+
+    /// Test helper: is a rubble pile (or any spell) at the cell?
+    #[cfg(test)]
+    pub fn test_spell_at(&self, map: i32, at: Point, effect: u8) -> bool {
+        self.maps[&map]
+            .objects_at(at)
+            .iter()
+            .any(|v| matches!(&self.objects[v].kind, Kind::Spell(s) if s.effect == effect))
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

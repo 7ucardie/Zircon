@@ -151,6 +151,91 @@ impl Game {
                     o.snap(location, direction, now);
                 }
             }
+            ServerMessage::ObjectMining {
+                id,
+                direction,
+                effect,
+            } => {
+                if let Some(o) = self.objects.get_mut(&id) {
+                    let location = o.queue.back().map(|q| q.location).unwrap_or(o.location);
+                    o.enqueue(Queued {
+                        action: Action::Mining,
+                        direction,
+                        location,
+                        distance: 0,
+                    });
+                }
+                self.audio.play(if effect {
+                    sound_table::idx::MINING_HIT
+                } else {
+                    sound_table::idx::MINING_STRUCK
+                });
+            }
+            ServerMessage::ObjectFishing {
+                id,
+                state,
+                direction,
+                float,
+                found,
+            } => {
+                use mir_proto::fishing_state as fs;
+                let was_fishing = self
+                    .objects
+                    .get(&id)
+                    .map(|o| {
+                        matches!(o.action, Action::FishingCast | Action::FishingWait)
+                            || o.queue.iter().any(|q| {
+                                matches!(q.action, Action::FishingCast | Action::FishingWait)
+                            })
+                    })
+                    .unwrap_or(false);
+                let action = match state {
+                    fs::CAST if was_fishing => Action::FishingWait,
+                    fs::CAST => Action::FishingCast,
+                    _ if was_fishing => Action::FishingReel,
+                    _ => Action::Standing,
+                };
+                if let Some(o) = self.objects.get_mut(&id) {
+                    let location = o.queue.back().map(|q| q.location).unwrap_or(o.location);
+                    if action != Action::Standing {
+                        o.enqueue(Queued {
+                            action,
+                            direction,
+                            location,
+                            distance: 0,
+                        });
+                    }
+                }
+                match action {
+                    Action::FishingCast => self.audio.play(sound_table::idx::FISHING_CAST),
+                    Action::FishingWait => {
+                        if found {
+                            self.audio.play(sound_table::idx::FISHING_BOB);
+                        }
+                        self.effects
+                            .extend(effects::fishing_float(float, found, now));
+                    }
+                    Action::FishingReel => self.audio.play(sound_table::idx::FISHING_REEL),
+                    _ => {}
+                }
+                if Some(id) == self.user {
+                    if state == fs::CAST {
+                        if let Some(f) = &mut self.fishing {
+                            f.found = found;
+                        }
+                    } else {
+                        self.fishing = None;
+                    }
+                }
+            }
+            ServerMessage::FishingStats {
+                points, required, ..
+            } => {
+                if let Some(f) = &mut self.fishing {
+                    f.points = points;
+                    f.required = required;
+                }
+            }
             ServerMessage::ObjectAttack {
                 id,
                 direction,
@@ -819,6 +904,7 @@ impl Game {
         self.partner = None;
         self.wedding_ring = None;
         self.marriage_invite = None;
+        self.fishing = None;
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

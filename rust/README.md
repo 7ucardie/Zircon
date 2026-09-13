@@ -128,6 +128,18 @@ turns a bag ring into the wedding ring (right-click it), the character
 window shows the partner and a "To partner" button that teleports you
 next to them once every two minutes while the ring is on, and `Divorce`
 ends it. See `docs/research/mounts-marriage.md`.
+Mining and fishing follow Zircon's `PlayerObject.Movement`: with a Pick
+Axe equipped (level 20) click an adjacent wall on a `CanMine` map
+(Deserted Mine, Quartz Mine, Dragon Abyss) to swing at it; every
+`MineInfo` row rolls its 1-in-N for an ore, the pickaxe loses 4
+durability and rubble piles up under you. Fishing casts at a fishing zone
+within throw range with a rod and robe on: click the water, the float
+sits, and once a fish nibbles click to reel; each reel adds points, each
+miss removes some, 50 lands a catch from the zone's table and 0 loses it.
+This asset pack ships no fishing zones, rods, robes or bait, so
+`ZIRCON_DEV_FISHING=<item index>` (server side; set it on the client too
+to click without a rod) makes every unwalkable cell fishable for that
+item. See `docs/research/fishing-mining.md`.
 
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the

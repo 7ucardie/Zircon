@@ -169,7 +169,8 @@ emit_map('magic_travel', 'Sounds played while a magic projectile travels.', trav
 emit_map('magic_end', 'Sounds played when a magic resolves (impact).', resolve, 1)
 emit_map('attack_magic', 'Sounds played on a melee swing carrying a magic.', attack, 1)
 
-named = ['ButtonA', 'ButtonC', 'TeleportOut', 'TeleportIn', 'ItemPotion', 'ItemWeapon', 'ItemArmour',
+named = ['FishingCast', 'FishingBob', 'FishingReel', 'MiningHit', 'MiningStruck',
+         'ButtonA', 'ButtonC', 'TeleportOut', 'TeleportIn', 'ItemPotion', 'ItemWeapon', 'ItemArmour',
          'ItemRing', 'ItemBracelet', 'ItemNecklace', 'ItemHelmet', 'ItemShoes', 'ItemDefault',
          'GoldPickUp', 'GoldGained', 'DaggerSwing', 'WoodSwing', 'IronSwordSwing', 'ShortSwordSwing',
          'AxeSwing', 'WandSwing', 'FistSwing', 'GlaiveAttack', 'ClawAttack', 'GenericStruckPlayer',
