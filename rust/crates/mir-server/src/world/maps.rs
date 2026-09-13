@@ -97,6 +97,38 @@ impl World {
 
     /// Pick the start map/cell for a new character (Zircon `SetBindPoint` + `Spawn(BindRegion)`).
     pub(super) fn start_location(&mut self, class: Class) -> anyhow::Result<(i32, Point, i32)> {
+        // Developer aid: ZIRCON_DEV_START=<map file>:<x>,<y> places new
+        // characters on that cell (nearest walkable one).
+        if let Some((file, x, y)) = std::env::var("ZIRCON_DEV_START").ok().and_then(|v| {
+            let (file, xy) = v.split_once(':')?;
+            let (x, y) = xy.split_once(',')?;
+            Some((
+                file.to_string(),
+                x.trim().parse::<i32>().ok()?,
+                y.trim().parse::<i32>().ok()?,
+            ))
+        }) {
+            let map = self
+                .data
+                .map_by_file(&file)
+                .ok_or_else(|| anyhow::anyhow!("ZIRCON_DEV_START {file}: no such map"))?
+                .index;
+            self.ensure_map(map)?;
+            let want = Point::new(x, y);
+            for r in 0..20 {
+                for dx in -r..=r {
+                    for dy in -r..=r {
+                        let p = Point::new(x + dx, y + dy);
+                        if self.maps[&map].file.is_walkable(p.x, p.y)
+                            && !self.cell_blocked(map, p, true)
+                        {
+                            return Ok((map, p, 0));
+                        }
+                    }
+                }
+            }
+            anyhow::bail!("ZIRCON_DEV_START: no walkable cell near {want:?}");
+        }
         if let Some(file) = self.force_map.clone() {
             let map = self
                 .data

@@ -91,6 +91,7 @@ pub struct Game {
     chat_box: TextBox,
     chat_open: bool,
     auto_chat_done: bool,
+    auto_mount_done: bool,
     hovered: Option<ObjectId>,
     pub debug: bool,
     pub input: Input,
@@ -336,6 +337,7 @@ impl Game {
             chat_box: TextBox::new(Rect::new(0.0, 0.0, 10.0, 22.0), 200),
             chat_open: false,
             auto_chat_done: false,
+            auto_mount_done: false,
             hovered: None,
             debug: true,
         }
@@ -528,6 +530,17 @@ impl Game {
                     c.send(ClientMessage::GroupResponse { accept: true });
                 }
                 self.windows.group_open = true;
+            }
+        }
+        // ZIRCON_AUTO_MOUNT=1 mounts 2 s after entering the world.
+        if std::env::var_os("ZIRCON_AUTO_MOUNT").is_some()
+            && now > 2000
+            && !self.auto_mount_done
+            && self.user.is_some()
+        {
+            self.auto_mount_done = true;
+            if let Some(c) = conn {
+                c.send(ClientMessage::Mount);
             }
         }
         // ZIRCON_AUTO_CHAT=text says it once, 2 s after entering the world.

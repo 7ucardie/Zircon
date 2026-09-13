@@ -108,7 +108,15 @@ impl World {
                 channel: None,
                 dragon_blood: false,
                 soul_link: None,
-                horse: rec.horse,
+                // ZIRCON_DEV_HORSE=<HorseType> hands new characters a horse.
+                horse: if rec.last_login == 0 {
+                    std::env::var("ZIRCON_DEV_HORSE")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(rec.horse)
+                } else {
+                    rec.horse
+                },
                 mounted: false,
                 partner: (rec.partner != 0).then(|| (rec.partner, rec.partner_name.clone())),
                 wedding_ring: (rec.wedding_ring != 0).then_some(rec.wedding_ring),

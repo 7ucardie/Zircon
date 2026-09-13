@@ -3007,3 +3007,126 @@ fn npc_weapon_checks_read_refine_level_element_and_added_stats() {
     );
     assert!(!world.test_npc_check(me, &check(16, 4, 3, 0, 2)));
 }
+
+/// Developer report: which NPCs open refine / companion / marriage pages
+/// (`cargo test -p mir-server report_npc_pages -- --ignored --nocapture`).
+#[test]
+#[ignore]
+fn report_npc_dialog_pages() {
+    let Some(world) = world() else {
+        return;
+    };
+    for n in &world.data.npcs {
+        let Some(p) = world.data.npc_pages.get(&n.entry_page) else {
+            continue;
+        };
+        if p.dialog_type != 0 {
+            eprintln!(
+                "NPC {:?} entry page {} dialog type {}",
+                n.name, n.entry_page, p.dialog_type
+            );
+        }
+    }
+    for p in world.data.npc_pages.values() {
+        if p.dialog_type != 0 {
+            eprintln!("page {} dialog type {}", p.index, p.dialog_type);
+        }
+    }
+}
+
+/// Developer report: which NPC reaches a refine (3) or companion (5) page
+/// through its buttons.
+#[test]
+#[ignore]
+fn report_npc_reaching_pages() {
+    let Some(world) = world() else {
+        return;
+    };
+    let wanted = [3, 4, 5, 6];
+    for n in &world.data.npcs {
+        let mut seen = std::collections::HashSet::new();
+        let mut stack = vec![n.entry_page];
+        while let Some(pg) = stack.pop() {
+            if !seen.insert(pg) {
+                continue;
+            }
+            let Some(p) = world.data.npc_pages.get(&pg) else {
+                continue;
+            };
+            if wanted.contains(&p.dialog_type) {
+                eprintln!(
+                    "NPC {:?} reaches page {} dialog type {}",
+                    n.name, pg, p.dialog_type
+                );
+            }
+            for (_, target) in &p.buttons {
+                stack.push(*target);
+            }
+            stack.push(p.success_page);
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn report_npc_positions() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Scout")).unwrap();
+    let (map, loc) = (world.objects[&me].map, world.objects[&me].location);
+    for o in world.on_map(map) {
+        if let Appearance::Npc { name, .. } = &o.appearance {
+            eprintln!(
+                "NPC {name} at {:?} distance {}",
+                o.location,
+                o.location.distance(loc)
+            );
+        }
+    }
+    eprintln!("start {:?} on map {map}", loc);
+}
+
+#[test]
+#[ignore]
+fn report_refine_npc_locations() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    for n in world.data.npcs.clone() {
+        if ["Jack", "Maddox", "Piersym"].contains(&n.name.as_str()) {
+            let Some(r) = world.data.regions.get(&n.region).cloned() else {
+                continue;
+            };
+            let _ = world.ensure_map(r.map);
+            let w = world.maps[&r.map].file.width as i32;
+            let file = world
+                .data
+                .maps
+                .get(&r.map)
+                .map(|m| m.file_name.clone())
+                .unwrap_or_default();
+            eprintln!(
+                "NPC {} map {} ({file}) cells {:?}",
+                n.name,
+                r.map,
+                r.points(w).first()
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn report_buttons_to_refine_pages() {
+    let Some(world) = world() else {
+        return;
+    };
+    for p in world.data.npc_pages.values() {
+        for (button, target) in &p.buttons {
+            if [85, 97, 149].contains(target) {
+                eprintln!("page {} button {button} -> page {target}", p.index);
+            }
+        }
+    }
+}

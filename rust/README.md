@@ -271,7 +271,9 @@ consumable type in the bag to the belt and `ZIRCON_AUTO_USE=<slot>` presses
 that belt key once. Server side, `ZIRCON_DEV_LEVEL=n` starts new characters at
 level n, `ZIRCON_DEV_SKILLS=1` grants every class skill the level allows, and
 `ZIRCON_DEV_ITEMS="Bronze Helmet;Healing Potion*5"` hands out (and wears)
-the named items on entry.
+the named items on entry, `ZIRCON_DEV_HORSE=2` gives a horse (Zircon
+`HorseType`), `ZIRCON_DEV_START=2:150,182` starts new characters on that
+map file and cell; client side `ZIRCON_AUTO_MOUNT=1` mounts after entry.
 
 `cargo run -p mir-server -- --inspect` prints the start map, player stats and
 spawn table without opening a port. `--map <file>` forces a start map.
