@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 pub const PROTOCOL_VERSION: u16 = 1;
 pub const DEFAULT_PORT: u16 = 7000;
 pub const MAX_FRAME_LEN: usize = 1 << 20;
+/// Largest frame a client may send (a 4000-character guild notice fits).
+pub const CLIENT_MAX_FRAME_LEN: usize = 64 << 10;
 
 /// Eight-way direction, in the same order Zircon's sprite sheets use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1825,11 +1827,20 @@ pub fn encode<T: Serialize>(msg: &T) -> Result<Vec<u8>, ProtoError> {
 pub fn decode_frame<T: for<'de> Deserialize<'de>>(
     buf: &mut Vec<u8>,
 ) -> Result<Option<T>, ProtoError> {
+    decode_frame_max(buf, MAX_FRAME_LEN)
+}
+
+/// Like [`decode_frame`] with a caller-chosen frame cap (the server uses
+/// [`CLIENT_MAX_FRAME_LEN`] for what clients send).
+pub fn decode_frame_max<T: for<'de> Deserialize<'de>>(
+    buf: &mut Vec<u8>,
+    max_len: usize,
+) -> Result<Option<T>, ProtoError> {
     if buf.len() < 4 {
         return Ok(None);
     }
     let len = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
-    if len > MAX_FRAME_LEN {
+    if len > max_len {
         return Err(ProtoError::FrameTooLarge(len));
     }
     if buf.len() < 4 + len {

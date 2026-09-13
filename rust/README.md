@@ -298,6 +298,22 @@ files (the shipped files round-trip byte for byte in the tests) and leave a
 `ZlBuilder::push_rgba` (DXT1/DXT5 encoding). The rest of the editor plan is in
 `docs/EDITOR_PLAN.md`.
 
+## Multiplayer hardening
+
+The server follows Zircon's `SConnection` limits: a client that sends more
+than 50 messages in one tick or 200 frames in a second is dropped, frames
+over 64 KiB are refused before they are read, strings and lists in every
+message are size-checked (oversized ones disconnect), a connection that
+stays silent for 20 s (the client pings every 5 s) or never says hello
+within 10 s is closed, outbound queues are bounded so a stalled client is
+dropped instead of buffered forever, and there are caps of 1000
+connections and 32 per address. `SIGTERM`/`Ctrl-C` saves every character
+before exit and `SIGHUP` reloads `System.db`. `cargo test -p mir-server
+--test load` (needs `ZIRCON_ASSETS`) starts the real binary, logs in a
+dozen bots that walk and chat at once, checks that a flooder and an
+oversized frame are dropped without disturbing them, and that `SIGTERM`
+saves everything.
+
 ## Docker
 
 ```

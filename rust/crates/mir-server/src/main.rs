@@ -119,6 +119,24 @@ fn main() -> anyhow::Result<()> {
                 let _ = tx.send(Inbound::Reload);
             }
         });
+        let tx = in_tx.clone();
+        runtime.spawn(async move {
+            let Ok(mut term) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            else {
+                return;
+            };
+            term.recv().await;
+            let _ = tx.send(Inbound::Shutdown);
+        });
+    }
+    {
+        let tx = in_tx.clone();
+        runtime.spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                let _ = tx.send(Inbound::Shutdown);
+            }
+        });
     }
     let addr: SocketAddr = format!("0.0.0.0:{}", args.port).parse()?;
     runtime.spawn(async move {
@@ -132,6 +150,9 @@ fn main() -> anyhow::Result<()> {
     let mut sessions = Sessions {
         conns: HashMap::new(),
         state: HashMap::new(),
+        since: HashMap::new(),
+        counts: HashMap::new(),
+        dropped: Vec::new(),
     };
     let start = Instant::now();
     let mut next_tick = Instant::now();
@@ -141,14 +162,48 @@ fn main() -> anyhow::Result<()> {
     for p in world.data.validate(&args.assets.join("Map")) {
         tracing::warn!("data: {p}");
     }
+    let mut next_sweep = Instant::now();
     loop {
-        // Drain input.
+        // Drain input; each connection gets Zircon's `Config.MaxPacket`
+        // (50) messages per tick before it is dropped as a flooder.
+        sessions.counts.clear();
         while let Ok(ev) = in_rx.try_recv() {
-            if matches!(ev, Inbound::Reload) {
-                reload(&mut world, &args);
-                continue;
+            match ev {
+                Inbound::Reload => {
+                    reload(&mut world, &args);
+                    continue;
+                }
+                Inbound::Shutdown => {
+                    tracing::info!("shutting down: saving");
+                    sessions.snapshot_all(&world, &mut accounts);
+                    if let Err(e) = accounts.save_if_dirty() {
+                        tracing::error!("saving accounts failed: {e:#}");
+                    }
+                    return Ok(());
+                }
+                ev => handle_inbound(&mut world, &mut accounts, &mut sessions, ev),
             }
-            handle_inbound(&mut world, &mut accounts, &mut sessions, ev);
+        }
+        // Slow clients (full outbound queue) and connections that never
+        // said hello are dropped.
+        if Instant::now() >= next_sweep {
+            next_sweep = Instant::now() + Duration::from_secs(1);
+            let stale: Vec<ConnId> = sessions
+                .since
+                .iter()
+                .filter(|(c, t)| {
+                    matches!(sessions.state.get(c), Some(Stage::New)) && t.elapsed() > HELLO_TIMEOUT
+                })
+                .map(|(c, _)| *c)
+                .collect();
+            for c in stale {
+                tracing::info!(conn = c, "no hello: dropping");
+                disconnect(&mut world, &mut accounts, &mut sessions, c);
+            }
+        }
+        for c in std::mem::take(&mut sessions.dropped) {
+            tracing::warn!(conn = c, "client too slow: dropping");
+            disconnect(&mut world, &mut accounts, &mut sessions, c);
         }
         // The editor saved a new System.db: reload it.
         if Instant::now() >= next_db_check {
@@ -184,6 +239,10 @@ fn main() -> anyhow::Result<()> {
 }
 
 const SAVE_INTERVAL: Duration = Duration::from_secs(30);
+/// Zircon `Config.MaxPacket`: client messages per tick before disconnect.
+const MAX_MESSAGES_PER_TICK: u32 = 50;
+/// A connection must send `Hello` within this long.
+const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 const DB_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 fn db_modified(path: &PathBuf) -> Option<std::time::SystemTime> {
@@ -222,14 +281,24 @@ enum Stage {
 }
 
 struct Sessions {
-    conns: HashMap<ConnId, mpsc::UnboundedSender<ServerMessage>>,
+    conns: HashMap<ConnId, mpsc::Sender<ServerMessage>>,
     state: HashMap<ConnId, Stage>,
+    /// When each connection arrived (hello deadline).
+    since: HashMap<ConnId, Instant>,
+    /// Messages received this tick per connection.
+    counts: HashMap<ConnId, u32>,
+    /// Connections whose outbound queue overflowed; dropped by the loop.
+    dropped: Vec<ConnId>,
 }
 
 impl Sessions {
-    fn send(&self, conn: ConnId, msg: ServerMessage) {
+    fn send(&mut self, conn: ConnId, msg: ServerMessage) {
         if let Some(tx) = self.conns.get(&conn) {
-            let _ = tx.send(msg);
+            if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(msg) {
+                if !self.dropped.contains(&conn) {
+                    self.dropped.push(conn);
+                }
+            }
         }
     }
 
@@ -287,6 +356,52 @@ fn save_storage(world: &World, accounts: &mut Accounts, account: u32, object: mi
     }
 }
 
+/// Drop a connection from the server side: the writer ends, the reader
+/// follows, and the world is left now (a later `Disconnected` is a no-op).
+fn disconnect(world: &mut World, accounts: &mut Accounts, sessions: &mut Sessions, conn: ConnId) {
+    sessions.conns.remove(&conn);
+    sessions.since.remove(&conn);
+    sessions.counts.remove(&conn);
+    if let Some(stage) = sessions.state.remove(&conn) {
+        leave_world(world, accounts, stage);
+        if let Err(e) = accounts.save_if_dirty() {
+            tracing::error!("saving accounts failed: {e:#}");
+        }
+    }
+}
+
+/// Reject messages whose strings or lists exceed what any legitimate
+/// client sends (Zircon disconnects on malformed packets).
+fn valid(msg: &ClientMessage) -> bool {
+    const NAME: usize = 20;
+    match msg {
+        ClientMessage::NewAccount { email, password }
+        | ClientMessage::Login { email, password } => email.len() <= 64 && password.len() <= 128,
+        ClientMessage::NewCharacter { name, .. } => name.len() <= NAME,
+        ClientMessage::Chat { text } => text.len() <= 512,
+        ClientMessage::GroupInvite { name }
+        | ClientMessage::GroupRemove { name }
+        | ClientMessage::GuildInviteMember { name } => name.len() <= NAME,
+        ClientMessage::GuildCreate { name, .. } => name.len() <= 32,
+        ClientMessage::GuildEditNotice { notice } => notice.len() <= 4096 * 4,
+        ClientMessage::GuildEditMember { rank, .. } => rank.len() <= 64,
+        ClientMessage::MailSend {
+            recipient,
+            subject,
+            message,
+            items,
+            ..
+        } => {
+            recipient.len() <= NAME
+                && subject.len() <= 128
+                && message.len() <= 1200
+                && items.len() <= 5
+        }
+        ClientMessage::NpcSell { slots } => slots.len() <= 64,
+        _ => true,
+    }
+}
+
 fn handle_inbound(
     world: &mut World,
     accounts: &mut Accounts,
@@ -298,20 +413,32 @@ fn handle_inbound(
             tracing::info!(conn, %addr, "connected");
             sessions.conns.insert(conn, tx);
             sessions.state.insert(conn, Stage::New);
+            sessions.since.insert(conn, Instant::now());
         }
         // Handled by the main loop before dispatch.
-        Inbound::Reload => {}
+        Inbound::Reload | Inbound::Shutdown => {}
         Inbound::Disconnected { conn } => {
-            tracing::info!(conn, "disconnected");
-            sessions.conns.remove(&conn);
-            if let Some(stage) = sessions.state.remove(&conn) {
-                leave_world(world, accounts, stage);
-                if let Err(e) = accounts.save_if_dirty() {
-                    tracing::error!("saving accounts failed: {e:#}");
-                }
+            if sessions.conns.contains_key(&conn) {
+                tracing::info!(conn, "disconnected");
             }
+            disconnect(world, accounts, sessions, conn);
         }
         Inbound::Message { conn, msg } => {
+            if !sessions.conns.contains_key(&conn) {
+                return;
+            }
+            let count = sessions.counts.entry(conn).or_insert(0);
+            *count += 1;
+            if *count > MAX_MESSAGES_PER_TICK {
+                tracing::warn!(conn, "flooding: dropping");
+                disconnect(world, accounts, sessions, conn);
+                return;
+            }
+            if !valid(&msg) {
+                tracing::warn!(conn, kind = %message_kind(&msg), "oversized message: dropping");
+                disconnect(world, accounts, sessions, conn);
+                return;
+            }
             let stage = sessions.state.get(&conn).copied().unwrap_or(Stage::New);
             tracing::debug!(conn, ?stage, kind = %message_kind(&msg), "message");
             handle_message(world, accounts, sessions, conn, stage, msg);
