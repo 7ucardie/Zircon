@@ -73,7 +73,13 @@ impl World {
             return;
         };
         let (map, from) = (o.map, o.location);
-        let distance = if run { 2 } else { 1 };
+        // Riding adds a step to a run (Zircon: distance 3 only on a horse).
+        let mounted = o.player().is_some_and(|p| p.mounted);
+        let distance = match (run, mounted) {
+            (true, true) => 3,
+            (true, false) => 2,
+            _ => 1,
+        };
         let ok = !o.dead && self.now >= o.action_time && self.now >= o.move_time && {
             (1..=distance).all(|i| !self.cell_blocked(map, from.step(direction, i), true))
         };

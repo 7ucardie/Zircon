@@ -105,6 +105,12 @@ impl World {
                 guild: None,
                 guild_invite: None,
                 mail_time: 0,
+                horse: rec.horse,
+                mounted: false,
+                partner: (rec.partner != 0).then(|| (rec.partner, rec.partner_name.clone())),
+                wedding_ring: (rec.wedding_ring != 0).then_some(rec.wedding_ring),
+                marriage_invite: None,
+                marriage_teleport_time: 0,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -147,6 +153,8 @@ impl World {
                 },
                 guild: String::new(),
                 guild_rank: String::new(),
+                horse: 0,
+                horse_shape: 0,
             },
             visible: HashSet::new(),
             poisons: Vec::new(),
@@ -251,6 +259,7 @@ impl World {
         self.refresh_safe_zone(id);
         self.guild_login(id);
         self.mail_login(id);
+        self.send_marriage_info(id);
         self.refresh_appearance(id);
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });
@@ -309,6 +318,14 @@ impl World {
         rec.allow_group = p.allow_group;
         rec.attack_mode = p.attack_mode;
         rec.pk_points = p.pk_points;
+        rec.horse = p.horse;
+        rec.partner = p.partner.as_ref().map(|(c, _)| *c).unwrap_or(0);
+        rec.partner_name = p
+            .partner
+            .as_ref()
+            .map(|(_, n)| n.clone())
+            .unwrap_or_default();
+        rec.wedding_ring = p.wedding_ring.unwrap_or(0);
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;
@@ -384,6 +401,7 @@ impl World {
         let pets = std::mem::take(&mut p.pets);
         self.events.push((id, ServerMessage::ObjectDie { id }));
         self.trade_close(id);
+        self.remove_mount(id);
         for pet in pets {
             if self.objects.get(&pet).map(|o| !o.dead).unwrap_or(false) {
                 self.monster_die(pet, id);
@@ -455,6 +473,7 @@ impl World {
         };
         let eq = p.bag.equipment_stats(&self.data);
         let g = |k: i32| eq.get(&k).copied().unwrap_or(0);
+        let horse = p.horse;
         // Passive skills (Zircon `GetPassiveStats`).
         let mut pas_acc = 0;
         let mut pas_agi = 0;
@@ -536,6 +555,14 @@ impl World {
             min_sc: base.min_sc + g(stat::MIN_SC),
             max_sc: base.max_sc + g(stat::MAX_SC) + bs.max_sc,
         };
+        // An owned horse adds bag weight and defence/attack (Zircon
+        // PlayerObject.Stats).
+        let (horse_bag, horse_stat) = mounts::horse_bonus(horse);
+        s.max_ac += horse_stat;
+        s.max_mr += horse_stat;
+        s.max_dc += horse_stat;
+        s.max_mc += horse_stat;
+        s.max_sc += horse_stat;
         s.min_dc += s.min_dc * bs.dc_pct / 100;
         s.max_dc += s.max_dc * bs.dc_pct / 100;
         s.min_mc += s.min_mc * bs.mc_pct / 100;
@@ -581,7 +608,7 @@ impl World {
         p.magic_immunity = magic_immunity;
         p.vitality = vitality;
         p.last_stand = last_stand;
-        p.max_bag = base.bag_weight + g(73);
+        p.max_bag = base.bag_weight + g(73) + horse_bag;
         p.max_wear = base.wear_weight + g(74);
         p.max_hand = base.hand_weight + g(75);
     }
@@ -694,6 +721,12 @@ impl World {
             name_color: pvp::name_color(p),
             guild: self.guild_tag(p).0,
             guild_rank: self.guild_tag(p).1,
+            horse: if p.mounted { p.horse } else { 0 },
+            horse_shape: p
+                .bag
+                .equipped_shape(&self.data, slot::HORSE_ARMOUR)
+                .unwrap_or(0)
+                .clamp(0, 6) as u8,
         };
         if o.appearance != appearance {
             let o = self.objects.get_mut(&id).unwrap();

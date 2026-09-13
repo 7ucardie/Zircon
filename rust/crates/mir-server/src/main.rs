@@ -184,6 +184,9 @@ fn main() -> anyhow::Result<()> {
                 ev => handle_inbound(&mut world, &mut accounts, &mut sessions, ev),
             }
         }
+        for character in world.take_divorced() {
+            accounts.clear_partner(character);
+        }
         // Slow clients (full outbound queue) and connections that never
         // said hello are dropped.
         if Instant::now() >= next_sweep {
@@ -722,6 +725,16 @@ fn handle_message(
         }
         (Stage::InGame { object, .. }, ClientMessage::MailDelete { index }) => {
             world.mail_delete(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::Mount) => world.mount_toggle(object),
+        (Stage::InGame { object, .. }, ClientMessage::MarriageResponse { accept }) => {
+            world.marriage_response(object, accept)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::MarriageMakeRing { slot }) => {
+            world.marriage_make_ring(object, slot)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::MarriageTeleport) => {
+            world.marriage_teleport(object)
         }
         (Stage::InGame { object, .. }, ClientMessage::TradeRequest) => world.trade_request(object),
         (Stage::InGame { object, .. }, ClientMessage::TradeResponse { accept }) => {

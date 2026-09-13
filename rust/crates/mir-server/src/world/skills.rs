@@ -21,6 +21,9 @@ impl World {
         let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
             return;
         };
+        if p.mounted {
+            return;
+        }
         if !p.magics.iter().any(|m| m.magic == magic) {
             return;
         }

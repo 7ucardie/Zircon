@@ -39,6 +39,8 @@ impl Game {
                         name_color: 0,
                         guild: String::new(),
                         guild_rank: String::new(),
+                        horse: 0,
+                        horse_shape: 0,
                     },
                     location,
                     direction,
@@ -514,8 +516,27 @@ impl Game {
             ServerMessage::WeightsChanged(w) => self.weights = w,
             ServerMessage::ObjectAppearance { id, appearance } => {
                 if let Some(o) = self.objects.get_mut(&id) {
+                    let was_mounted = o.mounted();
                     o.appearance = appearance;
+                    if o.mounted() != was_mounted {
+                        o.refresh_frame();
+                    }
                 }
+            }
+            ServerMessage::MarriageInvite { from } => {
+                self.say_colored(
+                    format!("{from} proposes to you (see the prompt)."),
+                    now,
+                    [255, 150, 200, 255],
+                );
+                self.marriage_invite = Some(from);
+            }
+            ServerMessage::MarriageInfo {
+                partner,
+                wedding_ring,
+            } => {
+                self.partner = partner;
+                self.wedding_ring = wedding_ring;
             }
             ServerMessage::MapChanged {
                 map,
@@ -795,6 +816,9 @@ impl Game {
         self.guild = None;
         self.guild_invite = None;
         self.mail.clear();
+        self.partner = None;
+        self.wedding_ring = None;
+        self.marriage_invite = None;
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

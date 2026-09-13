@@ -18,7 +18,7 @@ impl Game {
                         (true, false) => lib::M_HUM_A,
                         (true, true) => lib::WM_HUM_A,
                     });
-                Some((library, o.sprite_index(*armour)))
+                Some((library, o.sprite_index(*armour) + o.armour_shift()))
             }
             Appearance::Monster { image, .. } => {
                 let (library, shape) = monster_sprite(*image)?;
@@ -514,14 +514,24 @@ impl Game {
                 let assassin = *class == Class::Assassin;
                 let stride = if assassin { 3000 } else { 5000 };
                 let h = if *helmet > 0 {
-                    helmet_library(*helmet, female, assassin)
-                        .map(|l| (l, o.draw_frame() + ((*helmet as u32 - 1) % 10) * stride))
+                    helmet_library(*helmet, female, assassin).map(|l| {
+                        (
+                            l,
+                            o.draw_frame()
+                                + ((*helmet as u32 - 1) % 10) * stride
+                                + o.armour_shift(),
+                        )
+                    })
                 } else {
                     None
                 };
                 let s = shield.and_then(|sh| {
-                    shield_library(sh, female)
-                        .map(|l| (l, o.draw_frame() + (sh as u32 % 10) * stride))
+                    shield_library(sh, female).map(|l| {
+                        (
+                            l,
+                            o.draw_frame() + (sh as u32 % 10) * stride + o.armour_shift(),
+                        )
+                    })
                 });
                 (h, s)
             }
@@ -549,6 +559,32 @@ impl Game {
             }
             _ => None,
         };
+        // The horse goes under everything (Zircon draws it before the body).
+        if let Appearance::Player {
+            horse, horse_shape, ..
+        } = &o.appearance
+        {
+            if *horse > 0 && o.armour_shift() > 0 {
+                let frame = o.draw_frame();
+                // Zircon: Horse.Zl and the iron/silver/gold armours index by
+                // HorseFrame (+5000 per horse type); blue/dark/royal by the
+                // plain frame, with an effect library on top.
+                let horse_frame = frame + (*horse as u32 - 1) * 5000;
+                let layers: &[(u16, u32)] = match *horse_shape {
+                    1 => &[(73, horse_frame)],
+                    2 => &[(74, horse_frame)],
+                    3 => &[(75, horse_frame)],
+                    4 => &[(76, frame)],
+                    5 => &[(77, frame), (78, frame)],
+                    6 => &[(79, frame), (80, frame)],
+                    _ => &[(71, horse_frame)],
+                };
+                let layers = layers.to_vec();
+                for (hl, hi) in layers {
+                    self.draw_layer(hl, hi, dx, dy, gpu, renderer);
+                }
+            }
+        }
         if let (Some((wl, wi)), true) = (weapon, weapon_behind) {
             self.draw_layer(wl, wi, dx, dy, gpu, renderer);
         }

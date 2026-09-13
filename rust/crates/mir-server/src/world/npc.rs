@@ -157,10 +157,12 @@ impl World {
             8 => weapon.is_some() && cmp(c.operator, 0, c.int2 as i64),
             9 => weapon.is_some() && !equal,
             16 => weapon.is_some() && cmp(c.operator, 0, c.int1 as i64),
-            // Horse: none owned.
-            10 => cmp(c.operator, 0, c.int1 as i64),
-            // Marriage and wedding ring: not married.
-            11 | 12 => !equal,
+            // Horse type owned (NPC pages compare the HorseType value).
+            10 => cmp(c.operator, p.horse as i64, c.int1 as i64),
+            // Marriage: Equal means married; anything else means single.
+            11 => p.partner.is_some() == equal,
+            // Wedding ring worn on the left ring finger.
+            12 => self.wears_wedding_ring(p) == equal,
             13 => {
                 c.item1 == 0
                     || p.bag
@@ -350,8 +352,20 @@ impl World {
                 }
                 self.npc_store.save();
             }
-            // Element/horse/marriage/refine/fame/script actions need systems
-            // that do not exist yet.
+            // ChangeHorse: the account now owns this horse type.
+            6 => {
+                if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                    p.horse = a.int1.clamp(0, 6) as u8;
+                }
+                self.remove_mount(id);
+                self.refresh_stats(id, false);
+                self.send_player_stats(id);
+            }
+            8 => self.marriage_request(id),
+            9 => self.marriage_leave(id),
+            10 => self.marriage_remove_ring(id),
+            // Element/refine/fame/script actions need systems that do not
+            // exist yet.
             _ => {}
         }
     }

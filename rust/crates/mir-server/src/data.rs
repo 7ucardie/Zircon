@@ -19,6 +19,9 @@ pub struct MapDef {
     pub background: i32,
     pub light: u8,
     pub music: i32,
+    /// Zircon `CanHorse` / `CanMarriageRecall`.
+    pub can_horse: bool,
+    pub can_marriage_recall: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -447,6 +450,8 @@ impl GameData {
                     background: i32_of(c, r, "Background"),
                     light: i32_of(c, r, "Light") as u8,
                     music: i32_of(c, r, "Music"),
+                    can_horse: c.bool_or(r, "CanHorse", false),
+                    can_marriage_recall: c.bool_or(r, "CanMarriageRecall", false),
                 };
                 (m.index, m)
             })

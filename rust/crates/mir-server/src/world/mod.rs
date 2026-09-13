@@ -308,6 +308,15 @@ pub struct PlayerData {
     pub guild_invite: Option<ObjectId>,
     /// Zircon `MailTime`: no mail before this.
     pub mail_time: u64,
+    /// Owned horse (`horse_type::*`) and whether it is being ridden.
+    pub horse: u8,
+    pub mounted: bool,
+    /// Partner character id and name.
+    pub partner: Option<(u32, String)>,
+    /// Item id of the wedding ring.
+    pub wedding_ring: Option<u32>,
+    pub marriage_invite: Option<ObjectId>,
+    pub marriage_teleport_time: u64,
     pub storage_size: u32,
     pub trade: Option<trade::Trade>,
     /// Who asked us to trade (Zircon `TradePartnerRequest`).
@@ -669,6 +678,8 @@ pub struct World {
     groups: BTreeMap<u32, Vec<ObjectId>>,
     pub guild_store: guilds::GuildStore,
     pub mail_store: mail::MailStore,
+    /// Characters divorced while offline (drained by the account registry).
+    divorced: Vec<u32>,
     next_group: u32,
     last_spawn_check: u64,
     force_map: Option<String>,
@@ -687,7 +698,9 @@ mod magic_wave4;
 mod magic_wave5;
 mod mail;
 mod maps;
+mod marriage;
 mod monster_ai;
+mod mounts;
 mod movement;
 mod npc;
 mod player;
@@ -769,6 +782,7 @@ impl World {
             groups: BTreeMap::new(),
             guild_store: guilds::GuildStore::default(),
             mail_store: mail::MailStore::default(),
+            divorced: Vec::new(),
             next_group: 1,
             last_spawn_check: 0,
             force_map,
