@@ -250,6 +250,21 @@ impl Game {
                 w.character_open = w.inventory_open;
                 w.skills_open = std::env::var_os("ZIRCON_OPEN_SKILLS").is_some();
                 w.storage_open = std::env::var_os("ZIRCON_OPEN_STORAGE").is_some();
+                // ZIRCON_OPEN=storage,group,guild,mail,quests opens windows on entry.
+                for name in std::env::var("ZIRCON_OPEN").unwrap_or_default().split(',') {
+                    match name.trim() {
+                        "storage" => w.storage_open = true,
+                        "group" => w.group_open = true,
+                        "guild" => w.guild_open = true,
+                        "mail" => w.mail_open = true,
+                        "quests" => w.quests_open = true,
+                        "inventory" => w.inventory_open = true,
+                        "character" => w.character_open = true,
+                        "skills" => w.skills_open = true,
+                        "companion" => w.companion_open = true,
+                        _ => {}
+                    }
+                }
                 w
             },
             goal: None,

@@ -81,6 +81,9 @@ struct App {
     screenshot: Option<PathBuf>,
     /// Automation: `ZIRCON_SCREENSHOT=path[:seconds]` saves after a delay and exits.
     auto_screenshot: Option<(PathBuf, u64)>,
+    /// `ZIRCON_HEADLESS=1`: never touch the swapchain (works on a locked
+    /// screen); frames go to an offscreen texture that screenshots read.
+    headless: bool,
 }
 
 impl App {
@@ -108,27 +111,34 @@ impl App {
         let width = (gpu.config.width as f32 / scale) as i32;
         let height = (gpu.config.height as f32 / scale) as i32;
 
-        let surface = match gpu.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                let (w, h) = (gpu.config.width, gpu.config.height);
-                gpu.resize(w, h);
-                return;
-            }
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => return,
-            wgpu::CurrentSurfaceTexture::Validation => {
-                tracing::error!("surface validation error");
-                return;
-            }
+        let (surface, texture) = if self.headless {
+            (None, gpu.offscreen_texture())
+        } else {
+            let surface = match gpu.surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(t)
+                | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                    let (w, h) = (gpu.config.width, gpu.config.height);
+                    gpu.resize(w, h);
+                    return;
+                }
+                wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                    return
+                }
+                wgpu::CurrentSurfaceTexture::Validation => {
+                    tracing::error!("surface validation error");
+                    return;
+                }
+            };
+            let texture = surface.texture.clone();
+            (Some(surface), texture)
         };
-        let view = surface
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         renderer.set_scale(scale);
         client.frame(gpu, renderer, text, width, height, now, self.fps);
         text.prepare(gpu, scale);
+        renderer.upload(gpu);
 
         let mut encoder = gpu
             .device
@@ -180,9 +190,14 @@ impl App {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            renderer.flush(gpu, &mut pass);
-            text.render(&mut pass);
+            // World sprites, world text, then UI sprites and UI text, so
+            // names and bubbles stay under windows.
+            renderer.draw_world(&mut pass);
+            text.render_world(&mut pass);
+            renderer.draw_ui(&mut pass);
+            text.render_ui(&mut pass);
         }
+        renderer.end_frame();
         gpu.queue.submit([encoder.finish()]);
         if let Some((path, delay)) = &self.auto_screenshot {
             if now >= *delay {
@@ -190,7 +205,7 @@ impl App {
             }
         }
         if let Some(path) = self.screenshot.take() {
-            let rgba = gpu.read_texture(&surface.texture);
+            let rgba = gpu.read_texture(&texture);
             match save_png(&path, gpu.config.width, gpu.config.height, &rgba) {
                 Ok(()) => tracing::info!(path = %path.display(), "screenshot saved"),
                 Err(e) => tracing::error!("screenshot failed: {e}"),
@@ -199,8 +214,10 @@ impl App {
                 std::process::exit(0);
             }
         }
-        window.pre_present_notify();
-        gpu.queue.present(surface);
+        if let Some(surface) = surface {
+            window.pre_present_notify();
+            gpu.queue.present(surface);
+        }
         text.trim();
     }
 }
@@ -393,6 +410,7 @@ fn main() -> anyhow::Result<()> {
         fps_time: Instant::now(),
         scale: 1.0,
         screenshot: None,
+        headless: std::env::var_os("ZIRCON_HEADLESS").is_some(),
         auto_screenshot: std::env::var("ZIRCON_SCREENSHOT").ok().map(|v| {
             let (path, secs) = match v.rsplit_once(':') {
                 Some((p, s)) if s.parse::<f64>().is_ok() => {

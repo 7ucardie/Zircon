@@ -252,10 +252,16 @@ window but cannot be cast yet.
 
 Developer automation (also used for visual checks):
 `ZIRCON_SCREENSHOT=out.png:5` saves a frame after 5 s and exits;
+`ZIRCON_HEADLESS=1` renders to an offscreen texture instead of the window
+(screenshots then work even with the screen locked, where macOS stalls the
+swapchain);
 `ZIRCON_AUTOLOGIN=email:password` logs in, creating the account if missing;
 `ZIRCON_AUTOSTART=name` enters the world with that character, creating a
 warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
+`ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills`
+opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
+daylight (night screenshots);
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
 `ZIRCON_AUTOCLASS=wizard|taoist|assassin` picks the auto-created class;
 `ZIRCON_OPEN_SKILLS=1` opens the skill window; `ZIRCON_AUTO_CAST=<F key>`

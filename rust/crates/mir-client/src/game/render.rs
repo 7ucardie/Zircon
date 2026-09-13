@@ -423,6 +423,8 @@ impl Game {
         }
         self.map = map_taken;
 
+        renderer.mark_ui();
+        text.mark_ui();
         self.draw_hud(gpu, renderer, text, width, height, now, fps);
         self.draw_windows(gpu, renderer, text, width, height, now);
     }

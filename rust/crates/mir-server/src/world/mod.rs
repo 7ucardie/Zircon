@@ -1014,6 +1014,13 @@ impl Object {
 /// (default 12) times faster than real ones; dawn 05:00-08:00 ramps up,
 /// dusk 17:00-20:00 ramps down.
 pub fn day_time_now() -> f32 {
+    // `ZIRCON_DAY_TIME=0..1` pins the daylight (screenshots of night maps).
+    if let Some(fixed) = std::env::var("ZIRCON_DAY_TIME")
+        .ok()
+        .and_then(|v| v.parse::<f32>().ok())
+    {
+        return fixed.clamp(0.0, 1.0);
+    }
     let cycle: u64 = std::env::var("ZIRCON_DAY_CYCLE")
         .ok()
         .and_then(|v| v.parse().ok())

@@ -88,6 +88,40 @@ pub struct Gpu {
     pub config: wgpu::SurfaceConfiguration,
     #[allow(dead_code)]
     pub window: Arc<Window>,
+    /// Headless frames render here instead of the swapchain
+    /// (`ZIRCON_HEADLESS`): screenshots work with the screen locked.
+    offscreen: Option<wgpu::Texture>,
+}
+
+impl Gpu {
+    /// The offscreen frame target, sized like the surface.
+    pub fn offscreen_texture(&mut self) -> wgpu::Texture {
+        let stale = self
+            .offscreen
+            .as_ref()
+            .is_some_and(|t| t.width() != self.config.width || t.height() != self.config.height);
+        if stale {
+            self.offscreen = None;
+        }
+        self.offscreen
+            .get_or_insert_with(|| {
+                self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("offscreen frame"),
+                    size: wgpu::Extent3d {
+                        width: self.config.width.max(1),
+                        height: self.config.height.max(1),
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.config.format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                })
+            })
+            .clone()
+    }
 }
 
 pub struct SpriteRenderer {
@@ -110,6 +144,10 @@ pub struct SpriteRenderer {
     sprites: HashMap<SpriteKey, Option<SpriteRegion>>,
     vertices: Vec<Vertex>,
     calls: Vec<DrawCall>,
+    /// First draw call of the UI (windows, HUD); world text renders
+    /// between the two halves so names never bleed through windows.
+    ui_call_start: Option<usize>,
+    break_batch: bool,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity: usize,
     white: SpriteRegion,
@@ -149,6 +187,7 @@ impl Gpu {
         surface.configure(&device, &config);
         tracing::info!(backend = ?adapter.get_info().backend, name = adapter.get_info().name, format = ?config.format, "gpu ready");
         Ok(Gpu {
+            offscreen: None,
             surface,
             device,
             queue,
@@ -232,6 +271,7 @@ impl Gpu {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+        self.offscreen = None;
     }
 }
 
@@ -454,6 +494,8 @@ impl SpriteRenderer {
             sprites: HashMap::new(),
             vertices: Vec::new(),
             calls: Vec::new(),
+            ui_call_start: None,
+            break_batch: false,
             vertex_buffer,
             vertex_capacity,
             scale: 1.0,
@@ -635,8 +677,9 @@ impl SpriteRenderer {
             v(x1, y1, region.u1, region.v1),
             v(x0, y1, region.u0, region.v1),
         ]);
+        let merge = !std::mem::take(&mut self.break_batch);
         match self.calls.last_mut() {
-            Some(c) if c.page == region.page && c.blend == blend => c.vertex_count += 6,
+            Some(c) if merge && c.page == region.page && c.blend == blend => c.vertex_count += 6,
             _ => self.calls.push(DrawCall {
                 page: region.page,
                 blend,
@@ -644,6 +687,12 @@ impl SpriteRenderer {
                 vertex_count: 6,
             }),
         }
+    }
+
+    /// Everything drawn from now on is UI (drawn after the world's text).
+    pub fn mark_ui(&mut self) {
+        self.ui_call_start = Some(self.calls.len());
+        self.break_batch = true;
     }
 
     /// Arbitrary quad (corners in order top-left, top-right, bottom-right, bottom-left).
@@ -739,7 +788,9 @@ impl SpriteRenderer {
     }
 
     /// Submit everything queued since the last flush into `pass`.
-    pub fn flush<'a>(&'a mut self, gpu: &Gpu, pass: &mut wgpu::RenderPass<'a>) {
+    /// Upload this frame's sprites; then `draw_world` / `draw_ui` record
+    /// the draws and `end_frame` clears the queue.
+    pub fn upload(&mut self, gpu: &Gpu) {
         if self.vertices.is_empty() {
             return;
         }
@@ -765,10 +816,16 @@ impl SpriteRenderer {
                 _pad: [0.0; 2],
             }),
         );
+    }
+
+    fn draw_calls<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, range: std::ops::Range<usize>) {
+        if self.vertices.is_empty() || range.is_empty() {
+            return;
+        }
         pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
         pass.set_bind_group(0, &self.globals_bind_group, &[]);
         let mut current: Option<(u16, Blend)> = None;
-        for call in &self.calls {
+        for call in &self.calls[range] {
             if current != Some((call.page, call.blend)) {
                 pass.set_pipeline(match call.blend {
                     Blend::Alpha => &self.pipeline_alpha,
@@ -784,8 +841,26 @@ impl SpriteRenderer {
                 0..1,
             );
         }
+    }
+
+    /// Draw the world half (everything before `mark_ui`, or all).
+    pub fn draw_world<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+        let end = self.ui_call_start.unwrap_or(self.calls.len());
+        self.draw_calls(pass, 0..end);
+    }
+
+    /// Draw the UI half (everything after `mark_ui`).
+    pub fn draw_ui<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+        if let Some(start) = self.ui_call_start {
+            self.draw_calls(pass, start..self.calls.len());
+        }
+    }
+
+    pub fn end_frame(&mut self) {
         self.vertices.clear();
         self.calls.clear();
+        self.ui_call_start = None;
+        self.break_batch = false;
     }
 
     // ---- light layer ------------------------------------------------------

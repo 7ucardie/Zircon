@@ -15,8 +15,11 @@ pub struct TextLayer {
     viewport: Viewport,
     atlas: TextAtlas,
     renderer: TextRenderer,
+    /// UI text (after `mark_ui`) renders after the UI sprites.
+    renderer_ui: TextRenderer,
     buffers: HashMap<(String, u32), Buffer>,
     queued: Vec<Queued>,
+    ui_mode: bool,
 }
 
 struct Queued {
@@ -25,6 +28,7 @@ struct Queued {
     y: f32,
     color: [u8; 4],
     centered: bool,
+    ui: bool,
 }
 
 impl TextLayer {
@@ -40,14 +44,22 @@ impl TextLayer {
             wgpu::MultisampleState::default(),
             None,
         );
+        let renderer_ui = TextRenderer::new(
+            &mut atlas,
+            &gpu.device,
+            wgpu::MultisampleState::default(),
+            None,
+        );
         TextLayer {
             font_system,
             swash,
             viewport,
             atlas,
             renderer,
+            renderer_ui,
             buffers: HashMap::new(),
             queued: Vec::new(),
+            ui_mode: false,
         }
     }
 
@@ -93,7 +105,13 @@ impl TextLayer {
             y,
             color,
             centered: false,
+            ui: self.ui_mode,
         });
+    }
+
+    /// Text queued from now on belongs to the UI layer.
+    pub fn mark_ui(&mut self) {
+        self.ui_mode = true;
     }
 
     /// Queue text horizontally centred on x.
@@ -108,6 +126,7 @@ impl TextLayer {
             y,
             color,
             centered: true,
+            ui: self.ui_mode,
         });
     }
 
@@ -132,9 +151,11 @@ impl TextLayer {
             };
             centered_offsets.push(w);
         }
+        let mut ui_areas = Vec::new();
         for (q, off) in self.queued.iter().zip(centered_offsets) {
             let buffer = &self.buffers[&q.key];
-            areas.push(TextArea {
+            let list = if q.ui { &mut ui_areas } else { &mut areas };
+            list.push(TextArea {
                 buffer,
                 left: (q.x - off) * scale,
                 top: q.y * scale,
@@ -160,12 +181,32 @@ impl TextLayer {
         ) {
             tracing::warn!("text prepare failed: {e:?}");
         }
+        if let Err(e) = self.renderer_ui.prepare(
+            &gpu.device,
+            &gpu.queue,
+            &mut self.font_system,
+            &mut self.atlas,
+            &self.viewport,
+            ui_areas,
+            &mut self.swash,
+        ) {
+            tracing::warn!("ui text prepare failed: {e:?}");
+        }
         self.queued.clear();
+        self.ui_mode = false;
     }
 
-    pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+    /// World text (names, bubbles, damage): drawn before the UI sprites.
+    pub fn render_world<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if let Err(e) = self.renderer.render(&self.atlas, &self.viewport, pass) {
             tracing::warn!("text render failed: {e:?}");
+        }
+    }
+
+    /// UI text: drawn last.
+    pub fn render_ui<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+        if let Err(e) = self.renderer_ui.render(&self.atlas, &self.viewport, pass) {
+            tracing::warn!("ui text render failed: {e:?}");
         }
     }
 

@@ -1233,7 +1233,8 @@ impl WindowState {
 
         // ---- Group (P) ----
         if self.group_open {
-            let win = Rect::new(width as f32 - 300.0 - 10.0, 30.0, 300.0, 330.0);
+            // Left of the guild window so both can be open at once.
+            let win = Rect::new(width as f32 - 300.0 - 10.0 - 360.0, 30.0, 300.0, 330.0);
             if win.contains(mouse.0, mouse.1) {
                 over = true;
             }
