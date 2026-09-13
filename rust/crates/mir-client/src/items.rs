@@ -11,6 +11,8 @@ pub struct ItemDef {
     pub index: i32,
     pub name: String,
     pub item_type: u8,
+    /// Zircon `ItemEffect` (20 = black iron ore).
+    pub effect: u8,
     pub required_class: u8,
     pub required_type: u8,
     pub required_amount: i32,
@@ -207,6 +209,7 @@ impl ItemCatalog {
                     index,
                     name: c.str_or(r, "ItemName", "").to_string(),
                     item_type: c.int_or(r, "ItemType", 0) as u8,
+                    effect: c.int_or(r, "ItemEffect", 0) as u8,
                     required_class: c.int_or(r, "RequiredClass", 15) as u8,
                     required_type: c.int_or(r, "RequiredType", 0) as u8,
                     required_amount: c.int_or(r, "RequiredAmount", 0) as i32,

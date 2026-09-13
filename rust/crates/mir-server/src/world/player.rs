@@ -105,6 +105,12 @@ impl World {
                 guild: None,
                 guild_invite: None,
                 mail_time: 0,
+                refines: rec.refines.clone(),
+                companions: rec.companions.clone(),
+                active_companion: rec.active_companion,
+                companion_unlocks: rec.companion_unlocks.clone(),
+                companion: None,
+                companion_tick: 0,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -251,6 +257,9 @@ impl World {
         self.refresh_safe_zone(id);
         self.guild_login(id);
         self.mail_login(id);
+        self.send_refine_list(id);
+        self.send_companions(id);
+        self.companion_spawn(id);
         self.refresh_appearance(id);
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });
@@ -309,6 +318,10 @@ impl World {
         rec.allow_group = p.allow_group;
         rec.attack_mode = p.attack_mode;
         rec.pk_points = p.pk_points;
+        rec.refines = p.refines.clone();
+        rec.companions = p.companions.clone();
+        rec.active_companion = p.active_companion;
+        rec.companion_unlocks = p.companion_unlocks.clone();
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;

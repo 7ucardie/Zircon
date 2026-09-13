@@ -115,6 +115,7 @@ fn belt_cell_item(inventory: &[Option<ItemInstance>], link: &BeltLink) -> Option
             count,
             durability: 0,
             max_durability: 0,
+            added: Vec::new(),
         });
     }
     let id = link.item?;
@@ -135,6 +136,21 @@ pub struct WindowState {
     /// Mail window (M): mailbox on the left, the selected mail or the
     /// compose form on the right.
     pub mail_open: bool,
+    /// Refine page draft: type, quality and the chosen cells.
+    refine_type: u8,
+    refine_quality: u8,
+    refine_ores: Vec<(Grid, u8, u32)>,
+    refine_items: Vec<(Grid, u8, u32)>,
+    refine_specials: Vec<(Grid, u8, u32)>,
+    refine_buttons: Vec<Button>,
+    retrieve_buttons: Vec<Button>,
+    /// Companion page: name box, one Adopt/Unlock per offer, three per
+    /// owned companion; companion window (N) with Take buttons.
+    pub companion_open: bool,
+    companion_name: Option<TextBox>,
+    companion_offer_buttons: Vec<Button>,
+    companion_own_buttons: Vec<Button>,
+    companion_take: Vec<Button>,
     pub mail_selected: Option<u32>,
     mail_compose: bool,
     mail_boxes: Vec<TextBox>,
@@ -182,6 +198,7 @@ impl WindowState {
                     || self.guild_notice.as_ref().is_some_and(|b| b.focused)))
             || self.trade_gold.as_ref().is_some_and(|b| b.focused)
             || (self.mail_open && self.mail_boxes.iter().any(|b| b.focused))
+            || (self.npc.is_some() && self.companion_name.as_ref().is_some_and(|b| b.focused))
     }
 }
 
@@ -197,6 +214,18 @@ impl Default for WindowState {
             trade_buttons: Vec::new(),
             request_buttons: Vec::new(),
             mail_open: false,
+            refine_type: 2,
+            refine_quality: 2,
+            refine_ores: Vec::new(),
+            refine_items: Vec::new(),
+            refine_specials: Vec::new(),
+            refine_buttons: Vec::new(),
+            retrieve_buttons: Vec::new(),
+            companion_open: false,
+            companion_name: None,
+            companion_offer_buttons: Vec::new(),
+            companion_own_buttons: Vec::new(),
+            companion_take: Vec::new(),
             mail_selected: None,
             mail_compose: false,
             mail_boxes: Vec::new(),
@@ -256,6 +285,9 @@ pub struct Bag<'a> {
     pub guild: Option<&'a mir_proto::GuildSummary>,
     pub guild_invite: Option<(&'a str, &'a str)>,
     pub mail: &'a [mir_proto::MailSummary],
+    pub refines: &'a [mir_proto::RefineSummary],
+    pub companions: &'a [mir_proto::CompanionSummary],
+    pub companion_shop: &'a [mir_proto::CompanionOffer],
 }
 
 /// An open trade as the client sees it.
@@ -364,6 +396,26 @@ fn tooltip(
         ));
     }
     if let Some(i) = item {
+        for (k, v) in &i.added {
+            if *k == 52 {
+                let element = [
+                    "",
+                    "Fire",
+                    "Ice",
+                    "Lightning",
+                    "Wind",
+                    "Holy",
+                    "Dark",
+                    "Phantom",
+                ];
+                lines.push((
+                    format!("Element: {}", element.get(*v as usize).unwrap_or(&"?")),
+                    [255, 180, 80, 255],
+                ));
+            } else if let Some(n) = stat_name(*k) {
+                lines.push((format!("{n} +{v} (refined)"), [255, 180, 80, 255]));
+            }
+        }
         if i.max_durability > 0 {
             lines.push((
                 format!("Durability {}/{}", i.durability, i.max_durability),
@@ -1391,6 +1443,417 @@ impl WindowState {
             }
         }
 
+        // ---- Refine / retrieve / companion pages under the dialog ----
+        let page_type = self.npc.as_ref().map(|d| d.dialog_type).unwrap_or(0);
+        if page_type != 3 {
+            self.refine_ores.clear();
+            self.refine_items.clear();
+            self.refine_specials.clear();
+        }
+        if page_type == 3 {
+            let win = Rect::new(0.0, npc_height, 380.0, 300.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, "Refine", true);
+            let weapon = bag
+                .equipment
+                .first()
+                .and_then(|w| w.as_ref())
+                .map(|w| bag.catalog.name(w.info))
+                .unwrap_or_else(|| "no weapon equipped".into());
+            c.text.draw(
+                &format!("Weapon: {weapon}   Cost: 50,000 gold"),
+                11,
+                win.x + 12.0,
+                win.y + 36.0,
+                [255, 255, 200, 255],
+            );
+            if self.refine_buttons.is_empty() {
+                let types = [
+                    "Dura", "DC", "SP", "Fire", "Ice", "Light", "Wind", "Holy", "Dark", "Phan",
+                ];
+                let qualities = ["Rush", "Quick", "Std", "Careful", "Precise"];
+                for t in types {
+                    self.refine_buttons
+                        .push(Button::default_style(0.0, 0.0, 34.0, t));
+                }
+                for q in qualities {
+                    self.refine_buttons
+                        .push(Button::default_style(0.0, 0.0, 60.0, q));
+                }
+                self.refine_buttons
+                    .push(Button::default_style(0.0, 0.0, 110.0, "Refine"));
+            }
+            c.text.draw(
+                "Type:",
+                11,
+                win.x + 12.0,
+                win.y + 58.0,
+                [220, 220, 220, 255],
+            );
+            for i in 0..10 {
+                let b = &mut self.refine_buttons[i];
+                b.pos = (win.x + 12.0 + i as f32 * 36.0, win.y + 72.0);
+                b.selected = self.refine_type == (i + 1) as u8;
+                if b.update(c) {
+                    self.refine_type = (i + 1) as u8;
+                }
+            }
+            c.text.draw(
+                "Quality (1 min, 30 min, 1 h, 6 h, 1 day):",
+                11,
+                win.x + 12.0,
+                win.y + 104.0,
+                [220, 220, 220, 255],
+            );
+            for i in 0..5 {
+                let b = &mut self.refine_buttons[10 + i];
+                b.pos = (win.x + 12.0 + i as f32 * 64.0, win.y + 118.0);
+                b.selected = self.refine_quality == i as u8;
+                if b.update(c) {
+                    self.refine_quality = i as u8;
+                }
+            }
+            c.text.draw(
+                "Right-click bag items: black iron ore (5), common jewellery (3), special (1).",
+                10,
+                win.x + 12.0,
+                win.y + 150.0,
+                [160, 160, 160, 255],
+            );
+            let mut y = win.y + 166.0;
+            let mut remove: Option<(usize, usize)> = None;
+            for (li, (label, list)) in [
+                ("Ore", &self.refine_ores),
+                ("Items", &self.refine_items),
+                ("Special", &self.refine_specials),
+            ]
+            .iter()
+            .enumerate()
+            {
+                let names: Vec<String> = list
+                    .iter()
+                    .map(|(_, s, n)| {
+                        bag.inventory
+                            .get(*s as usize)
+                            .and_then(|c| c.as_ref())
+                            .map(|it| format!("{} x{n}", bag.catalog.name(it.info)))
+                            .unwrap_or_else(|| "?".into())
+                    })
+                    .collect();
+                let r = Rect::new(win.x + 12.0, y, win.w - 24.0, 16.0);
+                let hover = r.contains(mouse.0, mouse.1);
+                c.text.draw(
+                    &format!("{label}: {}", names.join(", ")),
+                    11,
+                    win.x + 12.0,
+                    y,
+                    if hover && !list.is_empty() {
+                        [255, 150, 150, 255]
+                    } else {
+                        [255, 255, 255, 255]
+                    },
+                );
+                if hover && c.input.lmb_pressed && !list.is_empty() {
+                    remove = Some((li, list.len() - 1));
+                }
+                y += 18.0;
+            }
+            if let Some((li, i)) = remove {
+                match li {
+                    0 => {
+                        self.refine_ores.remove(i);
+                    }
+                    1 => {
+                        self.refine_items.remove(i);
+                    }
+                    _ => {
+                        self.refine_specials.remove(i);
+                    }
+                }
+            }
+            let fy = win.y + win.h - 3.0 - 42.0 + 8.0;
+            let b = &mut self.refine_buttons[15];
+            b.pos = (win.x + 12.0, fy);
+            b.enabled = bag.equipment.first().is_some_and(|w| w.is_some());
+            if b.update(c) && b.enabled {
+                out.push(ClientMessage::NpcRefine {
+                    refine_type: self.refine_type,
+                    quality: self.refine_quality,
+                    ores: self.refine_ores.clone(),
+                    items: self.refine_items.clone(),
+                    specials: self.refine_specials.clone(),
+                });
+                self.refine_ores.clear();
+                self.refine_items.clear();
+                self.refine_specials.clear();
+            }
+        }
+        if page_type == 4 {
+            let rows = bag.refines.len().max(1);
+            let win = Rect::new(0.0, npc_height, 380.0, 60.0 + rows as f32 * 22.0 + 46.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, "Refined weapons", true);
+            if bag.refines.is_empty() {
+                c.text.draw(
+                    "Nothing in the furnace.",
+                    11,
+                    win.x + 12.0,
+                    win.y + 40.0,
+                    [200, 200, 200, 255],
+                );
+            }
+            if self.retrieve_buttons.len() != bag.refines.len() {
+                self.retrieve_buttons = bag
+                    .refines
+                    .iter()
+                    .map(|_| Button::default_style(0.0, 0.0, 70.0, "Retrieve"))
+                    .collect();
+            }
+            let types = [
+                "",
+                "Durability",
+                "DC",
+                "Spell power",
+                "Fire",
+                "Ice",
+                "Lightning",
+                "Wind",
+                "Holy",
+                "Dark",
+                "Phantom",
+            ];
+            for (i, r) in bag.refines.iter().enumerate() {
+                let y = win.y + 40.0 + i as f32 * 22.0;
+                let ready = r.ready_in_ms == 0;
+                let when = if ready {
+                    "ready".to_string()
+                } else {
+                    let s = r.ready_in_ms / 1000;
+                    format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+                };
+                c.text.draw(
+                    &format!(
+                        "{} ({}) {}% - {when}",
+                        bag.catalog.name(r.weapon.info),
+                        types.get(r.refine_type as usize).unwrap_or(&""),
+                        r.chance
+                    ),
+                    11,
+                    win.x + 12.0,
+                    y,
+                    if ready {
+                        [255, 255, 255, 255]
+                    } else {
+                        [180, 180, 180, 255]
+                    },
+                );
+                let b = &mut self.retrieve_buttons[i];
+                b.pos = (win.x + win.w - 84.0, y - 2.0);
+                b.enabled = ready;
+                if b.update(c) && b.enabled {
+                    out.push(ClientMessage::NpcRefineRetrieve { index: r.index });
+                }
+            }
+        }
+        if page_type == 5 {
+            let rows = bag.companion_shop.len() + bag.companions.len();
+            let win = Rect::new(0.0, npc_height, 400.0, 90.0 + rows as f32 * 22.0 + 46.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, "Companions", true);
+            let name_box = self
+                .companion_name
+                .get_or_insert_with(|| TextBox::new(Rect::new(0.0, 0.0, 140.0, 22.0), 15));
+            c.text.draw(
+                "Name for a new companion:",
+                11,
+                win.x + 12.0,
+                win.y + 38.0,
+                [220, 220, 220, 255],
+            );
+            name_box.rect = Rect::new(win.x + 180.0, win.y + 34.0, 140.0, 22.0);
+            name_box.update(c);
+            let name = name_box.text.trim().to_string();
+            if self.companion_offer_buttons.len() != bag.companion_shop.len() {
+                self.companion_offer_buttons = bag
+                    .companion_shop
+                    .iter()
+                    .map(|_| Button::default_style(0.0, 0.0, 64.0, "Adopt"))
+                    .collect();
+            }
+            let mut y = win.y + 66.0;
+            for (i, o) in bag.companion_shop.iter().enumerate() {
+                c.text.draw(
+                    &format!("{} - {} {}", o.name, o.price, o.currency),
+                    11,
+                    win.x + 12.0,
+                    y,
+                    if o.unlocked {
+                        [255, 255, 255, 255]
+                    } else {
+                        [160, 160, 160, 255]
+                    },
+                );
+                let b = &mut self.companion_offer_buttons[i];
+                b.pos = (win.x + win.w - 78.0, y - 2.0);
+                b.label = Some(if o.unlocked {
+                    "Adopt".into()
+                } else {
+                    "Unlock".into()
+                });
+                b.enabled = !o.unlocked || !name.is_empty();
+                if b.update(c) && b.enabled {
+                    if o.unlocked {
+                        out.push(ClientMessage::CompanionAdopt {
+                            index: o.index,
+                            name: name.clone(),
+                        });
+                        if let Some(nb) = &mut self.companion_name {
+                            nb.text.clear();
+                        }
+                    } else {
+                        out.push(ClientMessage::CompanionUnlock { index: o.index });
+                    }
+                }
+                y += 22.0;
+            }
+            if self.companion_own_buttons.len() != bag.companions.len() * 3 {
+                self.companion_own_buttons = bag
+                    .companions
+                    .iter()
+                    .flat_map(|_| {
+                        [
+                            Button::default_style(0.0, 0.0, 60.0, "Out"),
+                            Button::default_style(0.0, 0.0, 60.0, "Store"),
+                            Button::default_style(0.0, 0.0, 64.0, "Release"),
+                        ]
+                    })
+                    .collect();
+            }
+            for (i, cmp) in bag.companions.iter().enumerate() {
+                c.text.draw(
+                    &format!(
+                        "{} the {} Lv{}{}",
+                        cmp.name,
+                        cmp.kind,
+                        cmp.level,
+                        if cmp.active { " (out)" } else { "" }
+                    ),
+                    11,
+                    win.x + 12.0,
+                    y,
+                    [255, 255, 0, 255],
+                );
+                let b = &mut self.companion_own_buttons[i * 3];
+                b.pos = (win.x + win.w - 204.0, y - 2.0);
+                b.enabled = !cmp.active;
+                if b.update(c) && b.enabled {
+                    out.push(ClientMessage::CompanionRetrieve { index: cmp.index });
+                }
+                let b = &mut self.companion_own_buttons[i * 3 + 1];
+                b.pos = (win.x + win.w - 142.0, y - 2.0);
+                b.enabled = cmp.active;
+                if b.update(c) && b.enabled {
+                    out.push(ClientMessage::CompanionStore);
+                }
+                let b = &mut self.companion_own_buttons[i * 3 + 2];
+                b.pos = (win.x + win.w - 78.0, y - 2.0);
+                b.enabled = cmp.items.is_empty();
+                if b.update(c) && b.enabled {
+                    out.push(ClientMessage::CompanionRelease { index: cmp.index });
+                }
+                y += 22.0;
+            }
+        } else if let Some(b) = &mut self.companion_name {
+            b.focused = false;
+        }
+
+        // ---- Companion window (N): the active companion and its bag ----
+        if self.companion_open {
+            let win = Rect::new(width as f32 / 2.0 - 160.0, 80.0, 320.0, 300.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            let closed = c.window(win, "Companion", true);
+            match bag.companions.iter().find(|cmp| cmp.active) {
+                None => c.text.draw(
+                    "No companion is out. Visit the companion keeper.",
+                    11,
+                    win.x + 12.0,
+                    win.y + 40.0,
+                    [200, 200, 200, 255],
+                ),
+                Some(cmp) => {
+                    c.text.draw(
+                        &format!("{} the {}  Lv {}", cmp.name, cmp.kind, cmp.level),
+                        12,
+                        win.x + 12.0,
+                        win.y + 38.0,
+                        [255, 255, 0, 255],
+                    );
+                    c.text.draw(
+                        &format!(
+                            "Exp {}/{}   Hunger {}   Bag {}/{} ({}/{} weight)",
+                            cmp.experience,
+                            cmp.max_experience,
+                            cmp.hunger,
+                            cmp.items.len(),
+                            cmp.bag_size,
+                            cmp.bag_weight,
+                            cmp.max_weight
+                        ),
+                        10,
+                        win.x + 12.0,
+                        win.y + 56.0,
+                        [220, 220, 220, 255],
+                    );
+                    if self.companion_take.len() != cmp.items.len() {
+                        self.companion_take = cmp
+                            .items
+                            .iter()
+                            .map(|_| Button::default_style(0.0, 0.0, 50.0, "Take"))
+                            .collect();
+                    }
+                    let mut y = win.y + 78.0;
+                    for (i, it) in cmp.items.iter().enumerate().take(9) {
+                        c.text.draw(
+                            &format!("{} x{}", bag.catalog.name(it.info), it.count),
+                            11,
+                            win.x + 12.0,
+                            y + 2.0,
+                            [255, 255, 255, 255],
+                        );
+                        let b = &mut self.companion_take[i];
+                        b.pos = (win.x + win.w - 64.0, y - 2.0);
+                        if b.update(c) {
+                            out.push(ClientMessage::CompanionBagTake {
+                                index: cmp.index,
+                                slot: i as u8,
+                            });
+                        }
+                        y += 22.0;
+                    }
+                    if cmp.hunger <= 0 {
+                        c.text.draw(
+                            "Hungry: feed it to keep it picking up.",
+                            10,
+                            win.x + 12.0,
+                            win.y + win.h - 3.0 - 42.0 + 12.0,
+                            [255, 120, 120, 255],
+                        );
+                    }
+                }
+            }
+            if closed {
+                self.companion_open = false;
+            }
+        }
+
         // ---- Goods (shop) window under the dialog ----
         if let Some(d) = &mut self.npc {
             if d.dialog_type == 1 && !d.goods.is_empty() {
@@ -1444,6 +1907,7 @@ impl WindowState {
                         count: 1,
                         durability: 0,
                         max_durability: 0,
+                        added: Vec::new(),
                     };
                     draw_item_cell(c, bag.catalog, cell, Some(&inst), false, false);
                     let name = bag.catalog.name(g.info);
@@ -1556,6 +2020,34 @@ impl WindowState {
                                         slot: i as u8,
                                         count: it.count,
                                     });
+                                }
+                                continue;
+                            }
+                            if self.npc.as_ref().is_some_and(|d| d.dialog_type == 3) {
+                                // Refine page: sort the item into the furnace lists.
+                                let cell = (Grid::Inventory, i as u8, it.count);
+                                let def = bag.catalog.get(it.info);
+                                let already = self
+                                    .refine_ores
+                                    .iter()
+                                    .chain(&self.refine_items)
+                                    .chain(&self.refine_specials)
+                                    .any(|(g, s, _)| *g == Grid::Inventory && *s == i as u8);
+                                if !already {
+                                    if def.is_some_and(|d| d.effect == 20) {
+                                        if self.refine_ores.len() < 5 {
+                                            self.refine_ores.push(cell);
+                                        }
+                                    } else if def.is_some_and(|d| matches!(d.item_type, 6..=8))
+                                    {
+                                        if self.refine_items.len() < 3 {
+                                            self.refine_items.push(cell);
+                                        }
+                                    } else if def.is_some_and(|d| d.item_type == 17)
+                                        && self.refine_specials.is_empty()
+                                    {
+                                        self.refine_specials.push((Grid::Inventory, i as u8, 1));
+                                    }
                                 }
                                 continue;
                             }

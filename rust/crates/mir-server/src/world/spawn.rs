@@ -74,6 +74,7 @@ impl World {
                 minions: Vec::new(),
                 master: None,
                 guard: def.ai == -1,
+                companion: None,
             }),
             map,
             location,
@@ -295,6 +296,8 @@ impl World {
                     count,
                     durability: item.durability,
                     max_durability: item.durability,
+                    added: Vec::new(),
+                    level: 0,
                 };
                 self.spawn_ground_item(map, loc, ui, owner, DROP_DISTANCE);
                 if item.index == self.data.gold_item {

@@ -61,6 +61,17 @@ pub struct CharacterRecord {
     pub attack_mode: u8,
     #[serde(default)]
     pub pk_points: i32,
+    /// Weapons in the furnace (Zircon `RefineInfo`).
+    #[serde(default)]
+    pub refines: Vec<crate::world::StoredRefine>,
+    /// Zircon `UserCompanion`s (per character here, per account in Zircon).
+    #[serde(default)]
+    pub companions: Vec<crate::world::StoredCompanion>,
+    #[serde(default)]
+    pub active_companion: Option<u32>,
+    /// `CompanionInfo` indices unlocked with their items.
+    #[serde(default)]
+    pub companion_unlocks: Vec<i32>,
 }
 
 /// Zircon `UserQuest` as persisted.
@@ -316,6 +327,10 @@ impl Accounts {
             allow_group: false,
             attack_mode: 0,
             pk_points: 0,
+            refines: Vec::new(),
+            companions: Vec::new(),
+            active_companion: None,
+            companion_unlocks: Vec::new(),
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;
@@ -391,6 +406,10 @@ pub fn test_character(name: &str) -> CharacterRecord {
         allow_group: false,
         attack_mode: 0,
         pk_points: 0,
+        refines: Vec::new(),
+        companions: Vec::new(),
+        active_companion: None,
+        companion_unlocks: Vec::new(),
     }
 }
 

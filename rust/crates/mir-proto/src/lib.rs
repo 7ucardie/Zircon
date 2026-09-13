@@ -210,6 +210,9 @@ pub struct ItemInstance {
     pub count: u32,
     pub durability: i32,
     pub max_durability: i32,
+    /// Added stats (Zircon `UserItem.AddedStats`): (stat id, amount).
+    #[serde(default)]
+    pub added: Vec<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -395,6 +398,74 @@ pub struct GuildMemberSummary {
     pub rank: String,
     pub permission: i32,
     pub online: bool,
+}
+
+/// Zircon `RefineType`.
+pub mod refine_type {
+    pub const NONE: u8 = 0;
+    pub const DURABILITY: u8 = 1;
+    pub const DC: u8 = 2;
+    pub const SPELL_POWER: u8 = 3;
+    pub const FIRE: u8 = 4;
+    pub const ICE: u8 = 5;
+    pub const LIGHTNING: u8 = 6;
+    pub const WIND: u8 = 7;
+    pub const HOLY: u8 = 8;
+    pub const DARK: u8 = 9;
+    pub const PHANTOM: u8 = 10;
+}
+
+/// Zircon `RefineQuality` (wait: 1 min, 30 min, 1 h, 6 h, 1 day).
+pub mod refine_quality {
+    pub const RUSH: u8 = 0;
+    pub const QUICK: u8 = 1;
+    pub const STANDARD: u8 = 2;
+    pub const CAREFUL: u8 = 3;
+    pub const PRECISE: u8 = 4;
+}
+
+/// A weapon in the furnace (Zircon `ClientRefineInfo`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RefineSummary {
+    pub index: u32,
+    pub weapon: ItemInstance,
+    pub refine_type: u8,
+    pub quality: u8,
+    pub chance: i32,
+    pub max_chance: i32,
+    /// Milliseconds until it can be collected (0 = ready).
+    pub ready_in_ms: u64,
+}
+
+/// A companion for sale at a CompanionManage page (Zircon `CompanionInfo`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompanionOffer {
+    pub index: i32,
+    pub name: String,
+    pub description: String,
+    pub price: i32,
+    pub currency: String,
+    /// Available to this player (always, or unlocked with the item).
+    pub unlocked: bool,
+    pub unlock_item: i32,
+}
+
+/// One of the player's companions (Zircon `ClientUserCompanion`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CompanionSummary {
+    pub index: u32,
+    /// Monster name of the companion's look.
+    pub kind: String,
+    pub name: String,
+    pub level: i32,
+    pub experience: i32,
+    pub max_experience: i32,
+    pub hunger: i32,
+    pub active: bool,
+    pub items: Vec<ItemInstance>,
+    pub bag_size: u32,
+    pub bag_weight: i32,
+    pub max_weight: i32,
 }
 
 /// A mail as the client sees it (Zircon `ClientMailInfo`).
@@ -1443,6 +1514,40 @@ pub enum ClientMessage {
     MailOpened {
         index: u32,
     },
+    /// Refine the equipped weapon at a Refine page: ores (<=5 black iron
+    /// ore cells), items (<=3 common jewellery), specials (<=1).
+    NpcRefine {
+        refine_type: u8,
+        quality: u8,
+        ores: Vec<(Grid, u8, u32)>,
+        items: Vec<(Grid, u8, u32)>,
+        specials: Vec<(Grid, u8, u32)>,
+    },
+    /// Collect a finished refine at a RefineRetrieve page.
+    NpcRefineRetrieve {
+        index: u32,
+    },
+    /// Unlock a companion look with its unlock item.
+    CompanionUnlock {
+        index: i32,
+    },
+    /// Adopt a companion (CompanionManage page) and name it.
+    CompanionAdopt {
+        index: i32,
+        name: String,
+    },
+    CompanionRetrieve {
+        index: u32,
+    },
+    CompanionStore,
+    CompanionRelease {
+        index: u32,
+    },
+    /// Take one item out of a companion's bag.
+    CompanionBagTake {
+        index: u32,
+        slot: u8,
+    },
     /// Take an attachment (slot 255 = the gold).
     MailGetItem {
         index: u32,
@@ -1743,6 +1848,15 @@ pub enum ServerMessage {
     GuildMemberOffline {
         index: u32,
     },
+    /// Weapons in the furnace (on entry and after each refine).
+    RefineList(Vec<RefineSummary>),
+    RefineRetrieved {
+        index: u32,
+    },
+    /// Companions for sale, sent with a CompanionManage page.
+    CompanionShop(Vec<CompanionOffer>),
+    /// The player's companions (on entry and after changes).
+    Companions(Vec<CompanionSummary>),
     /// The mailbox on entry.
     MailList(Vec<MailSummary>),
     MailNew(MailSummary),

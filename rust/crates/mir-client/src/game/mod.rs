@@ -108,6 +108,11 @@ pub struct Game {
     guild: Option<mir_proto::GuildSummary>,
     /// Mailbox (Zircon `MailList`), newest last.
     mail: Vec<mir_proto::MailSummary>,
+    /// Weapons in the furnace (Zircon `RefineList`).
+    refines: Vec<mir_proto::RefineSummary>,
+    companions: Vec<mir_proto::CompanionSummary>,
+    /// Offers of the open CompanionManage page.
+    companion_shop: Vec<mir_proto::CompanionOffer>,
     /// Pending guild invite: (who, guild).
     guild_invite: Option<(String, String)>,
     /// Pending invite: who asked.
@@ -239,6 +244,9 @@ impl Game {
             attack_mode: 0,
             guild: None,
             mail: Vec::new(),
+            refines: Vec::new(),
+            companions: Vec::new(),
+            companion_shop: Vec::new(),
             guild_invite: None,
             group_invite: None,
             auto_group_done: false,

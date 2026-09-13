@@ -48,6 +48,15 @@ impl World {
             }
             return;
         }
+        // Companions only follow their owner and gather drops.
+        if self.objects[&id].monster_ref().companion.is_some() {
+            if let Some(owner) = self.objects[&id].monster_ref().owner {
+                self.process_companion(id, owner);
+            } else {
+                self.remove_object(id);
+            }
+            return;
+        }
         // Pets: follow the owner, come back when out of sight, untame on expiry.
         let owner = self.objects[&id].monster_ref().owner;
         if let Some(owner_id) = owner {
@@ -649,7 +658,7 @@ impl World {
 
     /// Straight line toward `goal`, then rotate outward through all eight
     /// directions (Zircon `MoveTo`); `away` picks the opposite rotation order.
-    fn move_toward(&mut self, id: ObjectId, goal: Point, away: bool) {
+    pub(super) fn move_toward(&mut self, id: ObjectId, goal: Point, away: bool) {
         let loc = self.objects[&id].location;
         if goal == loc {
             return;

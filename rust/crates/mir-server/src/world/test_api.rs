@@ -303,6 +303,41 @@ impl World {
         self.guild_tax_gold(id, gold)
     }
 
+    /// Test helper: drop an item on the ground owned by an account.
+    #[cfg(test)]
+    pub fn test_drop_item(&mut self, map: i32, at: Point, info: i32, count: u32, owner: u32) {
+        let def = self.data.items[&info].clone();
+        let ui = crate::items::UserItem {
+            id: 0,
+            info,
+            count,
+            durability: def.durability,
+            max_durability: def.durability,
+            added: Vec::new(),
+            level: 0,
+        };
+        self.spawn_ground_item(map, at, ui, Some(owner), 0);
+    }
+
+    /// Test helper: a page's dialog type can be forced for a scenario.
+    #[cfg(test)]
+    pub fn test_page_with_dialog_type(&mut self, dialog_type: i32) -> i32 {
+        if let Some(p) = self
+            .data
+            .npc_pages
+            .values()
+            .find(|p| p.dialog_type == dialog_type)
+        {
+            return p.index;
+        }
+        let index = self.data.npc_pages.keys().max().copied().unwrap_or(0) + 1000;
+        let mut page = self.data.npc_pages.values().next().unwrap().clone();
+        page.index = index;
+        page.dialog_type = dialog_type;
+        self.data.npc_pages.insert(index, page);
+        index
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

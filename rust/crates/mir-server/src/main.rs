@@ -590,6 +590,37 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::MailOpened { index }) => {
             world.mail_opened(object, index)
         }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::NpcRefine {
+                refine_type,
+                quality,
+                ores,
+                items,
+                specials,
+            },
+        ) => world.npc_refine(object, refine_type, quality, ores, items, specials),
+        (Stage::InGame { object, .. }, ClientMessage::NpcRefineRetrieve { index }) => {
+            world.npc_refine_retrieve(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionUnlock { index }) => {
+            world.companion_unlock(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionAdopt { index, name }) => {
+            world.companion_adopt(object, index, name)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionRetrieve { index }) => {
+            world.companion_retrieve(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionStore) => {
+            world.companion_store(object)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionRelease { index }) => {
+            world.companion_release(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionBagTake { index, slot }) => {
+            world.companion_bag_take(object, index, slot)
+        }
         (Stage::InGame { object, .. }, ClientMessage::MailGetItem { index, slot }) => {
             world.mail_get_item(object, index, slot)
         }

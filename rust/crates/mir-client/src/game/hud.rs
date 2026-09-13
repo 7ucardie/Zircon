@@ -42,6 +42,9 @@ impl Game {
                 guild,
                 guild_invite,
                 mail,
+                refines,
+                companions,
+                companion_shop,
                 ..
             } = self;
             let player_name = character
@@ -99,6 +102,9 @@ impl Game {
                 guild: guild.as_ref(),
                 guild_invite: guild_invite.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
                 mail,
+                refines,
+                companions,
+                companion_shop,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -173,6 +179,7 @@ impl Game {
             || self.windows.storage_open
             || self.windows.guild_open
             || self.windows.mail_open
+            || self.windows.companion_open
             || self.trade.is_some()
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);
