@@ -30,6 +30,17 @@ use mir_formats::monster_table::monster_sprite;
 use mir_proto::Grid;
 use mir_proto::{buff_type, magic_type, MagicSummary};
 use sound::{map_effect_sound, music_index, object_effect_sound};
+
+/// Zircon `AttackMode` descriptions.
+pub fn attack_mode_name(mode: u8) -> &'static str {
+    match mode {
+        mir_proto::attack_mode::PEACE => "Peaceful",
+        mir_proto::attack_mode::GROUP => "Group",
+        mir_proto::attack_mode::GUILD => "Guild",
+        mir_proto::attack_mode::WAR_RED_BROWN => "War, Red, Brown",
+        _ => "All",
+    }
+}
 use std::collections::{HashMap as StdHashMap, HashSet};
 
 pub const CELL_W: i32 = 48;
@@ -92,6 +103,8 @@ pub struct Game {
     /// Group members in join order (the first leads).
     group: Vec<(ObjectId, String)>,
     allow_group: bool,
+    /// Zircon `AttackMode` (`attack_mode::*`), cycled with H.
+    attack_mode: u8,
     /// Pending invite: who asked.
     group_invite: Option<String>,
     auto_group_done: bool,
@@ -218,6 +231,7 @@ impl Game {
             quests: Vec::new(),
             group: Vec::new(),
             allow_group: false,
+            attack_mode: 0,
             group_invite: None,
             auto_group_done: false,
             toggles: HashSet::new(),
@@ -475,7 +489,13 @@ impl Game {
         }
         self.handle_input(now, width, height, conn);
         if let Some(u) = self.user() {
-            self.status = format!("{} ({}, {})", self.map_name, u.location.x, u.location.y);
+            self.status = format!(
+                "{} ({}, {}) | Attack: {}",
+                self.map_name,
+                u.location.x,
+                u.location.y,
+                attack_mode_name(self.attack_mode)
+            );
         }
     }
 

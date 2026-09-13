@@ -49,6 +49,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            in_safe_zone: false,
             light: match effect {
                 spell_effect::FIRE_WALL
                 | spell_effect::TEMPEST

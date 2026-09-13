@@ -86,6 +86,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            in_safe_zone: false,
             light: def.stat(stat::LIGHT).clamp(0, 255) as u8,
             appearance: Appearance::Monster {
                 name: def.name.clone(),
@@ -237,6 +238,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            in_safe_zone: false,
             light: 0,
             appearance,
             visible: HashSet::new(),
@@ -366,6 +368,7 @@ impl World {
                 move_time: 0,
                 attack_time: 0,
                 cell_time: 0,
+                in_safe_zone: false,
                 appearance: Appearance::Npc {
                     name: display,
                     image: image.max(0) as u16,

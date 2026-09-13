@@ -314,8 +314,15 @@ impl Game {
                 }
                 let name_color = if o.is_npc() {
                     [0, 255, 0, 255]
-                } else if o.is_player() {
-                    [255, 255, 255, 255]
+                } else if let Appearance::Player { name_color, .. } = &o.appearance {
+                    // Zircon ProcessNameColour: yellow at 50 PK points,
+                    // brown after hitting an innocent, red at 200.
+                    match name_color {
+                        1 => [255, 255, 0, 255],
+                        2 => [165, 42, 42, 255],
+                        3 => [255, 0, 0, 255],
+                        _ => [255, 255, 255, 255],
+                    }
                 } else {
                     [255, 255, 255, 220]
                 };

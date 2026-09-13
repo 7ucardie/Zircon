@@ -97,6 +97,11 @@ impl World {
                 global_shout_time: 0,
                 allow_group: rec.allow_group,
                 group: None,
+                attack_mode: rec.attack_mode,
+                pk_points: rec.pk_points,
+                pk_tick: if rec.pk_points > 0 { 1 } else { 0 },
+                brown_until: 0,
+                brown: false,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -119,6 +124,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            in_safe_zone: false,
             light: 0,
             appearance: Appearance::Player {
                 name: rec.name.clone(),
@@ -129,6 +135,13 @@ impl World {
                 hair: rec.hair.max(1),
                 helmet: 0,
                 shield: None,
+                name_color: if rec.pk_points >= pvp::RED_POINT {
+                    3
+                } else if rec.pk_points >= 50 {
+                    1
+                } else {
+                    0
+                },
             },
             visible: HashSet::new(),
             poisons: Vec::new(),
@@ -228,6 +241,9 @@ impl World {
         self.send_inventory(id);
         self.send_belt(id);
         self.send_quest_list(id);
+        let mode = self.objects[&id].player().unwrap().attack_mode;
+        self.send_to(id, ServerMessage::AttackMode { mode });
+        self.refresh_safe_zone(id);
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });
         self.send_magics(id);
@@ -283,6 +299,8 @@ impl World {
         rec.rebirth = p.rebirth;
         rec.quests = p.quests.clone();
         rec.allow_group = p.allow_group;
+        rec.attack_mode = p.attack_mode;
+        rec.pk_points = p.pk_points;
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;
@@ -665,6 +683,7 @@ impl World {
             hair: p.hair,
             helmet,
             shield,
+            name_color: pvp::name_color(p),
         };
         if o.appearance != appearance {
             let o = self.objects.get_mut(&id).unwrap();

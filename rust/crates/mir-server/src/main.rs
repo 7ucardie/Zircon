@@ -541,6 +541,9 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::GroupRemove { name }) => {
             world.group_remove(object, name)
         }
+        (Stage::InGame { object, .. }, ClientMessage::AttackMode { mode }) => {
+            world.set_attack_mode(object, mode)
+        }
         (Stage::InGame { object, .. }, ClientMessage::TradeRequest) => world.trade_request(object),
         (Stage::InGame { object, .. }, ClientMessage::TradeResponse { accept }) => {
             world.trade_response(object, accept)

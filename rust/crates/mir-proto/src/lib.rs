@@ -173,6 +173,8 @@ pub enum Appearance {
         helmet: u16,
         /// Equipped shield `ItemInfo.Shape`, if any.
         shield: Option<u16>,
+        /// Name colour: 0 white, 1 yellow (PK points), 2 brown, 3 red.
+        name_color: u8,
     },
     Monster {
         name: String,
@@ -348,6 +350,15 @@ pub struct Weights {
     pub max_wear: i32,
     pub hand: i32,
     pub max_hand: i32,
+}
+
+/// Zircon `AttackMode`.
+pub mod attack_mode {
+    pub const PEACE: u8 = 0;
+    pub const GROUP: u8 = 1;
+    pub const GUILD: u8 = 2;
+    pub const WAR_RED_BROWN: u8 = 3;
+    pub const ALL: u8 = 4;
 }
 
 /// Zircon `MessageType` (chat line colour and routing).
@@ -1338,6 +1349,10 @@ pub enum ClientMessage {
     GroupRemove {
         name: String,
     },
+    /// Zircon `ChangeAttackMode` (`attack_mode::*`).
+    AttackMode {
+        mode: u8,
+    },
     /// Ask the player in front (facing you) to trade.
     TradeRequest,
     TradeResponse {
@@ -1605,6 +1620,9 @@ pub enum ServerMessage {
     /// A member left; your own id means the group is gone for you.
     GroupRemove {
         id: ObjectId,
+    },
+    AttackMode {
+        mode: u8,
     },
     /// Account storage on entry.
     Storage {

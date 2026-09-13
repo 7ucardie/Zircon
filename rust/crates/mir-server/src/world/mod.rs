@@ -295,6 +295,14 @@ pub struct PlayerData {
     pub global_shout_time: u64,
     pub allow_group: bool,
     pub group: Option<u32>,
+    /// Zircon `AttackMode` (`attack_mode::*`).
+    pub attack_mode: u8,
+    /// Zircon `Stat.PKPoint`; `pk_tick` is the next decay time.
+    pub pk_points: i32,
+    pub pk_tick: u64,
+    /// Zircon brown buff: end time and current state (kept in sync each tick).
+    pub brown_until: u64,
+    pub brown: bool,
     pub storage_size: u32,
     pub trade: Option<trade::Trade>,
     /// Who asked us to trade (Zircon `TradePartnerRequest`).
@@ -424,6 +432,8 @@ pub struct Object {
     pub move_time: u64,
     pub attack_time: u64,
     pub cell_time: u64,
+    /// Zircon `InSafeZone`, refreshed on every move.
+    pub in_safe_zone: bool,
     /// Light radius shown by the client (Zircon `MapObject.Light`).
     pub light: u8,
     pub appearance: Appearance,
@@ -475,20 +485,41 @@ impl Object {
             _ => None,
         }
     }
-    /// Zircon `CanAttackTarget` for the prototype (no PvP): players and
-    /// their pets fight wild monsters, wild monsters fight players and pets.
+    /// Zircon `CanAttackTarget`: players and their pets fight wild
+    /// monsters, wild monsters fight players and pets, guards fight wild
+    /// monsters and red players, and players fight players by attack mode
+    /// outside safe zones (pets never target players here).
     pub fn hostile_to(&self, other: &Object) -> bool {
         if other.dead || other.is_item() || other.is_spell() || matches!(other.kind, Kind::Npc(_)) {
             return false;
         }
-        // Guards police wild monsters; nobody else fights their own kind.
-        if let (Kind::Monster(me), Kind::Monster(them)) = (&self.kind, &other.kind) {
+        // Guards police wild monsters and red names; nobody else fights
+        // their own kind.
+        if let Kind::Monster(me) = &self.kind {
             if me.guard {
-                return them.owner.is_none() && !them.guard;
+                return match &other.kind {
+                    Kind::Monster(them) => them.owner.is_none() && !them.guard,
+                    Kind::Player(p) => p.pk_points >= pvp::RED_POINT,
+                    _ => false,
+                };
             }
-            if them.guard {
+        }
+        if matches!(&other.kind, Kind::Monster(them) if them.guard) {
+            return false;
+        }
+        if let (Kind::Player(me), Kind::Player(them)) = (&self.kind, &other.kind) {
+            if self.id == other.id || self.in_safe_zone || other.in_safe_zone {
                 return false;
             }
+            return match me.attack_mode {
+                mir_proto::attack_mode::PEACE => false,
+                mir_proto::attack_mode::GROUP => me.group.is_none() || me.group != them.group,
+                mir_proto::attack_mode::WAR_RED_BROWN => {
+                    them.brown || them.pk_points >= pvp::RED_POINT
+                }
+                // Guild mode: no guilds yet, so everyone is an outsider.
+                _ => true,
+            };
         }
         match (self.side(), other.side()) {
             (Some(_), None) => other.is_monster(),
@@ -651,6 +682,7 @@ mod monster_ai;
 mod movement;
 mod npc;
 mod player;
+mod pvp;
 mod quests;
 mod skills;
 mod spawn;
@@ -854,6 +886,7 @@ impl World {
         self.process_spells();
         self.process_monster_spells();
         self.process_day_time();
+        self.process_pk();
 
         if now >= self.last_spawn_check + 1000 {
             self.last_spawn_check = now;

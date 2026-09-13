@@ -1850,3 +1850,82 @@ fn storage_in_safe_zone_and_face_to_face_trade() {
         2
     );
 }
+
+#[test]
+fn pvp_attack_modes_brown_and_pk_points() {
+    use mir_proto::attack_mode;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let bob = world.add_player(2, 2, &test_character("Bob")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    // The start is a safe zone: nobody can be attacked there whatever the mode.
+    world.set_attack_mode(alice, attack_mode::ALL);
+    assert!(!world.objects[&alice].hostile_to(&world.objects[&bob]));
+    let map = world.objects[&alice].map;
+    let start = world.objects[&alice].location;
+    let cell = world
+        .test_cell_outside_safe_zone(map, start)
+        .expect("a cell outside the safe zone");
+    world.teleport(alice, cell);
+    let next = Direction::ALL
+        .iter()
+        .map(|d| cell.step(*d, 1))
+        .find(|p| {
+            world.maps[&map].file.is_walkable(p.x, p.y) && !world.test_in_safe_zone_at(map, *p)
+        })
+        .expect("neighbour outside the safe zone");
+    world.teleport(bob, next);
+    assert!(!world.test_in_safe_zone(alice) && !world.test_in_safe_zone(bob));
+    // Peaceful never, All always, Group spares group mates, War/Red/Brown
+    // only hostile names.
+    world.set_attack_mode(alice, attack_mode::PEACE);
+    assert!(!world.objects[&alice].hostile_to(&world.objects[&bob]));
+    world.set_attack_mode(alice, attack_mode::WAR_RED_BROWN);
+    assert!(!world.objects[&alice].hostile_to(&world.objects[&bob]));
+    world.set_attack_mode(alice, attack_mode::ALL);
+    assert!(world.objects[&alice].hostile_to(&world.objects[&bob]));
+    drain(&mut world);
+
+    // Hitting an innocent turns Alice brown (name colour 2 broadcast).
+    world.test_damage(bob, alice, 5);
+    world.tick(1);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(m,
+        ServerMessage::ObjectAppearance { id, appearance: Appearance::Player { name_color: 2, .. } } if *id == alice)));
+    // Brown Alice is fair game for Bob in War/Red/Brown mode.
+    world.set_attack_mode(bob, attack_mode::WAR_RED_BROWN);
+    assert!(world.objects[&bob].hostile_to(&world.objects[&alice]));
+
+    // Murdering Bob adds 50 PK points; brown still shows over yellow.
+    world.test_damage(bob, alice, 100_000);
+    world.tick(2);
+    assert!(world.objects[&bob].dead);
+    assert_eq!(world.objects[&alice].player().unwrap().pk_points, 50);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(m,
+        ServerMessage::Say { text, .. } if text.contains("murdered by Alice"))));
+
+    // At 200 points the name is red and guards turn hostile.
+    world.test_set_pk(alice, 200);
+    world.tick(3);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(
+        m,
+        ServerMessage::ObjectAppearance {
+            appearance: Appearance::Player { name_color: 3, .. },
+            ..
+        }
+    )));
+    let guard = world
+        .objects
+        .values()
+        .find(|o| matches!(&o.kind, world::Kind::Monster(m) if m.guard))
+        .map(|o| o.id)
+        .expect("a guard");
+    assert!(world.objects[&guard].hostile_to(&world.objects[&alice]));
+    assert!(!world.objects[&guard].hostile_to(&world.objects[&bob]));
+}

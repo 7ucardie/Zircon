@@ -77,6 +77,13 @@ impl Game {
                 'l' => self.windows.quests_open = !self.windows.quests_open,
                 'p' => self.windows.group_open = !self.windows.group_open,
                 'b' => self.windows.storage_open = !self.windows.storage_open,
+                'h' => {
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::AttackMode {
+                            mode: (self.attack_mode + 1) % (mir_proto::attack_mode::ALL + 1),
+                        });
+                    }
+                }
                 't' => {
                     if let Some(c) = conn {
                         c.send(ClientMessage::TradeRequest);

@@ -87,6 +87,14 @@ both press Confirm; any change to an offer clears both confirmations, a
 side without enough free bag slots is unlocked to make room, and a step,
 turn, death or disconnect closes the trade.
 
+PvP uses Zircon's attack modes, cycled with `H` (Peaceful, Group, Guild,
+War/Red/Brown, All) and shown in the status line: outside safe zones your
+swings and spells that go through the hostility check hit other players
+according to the mode. Hitting an innocent player turns your name brown
+for a minute; killing one adds 50 PK points (yellow name at 50, red at
+200, one point fades per minute) and red names are attacked by guards.
+See `docs/research/pvp.md` for what the C# does beyond that.
+
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's

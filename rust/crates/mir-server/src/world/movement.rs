@@ -39,6 +39,9 @@ impl World {
         let m = self.maps.get_mut(&map).unwrap();
         m.remove_from_cell(id, from);
         m.add_to_cell(id, to);
+        if self.objects[&id].player().is_some() {
+            self.refresh_safe_zone(id);
+        }
     }
 
     // ---- player commands -------------------------------------------------

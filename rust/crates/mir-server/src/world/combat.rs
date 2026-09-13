@@ -1078,8 +1078,12 @@ impl World {
             ));
             return power;
         }
+        if is_player {
+            self.check_brown(attacker, target);
+        }
         if died {
             if is_player {
+                self.pvp_kill(target, attacker);
                 self.player_die(target);
             } else {
                 self.monster_die(target, attacker);

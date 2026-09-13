@@ -272,6 +272,7 @@ impl World {
                 p.npc = None;
             }
         }
+        self.refresh_safe_zone(id);
         let m = self.maps.get_mut(&map).unwrap();
         m.objects.push(id);
         m.add_to_cell(id, to);

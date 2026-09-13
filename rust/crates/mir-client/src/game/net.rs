@@ -36,6 +36,7 @@ impl Game {
                         hair,
                         helmet: 0,
                         shield: None,
+                        name_color: 0,
                     },
                     location,
                     direction,
@@ -610,6 +611,14 @@ impl Game {
                 if let Some(t) = &mut self.trade {
                     t.confirmed = false;
                 }
+            }
+            ServerMessage::AttackMode { mode } => {
+                self.attack_mode = mode;
+                self.say_colored(
+                    format!("Attack mode: {}", attack_mode_name(mode)),
+                    now,
+                    [255, 200, 120, 255],
+                );
             }
             ServerMessage::GroupSwitch { allow } => self.allow_group = allow,
             ServerMessage::GroupInvite { from } => {

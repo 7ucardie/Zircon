@@ -281,9 +281,16 @@ impl World {
                 continue;
             }
             let ok = if guard {
-                matches!(&p.kind, Kind::Monster(m) if m.owner.is_none() && !m.guard)
-                    && !self.data.monsters[&p.monster_ref().def].is_passive()
-                    && !self.ai_profiles_passive(p.monster_ref().def)
+                match &p.kind {
+                    Kind::Monster(m) => {
+                        m.owner.is_none()
+                            && !m.guard
+                            && !self.data.monsters[&p.monster_ref().def].is_passive()
+                            && !self.ai_profiles_passive(p.monster_ref().def)
+                    }
+                    Kind::Player(pl) => pl.pk_points >= super::pvp::RED_POINT,
+                    _ => false,
+                }
             } else {
                 me.hostile_to(p) && self.can_see(me, p) && self.monster_may_target(me, p)
             };

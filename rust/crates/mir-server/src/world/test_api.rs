@@ -183,6 +183,7 @@ impl World {
             move_time: 0,
             attack_time: 0,
             cell_time: 0,
+            in_safe_zone: false,
             light: 10,
             appearance: Appearance::Npc {
                 name: "Tester".into(),
@@ -269,6 +270,40 @@ impl World {
             .enumerate()
             .filter_map(|(i, it)| it.as_ref().map(|it| (i as u8, it.info, it.count)))
             .collect()
+    }
+
+    /// Test helper: nearest walkable cell to `near` outside every safe zone.
+    #[cfg(test)]
+    pub fn test_cell_outside_safe_zone(&self, map: i32, near: Point) -> Option<Point> {
+        let file = &self.maps.get(&map)?.file;
+        for r in 1..80 {
+            for dx in -r..=r {
+                for dy in [-r, r] {
+                    for (x, y) in [(near.x + dx, near.y + dy), (near.x + dy, near.y + dx)] {
+                        let p = Point::new(x, y);
+                        if file.is_walkable(x, y) && !self.in_safe_zone(map, p) {
+                            return Some(p);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Test helper: is a cell in a safe zone?
+    #[cfg(test)]
+    pub fn test_in_safe_zone_at(&self, map: i32, p: Point) -> bool {
+        self.in_safe_zone(map, p)
+    }
+
+    /// Test helper: set PK points directly.
+    #[cfg(test)]
+    pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.pk_points = points;
+        }
+        self.refresh_appearance(id);
     }
 
     /// Test helper: a monster's experience value.
