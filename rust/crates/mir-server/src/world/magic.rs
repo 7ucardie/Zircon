@@ -14,6 +14,15 @@ impl World {
         let Some(def) = self.data.magics.get(&magic).cloned() else {
             return;
         };
+        if self.is_mounted(id) {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: "You cannot cast while riding.".into(),
+                },
+            );
+            return;
+        }
         let Some(o) = self.objects.get(&id) else {
             return;
         };

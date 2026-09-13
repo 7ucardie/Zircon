@@ -178,6 +178,10 @@ pub enum Appearance {
         /// Guild name and rank shown under the name ("" when none).
         guild: String,
         guild_rank: String,
+        /// `horse_type::*` being ridden (0 = on foot) and the horse armour
+        /// shape (0 none, 1 iron, 2 silver, 3 gold, 4 blue, 5 dark, 6 royal).
+        horse: u8,
+        horse_shape: u8,
     },
     Monster {
         name: String,
@@ -237,6 +241,7 @@ pub mod slot {
     pub const SHOES: usize = 9;
     pub const POISON: usize = 10;
     pub const AMULET: usize = 11;
+    pub const HORSE_ARMOUR: usize = 13;
     pub const SHIELD: usize = 15;
 }
 
@@ -259,6 +264,7 @@ pub mod item_type {
     pub const BOOK: u8 = 14;
     pub const SCROLL: u8 = 15;
     pub const DARK_STONE: u8 = 16;
+    pub const HORSE_ARMOUR: u8 = 18;
     pub const SHIELD: u8 = 27;
     pub const CURRENCY: u8 = 34;
 
@@ -276,6 +282,7 @@ pub mod item_type {
             POISON => &[super::slot::POISON],
             AMULET | DARK_STONE => &[super::slot::AMULET],
             SHIELD => &[super::slot::SHIELD],
+            HORSE_ARMOUR => &[super::slot::HORSE_ARMOUR],
             _ => &[],
         }
     }
@@ -362,6 +369,17 @@ pub mod attack_mode {
     pub const GUILD: u8 = 2;
     pub const WAR_RED_BROWN: u8 = 3;
     pub const ALL: u8 = 4;
+}
+
+/// Zircon `HorseType`.
+pub mod horse_type {
+    pub const NONE: u8 = 0;
+    pub const BROWN: u8 = 1;
+    pub const WHITE: u8 = 2;
+    pub const RED: u8 = 3;
+    pub const BLACK: u8 = 4;
+    pub const WHITE_UNICORN: u8 = 5;
+    pub const RED_UNICORN: u8 = 6;
 }
 
 /// Zircon `GuildPermission` bits (`LEADER` has every permission).
@@ -1443,6 +1461,18 @@ pub enum ClientMessage {
     MailOpened {
         index: u32,
     },
+    /// Zircon `Mount`: toggle riding the owned horse.
+    Mount,
+    /// Answer a marriage proposal.
+    MarriageResponse {
+        accept: bool,
+    },
+    /// Wedding-ring page: make the bag ring in `slot` the wedding ring.
+    MarriageMakeRing {
+        slot: u8,
+    },
+    /// Teleport to the partner (needs the wedding ring on).
+    MarriageTeleport,
     /// Take an attachment (slot 255 = the gold).
     MailGetItem {
         index: u32,
@@ -1742,6 +1772,14 @@ pub enum ServerMessage {
     },
     GuildMemberOffline {
         index: u32,
+    },
+    MarriageInvite {
+        from: String,
+    },
+    /// Partner name and the wedding ring's item id (None when unmarried).
+    MarriageInfo {
+        partner: Option<String>,
+        wedding_ring: Option<u32>,
     },
     /// The mailbox on entry.
     MailList(Vec<MailSummary>),

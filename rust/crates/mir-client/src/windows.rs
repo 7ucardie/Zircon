@@ -132,6 +132,7 @@ pub struct WindowState {
     trade_gold: Option<TextBox>,
     trade_buttons: Vec<Button>,
     request_buttons: Vec<Button>,
+    marriage_buttons: Vec<Button>,
     /// Mail window (M): mailbox on the left, the selected mail or the
     /// compose form on the right.
     pub mail_open: bool,
@@ -196,6 +197,7 @@ impl Default for WindowState {
             trade_gold: None,
             trade_buttons: Vec::new(),
             request_buttons: Vec::new(),
+            marriage_buttons: Vec::new(),
             mail_open: false,
             mail_selected: None,
             mail_compose: false,
@@ -256,6 +258,9 @@ pub struct Bag<'a> {
     pub guild: Option<&'a mir_proto::GuildSummary>,
     pub guild_invite: Option<(&'a str, &'a str)>,
     pub mail: &'a [mir_proto::MailSummary],
+    pub partner: Option<&'a str>,
+    pub wedding_ring: Option<u32>,
+    pub marriage_invite: Option<&'a str>,
 }
 
 /// An open trade as the client sees it.
@@ -729,6 +734,39 @@ impl WindowState {
             b.pos = (win.x + 160.0, win.y + 66.0);
             if b.update(c) {
                 out.push(ClientMessage::TradeResponse { accept: false });
+            }
+        }
+
+        // ---- Marriage proposal prompt ----
+        if let Some(from) = bag.marriage_invite {
+            let win = Rect::new(width as f32 / 2.0 - 160.0, 480.0, 320.0, 100.0);
+            if win.contains(mouse.0, mouse.1) {
+                over = true;
+            }
+            c.window(win, "Proposal", false);
+            c.text.draw(
+                &format!("{from} asks you to marry them (500,000 gold each)."),
+                11,
+                win.x + 16.0,
+                win.y + 40.0,
+                [255, 255, 255, 255],
+            );
+            if self.marriage_buttons.is_empty() {
+                self.marriage_buttons = vec![
+                    Button::default_style(0.0, 0.0, 80.0, "Accept"),
+                    Button::default_style(0.0, 0.0, 80.0, "Decline"),
+                    Button::default_style(0.0, 0.0, 120.0, "To partner"),
+                ];
+            }
+            let b = &mut self.marriage_buttons[0];
+            b.pos = (win.x + 70.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::MarriageResponse { accept: true });
+            }
+            let b = &mut self.marriage_buttons[1];
+            b.pos = (win.x + 170.0, win.y + 66.0);
+            if b.update(c) {
+                out.push(ClientMessage::MarriageResponse { accept: false });
             }
         }
 
@@ -1559,6 +1597,11 @@ impl WindowState {
                                 }
                                 continue;
                             }
+                            // Wedding-ring NPC page: a ring becomes the ring.
+                            if self.npc.as_ref().is_some_and(|d| d.dialog_type == 6) {
+                                out.push(ClientMessage::MarriageMakeRing { slot: i as u8 });
+                                continue;
+                            }
                             if self.mail_open && self.mail_compose {
                                 if self.mail_attach.len() < 5
                                     && !self
@@ -1704,6 +1747,37 @@ impl WindowState {
                 win.y + 400.0,
                 [160, 160, 160, 255],
             );
+            if let Some(partner) = bag.partner {
+                let ring_on = bag.wedding_ring.is_some_and(|r| {
+                    bag.equipment
+                        .get(7)
+                        .and_then(|c| c.as_ref())
+                        .is_some_and(|it| it.id == r)
+                });
+                c.text.draw(
+                    &format!(
+                        "Married to {partner}{}",
+                        if ring_on { " (wedding ring on)" } else { "" }
+                    ),
+                    11,
+                    win.x + 160.0,
+                    win.y + 400.0,
+                    [255, 150, 200, 255],
+                );
+                if self.marriage_buttons.is_empty() {
+                    self.marriage_buttons = vec![
+                        Button::default_style(0.0, 0.0, 80.0, "Accept"),
+                        Button::default_style(0.0, 0.0, 80.0, "Decline"),
+                        Button::default_style(0.0, 0.0, 120.0, "To partner"),
+                    ];
+                }
+                let b = &mut self.marriage_buttons[2];
+                b.pos = (win.x + 180.0, win.y + win.h - 3.0 - 42.0 + 8.0);
+                b.enabled = ring_on;
+                if b.update(c) {
+                    out.push(ClientMessage::MarriageTeleport);
+                }
+            }
             if closed {
                 self.character_open = false;
                 self.carrying = None;

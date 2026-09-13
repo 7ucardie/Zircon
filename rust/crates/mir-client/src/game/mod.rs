@@ -108,6 +108,10 @@ pub struct Game {
     guild: Option<mir_proto::GuildSummary>,
     /// Mailbox (Zircon `MailList`), newest last.
     mail: Vec<mir_proto::MailSummary>,
+    /// Marriage partner, wedding ring item id, and a pending proposal.
+    partner: Option<String>,
+    wedding_ring: Option<u32>,
+    marriage_invite: Option<String>,
     /// Pending guild invite: (who, guild).
     guild_invite: Option<(String, String)>,
     /// Pending invite: who asked.
@@ -239,6 +243,9 @@ impl Game {
             attack_mode: 0,
             guild: None,
             mail: Vec::new(),
+            partner: None,
+            wedding_ring: None,
+            marriage_invite: None,
             guild_invite: None,
             group_invite: None,
             auto_group_done: false,

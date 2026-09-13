@@ -79,6 +79,11 @@ impl Game {
                 'b' => self.windows.storage_open = !self.windows.storage_open,
                 'g' => self.windows.guild_open = !self.windows.guild_open,
                 'm' => self.windows.mail_open = !self.windows.mail_open,
+                'r' => {
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::Mount);
+                    }
+                }
                 'h' => {
                     if let Some(c) = conn {
                         c.send(ClientMessage::AttackMode {
@@ -513,7 +518,13 @@ impl Game {
     ) {
         let user_dir = self.user().map(|u| u.direction).unwrap_or(Direction::Down);
         let wanted = Direction::from_points(user_loc, target);
-        let steps = if run { 2 } else { 1 };
+        // Riding adds a step to a run (Zircon MapControl).
+        let mounted = self.user().is_some_and(|u| u.mounted());
+        let steps = match (run, mounted) {
+            (true, true) => 3,
+            (true, false) => 2,
+            _ => 1,
+        };
         let candidates = [
             wanted,
             wanted.rotate(-1),

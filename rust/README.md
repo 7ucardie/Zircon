@@ -115,6 +115,20 @@ mails show yellow, attachments are taken one by one in a safe zone with
 bag room, and a mail can be deleted once it is empty. Recipients' boxes
 hold fifty attachments.
 
+Horses come from NPC pages with Zircon's `ChangeHorse` action (the horse
+dealers): owning one adds bag weight and, from the white horse up,
+attack and defence. `R` mounts and dismounts on maps that allow horses;
+riding runs three cells a step but you cannot attack, cast, toggle
+stances or use items from the saddle, and a push, death or a map that
+forbids horses dismounts you. The horse draws under the rider with the
+real horse libraries, horse armour picks the skin. Marriage runs through
+the NPCs: the `Marriage` action proposes to the player facing you (both
+level 22 with 500,000 gold, paid on acceptance), the wedding-ring page
+turns a bag ring into the wedding ring (right-click it), the character
+window shows the partner and a "To partner" button that teleports you
+next to them once every two minutes while the ring is on, and `Divorce`
+ends it. See `docs/research/mounts-marriage.md`.
+
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
 125 NPCs with their data-driven dialog pages, buy/sell shops with Zircon's

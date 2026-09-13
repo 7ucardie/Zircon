@@ -42,6 +42,9 @@ impl Game {
                 guild,
                 guild_invite,
                 mail,
+                partner,
+                wedding_ring,
+                marriage_invite,
                 ..
             } = self;
             let player_name = character
@@ -99,6 +102,9 @@ impl Game {
                 guild: guild.as_ref(),
                 guild_invite: guild_invite.as_ref().map(|(a, b)| (a.as_str(), b.as_str())),
                 mail,
+                partner: partner.as_deref(),
+                wedding_ring: *wedding_ring,
+                marriage_invite: marriage_invite.as_deref(),
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -149,6 +155,10 @@ impl Game {
                 ClientMessage::GuildResponse { accept } => {
                     self.guild_invite = None;
                     kept.push(ClientMessage::GuildResponse { accept });
+                }
+                ClientMessage::MarriageResponse { accept } => {
+                    self.marriage_invite = None;
+                    kept.push(ClientMessage::MarriageResponse { accept });
                 }
                 ClientMessage::MailOpened { index } => {
                     if let Some(m) = self.mail.iter_mut().find(|m| m.index == index) {

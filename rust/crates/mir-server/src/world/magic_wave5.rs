@@ -41,6 +41,8 @@ fn straight(a: Point, b: Point) -> bool {
 impl World {
     /// Push `target` up to `distance` cells along `dir`; returns cells moved.
     pub(super) fn push_back(&mut self, target: ObjectId, dir: Direction, distance: i32) -> i32 {
+        // Zircon `Pushed` throws the rider off the horse.
+        self.remove_mount(target);
         let (map, mut loc) = {
             let o = &self.objects[&target];
             (o.map, o.location)

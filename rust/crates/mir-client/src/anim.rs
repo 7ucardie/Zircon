@@ -212,8 +212,46 @@ impl ClientObject {
         }
     }
 
+    /// True while riding (Zircon `Horse != HorseType.None`).
+    pub fn mounted(&self) -> bool {
+        matches!(&self.appearance, Appearance::Player { horse, .. } if *horse > 0)
+    }
+
+    /// Body/armour/helmet/shield frame shift while riding (Zircon
+    /// `ArmourShift` = 80 for the horse animations).
+    pub fn armour_shift(&self) -> u32 {
+        if self.mounted() && self.riding_action() {
+            80
+        } else {
+            0
+        }
+    }
+
+    fn riding_action(&self) -> bool {
+        matches!(
+            self.action,
+            Action::Standing | Action::Walking | Action::Running | Action::Struck
+        )
+    }
+
+    /// Recompute the frame set for the current action (after the
+    /// appearance changed, e.g. mounting).
+    pub fn refresh_frame(&mut self) {
+        self.frame = self.frame_for(self.action);
+        self.frame_index = self.frame_index.min(self.frame.count.saturating_sub(1));
+    }
+
     fn frame_for(&self, action: Action) -> Frame {
         match &self.appearance {
+            // Zircon FrameSet: HorseStanding 2240x4 500 ms, HorseWalking
+            // 2320x6, HorseRunning 2400x6, HorseStruck 2480x3 (100 ms).
+            Appearance::Player { horse, .. } if *horse > 0 => match action {
+                Action::Standing => Frame::new(2240, 4, 500),
+                Action::Walking => Frame::new(2320, 6, 100),
+                Action::Running => Frame::new(2400, 6, 100),
+                Action::Struck => Frame::new(2480, 3, 100),
+                _ => player_frame(action),
+            },
             Appearance::Player { .. } => player_frame(action),
             Appearance::Monster { .. } => monster_frame(action),
             Appearance::Npc { image, .. } => npc_frame(*image),

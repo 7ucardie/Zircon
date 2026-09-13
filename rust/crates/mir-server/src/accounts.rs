@@ -61,6 +61,17 @@ pub struct CharacterRecord {
     pub attack_mode: u8,
     #[serde(default)]
     pub pk_points: i32,
+    /// Zircon `Account.Horse` (per character here).
+    #[serde(default)]
+    pub horse: u8,
+    /// Partner character id and name (0 / "" when unmarried).
+    #[serde(default)]
+    pub partner: u32,
+    #[serde(default)]
+    pub partner_name: String,
+    /// Item id of the wedding ring (0 = none).
+    #[serde(default)]
+    pub wedding_ring: u32,
 }
 
 /// Zircon `UserQuest` as persisted.
@@ -316,6 +327,10 @@ impl Accounts {
             allow_group: false,
             attack_mode: 0,
             pk_points: 0,
+            horse: 0,
+            partner: 0,
+            partner_name: String::new(),
+            wedding_ring: 0,
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;
@@ -335,6 +350,20 @@ impl Accounts {
         c.deleted = true;
         self.dirty = true;
         Ok(())
+    }
+
+    /// Clear a character's marriage (divorced while offline).
+    pub fn clear_partner(&mut self, character: u32) {
+        for a in &mut self.store.accounts {
+            for c in &mut a.characters {
+                if c.id == character {
+                    c.partner = 0;
+                    c.partner_name.clear();
+                    c.wedding_ring = 0;
+                    self.dirty = true;
+                }
+            }
+        }
     }
 
     /// Account id and proper name of a living character, by name.
@@ -391,6 +420,10 @@ pub fn test_character(name: &str) -> CharacterRecord {
         allow_group: false,
         attack_mode: 0,
         pk_points: 0,
+        horse: 0,
+        partner: 0,
+        partner_name: String::new(),
+        wedding_ring: 0,
     }
 }
 

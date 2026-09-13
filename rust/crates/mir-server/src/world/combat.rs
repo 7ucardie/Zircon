@@ -4,6 +4,15 @@ use super::*;
 impl World {
     /// Zircon `PlayerObject.Attack`: melee swing with optional attack skill.
     pub fn player_attack(&mut self, id: ObjectId, direction: Direction, attack_magic: Option<u16>) {
+        if self.is_mounted(id) {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: "You cannot attack while riding.".into(),
+                },
+            );
+            return;
+        }
         let Some(o) = self.objects.get_mut(&id) else {
             return;
         };

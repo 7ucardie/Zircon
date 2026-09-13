@@ -273,6 +273,9 @@ impl World {
             }
         }
         self.refresh_safe_zone(id);
+        if !self.data.maps.get(&map).is_some_and(|m| m.can_horse) {
+            self.remove_mount(id);
+        }
         let m = self.maps.get_mut(&map).unwrap();
         m.objects.push(id);
         m.add_to_cell(id, to);

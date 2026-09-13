@@ -2114,3 +2114,188 @@ fn mail_send_take_items_and_delete() {
         .iter()
         .any(|m| matches!(m, ServerMessage::MailDelete { index } if *index == mail.index)));
 }
+
+#[test]
+fn marriage_ring_teleport_and_horses() {
+    use crate::data::{NpcActionDef, NpcCheckDef};
+    use mir_proto::{horse_type, item_type, slot, ServerMessage as S};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let mut bob_rec = test_character("Bob");
+    bob_rec.id = 2;
+    let bob = world.add_player(2, 2, &bob_rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let action = |t: i32, i1: i32| NpcActionDef {
+        action_type: t,
+        string1: String::new(),
+        int1: i1,
+        int2: 0,
+        item1: 0,
+        map1: 0,
+        stat1: 0,
+    };
+    let check = |t: i32, op: i32, i1: i32| NpcCheckDef {
+        check_type: t,
+        operator: op,
+        string1: String::new(),
+        int1: i1,
+        int2: 0,
+        item1: 0,
+        stat1: 0,
+        fail_page: 0,
+    };
+    let map = world.objects[&alice].map;
+    let loc = world.objects[&alice].location;
+
+    // ---- Marriage: face to face, level 22, 500,000 gold each ----
+    let (dir, cell) = Direction::ALL
+        .iter()
+        .map(|d| (*d, loc.step(*d, 1)))
+        .find(|(_, p)| world.maps[&map].file.is_walkable(p.x, p.y))
+        .expect("walkable neighbour");
+    world.teleport(bob, cell);
+    world.test_face(alice, dir);
+    world.test_face(bob, dir.opposite());
+    for id in [alice, bob] {
+        world
+            .objects
+            .get_mut(&id)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .level = 22;
+        world.test_set_gold(id, 600_000);
+    }
+    assert!(!world.test_npc_check(alice, &check(11, 0, 0)));
+    world.test_npc_action(alice, &action(8, 0));
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, S::MarriageInvite { from } if from == "Alice")));
+    world.marriage_response(bob, true);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(
+        |m| matches!(m, S::MarriageInfo { partner: Some(p), .. } if p == "Bob" || p == "Alice")
+    ));
+    assert_eq!(world.test_gold(alice), 100_000);
+    assert_eq!(world.test_gold(bob), 100_000);
+    assert_eq!(
+        world.objects[&alice]
+            .player()
+            .unwrap()
+            .partner
+            .as_ref()
+            .map(|(_, n)| n.as_str()),
+        Some("Bob")
+    );
+    assert!(world.test_npc_check(alice, &check(11, 0, 0)));
+    assert!(!world.test_npc_check(alice, &check(12, 0, 0)));
+
+    // A ring from the bag becomes the wedding ring on the left finger.
+    let ring = world
+        .data
+        .items
+        .values()
+        .filter(|d| d.item_type == item_type::RING && d.required_amount <= 1)
+        .min_by_key(|d| d.index)
+        .expect("a ring")
+        .index;
+    world.test_give_item(alice, ring, 1);
+    let ring_slot = world.test_slot_of(alice, ring).unwrap();
+    world.marriage_make_ring(alice, ring_slot);
+    {
+        let p = world.objects[&alice].player().unwrap();
+        let worn = p.bag.equipment[slot::RING_L].as_ref().expect("ring worn");
+        assert_eq!(p.wedding_ring, Some(worn.id));
+    }
+    assert!(world.test_npc_check(alice, &check(12, 0, 0)));
+
+    // The ring teleports to the partner within 10 cells, then waits 2 min.
+    world.data.maps.get_mut(&map).unwrap().can_marriage_recall = true;
+    let far = (0..world.maps[&map].file.width as i32)
+        .flat_map(|x| (0..world.maps[&map].file.height as i32).map(move |y| Point::new(x, y)))
+        .find(|p| {
+            p.distance(loc) >= 20
+                && p.distance(loc) <= 40
+                && world.maps[&map].file.is_walkable(p.x, p.y)
+                && world.maps[&map].objects_at(*p).is_empty()
+        })
+        .expect("a far cell");
+    world.teleport(bob, far);
+    drain(&mut world);
+    world.marriage_teleport(alice);
+    assert!(world.objects[&alice].location.distance(far) <= 10);
+    world.marriage_teleport(alice);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, S::Say { text, .. } if text.contains("another"))));
+
+    // Divorce clears both sides and the ring flag.
+    world.test_npc_action(alice, &action(9, 0));
+    assert!(world.objects[&alice].player().unwrap().partner.is_none());
+    assert!(world.objects[&bob].player().unwrap().partner.is_none());
+    assert!(world.objects[&alice]
+        .player()
+        .unwrap()
+        .wedding_ring
+        .is_none());
+    assert!(!world.test_npc_check(alice, &check(11, 0, 0)));
+
+    // ---- Horses: owned through the NPC, ridden where the map allows ----
+    drain(&mut world);
+    world.mount_toggle(alice);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, S::Say { text, .. } if text.contains("do not own"))));
+    let (bag_before, ac_before) = {
+        let o = &world.objects[&alice];
+        (o.player().unwrap().max_bag, o.stats.max_ac)
+    };
+    world.test_npc_action(alice, &action(6, horse_type::WHITE as i32));
+    {
+        let o = &world.objects[&alice];
+        assert_eq!(o.player().unwrap().horse, horse_type::WHITE);
+        assert_eq!(o.player().unwrap().max_bag, bag_before + 100);
+        assert_eq!(o.stats.max_ac, ac_before + 5);
+    }
+    assert!(world.test_npc_check(alice, &check(10, 0, horse_type::WHITE as i32)));
+    world.data.maps.get_mut(&map).unwrap().can_horse = false;
+    world.mount_toggle(alice);
+    assert!(!world.objects[&alice].player().unwrap().mounted);
+    world.data.maps.get_mut(&map).unwrap().can_horse = true;
+    world.tick(5_000);
+    drain(&mut world);
+    world.mount_toggle(alice);
+    assert!(world.objects[&alice].player().unwrap().mounted);
+    world.tick(6_000);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(m,
+        S::ObjectAppearance { id, appearance: Appearance::Player { horse, .. } } if *id == alice && *horse == horse_type::WHITE)));
+    // No attacking from the saddle; a run covers three cells.
+    world.player_attack(alice, dir, None);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, S::Chat { text } if text.contains("riding"))));
+    let start = world.objects[&alice].location;
+    let ride = Direction::ALL.iter().copied().find(|d| {
+        (1..=3).all(|i| {
+            let p = start.step(*d, i);
+            world.maps[&map].file.is_walkable(p.x, p.y) && world.maps[&map].objects_at(p).is_empty()
+        })
+    });
+    if let Some(d) = ride {
+        world.tick(7_000);
+        world.player_move(alice, d, true);
+        assert_eq!(world.objects[&alice].location, start.step(d, 3));
+    }
+    // Dying throws the rider off.
+    world.test_kill(alice);
+    assert!(!world.objects[&alice].player().unwrap().mounted);
+}

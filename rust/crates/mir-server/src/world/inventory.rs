@@ -145,6 +145,9 @@ impl World {
     pub(super) fn item_use_inner(&mut self, id: ObjectId, slot: u8) -> Result<Changed, String> {
         let o = self.objects.get(&id).ok_or("no player")?;
         let p = o.player().ok_or("no player")?;
+        if p.mounted {
+            return Err("You cannot use items while riding".into());
+        }
         let item = p
             .bag
             .inventory
