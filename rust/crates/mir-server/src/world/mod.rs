@@ -303,6 +303,8 @@ pub struct PlayerData {
     pub attack_mode: u8,
     /// Zircon `Stat.PKPoint`; `pk_tick` is the next decay time.
     pub pk_points: i32,
+    /// Zircon `Character.Fame`: held `FameInfo` index (0 = none).
+    pub fame: i32,
     pub pk_tick: u64,
     /// Zircon brown buff: end time and current state (kept in sync each tick).
     pub brown_until: u64,
@@ -721,6 +723,10 @@ pub struct World {
     /// Zircon `DayTime`: 0 night .. 1 day, broadcast on change.
     pub day_time: f32,
     pub npc_store: NpcStore,
+    /// NPC page scripts (Lua).
+    pub scripts: lua::ScriptEngine,
+    /// Script file of the page whose checks/actions are running.
+    npc_script: Option<String>,
     pending_monster_spells: Vec<PendingMonsterSpell>,
     ai_profiles: HashMap<i32, ai_profile::AiProfile>,
     pending_magics: Vec<PendingMagic>,
@@ -750,10 +756,12 @@ mod buffs;
 mod chat;
 mod combat;
 mod companion;
+pub mod fame;
 mod gathering;
 mod groups;
 mod guilds;
 mod inventory;
+mod lua;
 mod magic;
 mod magic_wave4;
 mod magic_wave5;
@@ -840,6 +848,8 @@ impl World {
             pending_hits: Vec::new(),
             day_time: 1.0,
             npc_store: NpcStore::default(),
+            scripts: lua::ScriptEngine::new(),
+            npc_script: None,
             pending_monster_spells: Vec::new(),
             ai_profiles: HashMap::new(),
             pending_magics: Vec::new(),
@@ -871,6 +881,7 @@ impl World {
         self.npc_store = NpcStore::load(dir.join("npc_lists.json"));
         self.guild_store = guilds::GuildStore::load(dir.join("guilds.json"));
         self.mail_store = mail::MailStore::load(dir.join("mail.json"));
+        self.scripts.set_root(dir.join("scripts").join("npc"));
     }
 
     /// Objects on a map, in insertion order (empty when the map is not loaded).

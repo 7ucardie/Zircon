@@ -60,6 +60,22 @@ impl World {
                 self.send_to(id, ServerMessage::NpcClose);
                 return;
             };
+            // Scripted pages: `on_open` may redirect or cancel.
+            self.npc_script = (!def.script_file.trim().is_empty()).then(|| def.script_file.clone());
+            if let Some(nav) = self.script_on_open(id) {
+                match nav {
+                    None => {
+                        self.npc_script = None;
+                        self.npc_close(id);
+                        self.send_to(id, ServerMessage::NpcClose);
+                        return;
+                    }
+                    Some(target) => {
+                        page = target;
+                        continue;
+                    }
+                }
+            }
             let mut failed = None;
             for c in &def.checks {
                 if !self.npc_check(id, c) {
@@ -260,10 +276,10 @@ impl World {
                 }
                 None => true,
             },
-            // Fame titles do not exist yet.
-            21 => false,
-            // Lua scripts are not supported: the check passes.
-            22 => true,
+            // Fame: the next title exists and its Fame Point cost is covered.
+            21 => self.fame_check(id),
+            // Lua: `StringParameter1` names a function in the page's script.
+            22 => self.script_check(id, &c.string1),
             _ => true,
         }
     }
@@ -409,8 +425,9 @@ impl World {
             8 => self.marriage_request(id),
             9 => self.marriage_leave(id),
             10 => self.marriage_remove_ring(id),
-            // Element/refine/fame/script actions need systems that do not
-            // exist yet.
+            22 => self.promote_fame(id),
+            23 => self.script_action(id, &a.string1),
+            // Element/refine actions live on their own pages.
             _ => {}
         }
     }
@@ -569,6 +586,170 @@ impl World {
                     text: format!("Sold {sold} item(s) for {earned} gold."),
                 },
             );
+        }
+    }
+}
+
+// ---- Lua page scripts (Zircon NpcScriptEngine) ---------------------------
+
+impl World {
+    fn script_view(&self, id: ObjectId) -> Option<lua::PlayerView> {
+        let p = self.objects.get(&id)?.player()?;
+        let mut items: HashMap<String, u32> = HashMap::new();
+        for it in p.bag.inventory.iter().flatten() {
+            if let Some(d) = self.data.items.get(&it.info) {
+                *items.entry(d.name.to_ascii_lowercase()).or_insert(0) += it.count;
+            }
+        }
+        Some(lua::PlayerView {
+            name: p.name.clone(),
+            level: p.level,
+            gold: p.bag.gold,
+            items,
+        })
+    }
+
+    /// Apply what a script asked for; returns the navigation request.
+    fn apply_script_commands(
+        &mut self,
+        id: ObjectId,
+        commands: Vec<lua::Command>,
+    ) -> Option<String> {
+        let mut navigate = None;
+        for cmd in commands {
+            match cmd {
+                lua::Command::GiveGold(n) => {
+                    if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                        p.bag.gold = p.bag.gold.saturating_add(n);
+                    }
+                    self.send_gold(id);
+                }
+                lua::Command::TakeGold(n) => {
+                    if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                        if p.bag.gold >= n {
+                            p.bag.gold -= n;
+                        }
+                    }
+                    self.send_gold(id);
+                }
+                lua::Command::GiveItem(name, count) => {
+                    let Some(info) = self
+                        .data
+                        .items
+                        .values()
+                        .find(|d| d.name.eq_ignore_ascii_case(&name))
+                        .map(|d| d.index)
+                    else {
+                        tracing::warn!("[NpcScript] give_item: no item named {name:?}");
+                        continue;
+                    };
+                    let changes = {
+                        let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+                            continue;
+                        };
+                        if !p.bag.can_gain(&self.data, info, count, p.max_bag) {
+                            continue;
+                        }
+                        let mut next = p.next_item_id;
+                        let c = p.bag.gain(&self.data, info, count, &mut next);
+                        p.next_item_id = next;
+                        c
+                    };
+                    self.send_changes(id, changes);
+                }
+                lua::Command::TakeItem(name, count) => {
+                    let Some(info) = self
+                        .data
+                        .items
+                        .values()
+                        .find(|d| d.name.eq_ignore_ascii_case(&name))
+                        .map(|d| d.index)
+                    else {
+                        continue;
+                    };
+                    let changes = self
+                        .objects
+                        .get_mut(&id)
+                        .and_then(|o| o.player_mut())
+                        .map(|p| p.bag.take_info(info, count))
+                        .unwrap_or_default();
+                    self.send_changes(id, changes);
+                }
+                lua::Command::Message(text) => {
+                    if !text.is_empty() {
+                        self.send_to(id, ServerMessage::Chat { text });
+                    }
+                }
+                lua::Command::Navigate(page) => navigate = Some(page),
+            }
+        }
+        navigate
+    }
+
+    /// Run `func(player, npc)` from the current page's script. `None` when
+    /// there is no script or function; otherwise the return value and any
+    /// navigation the script asked for.
+    #[allow(clippy::type_complexity)]
+    fn run_script(
+        &mut self,
+        id: ObjectId,
+        func: &str,
+    ) -> Option<Result<(mlua::Value, Option<String>), String>> {
+        let file = self.npc_script.clone()?;
+        if func.trim().is_empty() {
+            return None;
+        }
+        let view = self.script_view(id)?;
+        let result = self.scripts.call(&file, func, &view)?;
+        Some(match result {
+            Ok(r) => {
+                let nav = self.apply_script_commands(id, r.commands);
+                Ok((r.value, nav))
+            }
+            Err(e) => {
+                tracing::error!("[NpcScript] {e}");
+                Err(e)
+            }
+        })
+    }
+
+    /// `NPCCheckType.Script`: false only when the function returns false or
+    /// nil, or fails; a missing script or function passes.
+    pub(super) fn script_check(&mut self, id: ObjectId, func: &str) -> bool {
+        match self.run_script(id, func) {
+            None => true,
+            Some(Err(_)) => false,
+            Some(Ok((value, _))) => {
+                !matches!(value, mlua::Value::Boolean(false) | mlua::Value::Nil)
+            }
+        }
+    }
+
+    /// `NPCActionType.Script`.
+    pub(super) fn script_action(&mut self, id: ObjectId, func: &str) {
+        let _ = self.run_script(id, func);
+    }
+
+    /// `on_open` hook: `Some(Some(page))` redirects to the page with that
+    /// description, `Some(None)` cancels, `None` carries on.
+    fn script_on_open(&mut self, id: ObjectId) -> Option<Option<i32>> {
+        let (_, nav) = self.run_script(id, "on_open")?.ok()?;
+        let nav = nav?;
+        if nav.trim().is_empty() {
+            return Some(None);
+        }
+        let target = self
+            .data
+            .npc_pages
+            .values()
+            .find(|p| p.description.eq_ignore_ascii_case(nav.trim()))
+            .map(|p| p.index);
+        match target {
+            Some(t) => Some(Some(t)),
+            None => {
+                tracing::warn!("[NpcScript] navigate: no page described {nav:?}");
+                None
+            }
         }
     }
 }

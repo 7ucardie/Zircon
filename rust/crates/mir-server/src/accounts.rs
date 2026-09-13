@@ -61,6 +61,9 @@ pub struct CharacterRecord {
     pub attack_mode: u8,
     #[serde(default)]
     pub pk_points: i32,
+    /// Zircon `Character.Fame`: the held `FameInfo` index (0 = none).
+    #[serde(default)]
+    pub fame: i32,
     /// Zircon `Account.Horse` (per character here).
     #[serde(default)]
     pub horse: u8,
@@ -338,6 +341,7 @@ impl Accounts {
             allow_group: false,
             attack_mode: 0,
             pk_points: 0,
+            fame: 0,
             horse: 0,
             partner: 0,
             partner_name: String::new(),
@@ -435,6 +439,7 @@ pub fn test_character(name: &str) -> CharacterRecord {
         allow_group: false,
         attack_mode: 0,
         pk_points: 0,
+        fame: 0,
         horse: 0,
         partner: 0,
         partner_name: String::new(),

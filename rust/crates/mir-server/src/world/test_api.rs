@@ -544,6 +544,49 @@ impl World {
         }
     }
 
+    /// Test helper: set an NPC currency amount by `CurrencyType`.
+    #[cfg(test)]
+    pub fn test_set_currency_by_type(&mut self, id: ObjectId, currency_type: i32, amount: i64) {
+        let Some(idx) = self
+            .data
+            .currencies
+            .iter()
+            .find(|c| c.currency_type == currency_type)
+            .map(|c| c.index)
+        else {
+            return;
+        };
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.currencies.insert(idx, amount);
+        }
+    }
+
+    /// Test helper: the held fame title index.
+    #[cfg(test)]
+    pub fn test_fame(&self, id: ObjectId) -> i32 {
+        self.objects[&id].player().map(|p| p.fame).unwrap_or(0)
+    }
+
+    /// Test helper: pretend the running page names this script file.
+    #[cfg(test)]
+    pub fn test_set_script(&mut self, file: Option<&str>) {
+        self.npc_script = file.map(|f| f.to_string());
+    }
+
+    /// Test helper: run a page through `npc_run_page` with a fake NPC.
+    #[cfg(test)]
+    pub fn test_run_page(&mut self, id: ObjectId, page: i32) {
+        self.npc_run_page(id, ObjectId(0), page);
+    }
+
+    /// Test helper: give a page a script file.
+    #[cfg(test)]
+    pub fn test_set_page_script(&mut self, page: i32, file: &str) {
+        if let Some(p) = self.data.npc_pages.get_mut(&page) {
+            p.script_file = file.to_string();
+        }
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

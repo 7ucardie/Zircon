@@ -1336,6 +1336,9 @@ pub struct PlayerStats {
     pub accuracy: i32,
     pub agility: i32,
     pub attack_speed: i32,
+    /// Held fame title (Zircon `Stat.Fame` = `FameInfo` index, 0 = none) and its name.
+    pub fame: i32,
+    pub fame_title: String,
 }
 
 /// Summary of a character on the select screen.

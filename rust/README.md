@@ -313,9 +313,24 @@ Dialog pages run Zircon's checks and actions: levels, class, gold, items,
 random rolls, currencies by name (`CurrencyInfo`), named data lists and
 values (`GameNPCList`, persisted in `npc_lists.json` under `--data`) and
 rebirth at level 86 + rebirths, weapon level/element/added stats from
-refining, horses and marriage. `NPCRequirement` rows hide an NPC from
-players who do not meet them. Fame and Lua script actions have no system
-behind them yet.
+refining, horses, marriage and fame. `NPCRequirement` rows hide an NPC
+from players who do not meet them.
+
+Fame follows Zircon's `FameInfo`: an NPC page with the `CheckFame` check
+and `PromoteFame` action sells the next title in order for Fame Points
+(the `FP` currency, granted by NPC currency actions and quest rewards); a
+held title adds its stats permanently, pays its item rewards once and
+shows in the character window's "Fame" row.
+
+Pages can be scripted in Lua as in Zircon's `NpcScriptEngine`: a page's
+`ScriptFile` names a file under `<data dir>/scripts/npc/` (then
+`$ZIRCON_SCRIPTS`, then the crate's `scripts/npc/`, which holds
+`example.lua`); `Script` checks and actions call the named function with
+`(player, npc)`, and `on_open` may redirect (`npc.navigate("Page
+description")`) or cancel (`npc.navigate("")`) the page. Scripts see
+`player.name/level/gold/has_item(name, count)` and can `npc.give_gold`,
+`take_gold`, `give_item`, `take_item`, `message`; they run sandboxed
+(no io/os) and errors fail the check. See `docs/research/fame-lua.md`.
 
 ## Quests
 

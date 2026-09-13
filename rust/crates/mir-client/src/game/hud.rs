@@ -79,6 +79,7 @@ impl Game {
                 max_ac: stats.max_ac,
                 accuracy: stats.accuracy,
                 agility: stats.agility,
+                fame_title: stats.fame_title.clone(),
             };
             let bag = Bag {
                 inventory,

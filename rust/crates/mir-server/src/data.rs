@@ -255,11 +255,30 @@ pub struct QuestRewardDef {
 }
 
 /// `CurrencyInfo`.
+/// Zircon `FameInfo`: a title bought with Fame Points at an NPC, carrying
+/// permanent buff stats and one-off item rewards.
+#[derive(Debug, Clone)]
+pub struct FameDef {
+    pub index: i32,
+    pub name: String,
+    pub shape: i32,
+    pub description: String,
+    /// Fame Points the promotion costs.
+    pub cost: i32,
+    pub order: i32,
+    /// (stat id, amount) granted while the title is held.
+    pub stats: Vec<(i32, i32)>,
+    /// (item, amount) handed over on promotion.
+    pub rewards: Vec<(i32, i32)>,
+}
+
 #[derive(Debug, Clone)]
 pub struct CurrencyDef {
     pub index: i32,
     pub name: String,
     pub abbreviation: String,
+    /// Zircon `CurrencyType`: Gold 0, GameGold 1, HuntGold 2, Other 3, FP 4, CP 5.
+    pub currency_type: i32,
     /// The `ItemInfo` that represents this currency when dropped or rewarded.
     pub drop_item: i32,
     pub exchange_rate: f64,
@@ -322,6 +341,9 @@ pub struct NpcPageDef {
     pub say: String,
     pub success_page: i32,
     pub arguments: String,
+    /// Lua file (under the scripts directory) whose functions the page's
+    /// Script checks and actions call; "" when the page has none.
+    pub script_file: String,
     pub buttons: Vec<(i32, i32)>,
     pub goods: Vec<(i32, f64)>,
     pub checks: Vec<NpcCheckDef>,
@@ -459,6 +481,8 @@ pub struct GameData {
     pub fishing_drops: Vec<FishingDropDef>,
     pub guards: Vec<GuardDef>,
     pub currencies: Vec<CurrencyDef>,
+    /// Zircon `FameInfo` titles in promotion order.
+    pub fames: Vec<FameDef>,
     pub companions: Vec<CompanionDef>,
     pub companion_levels: Vec<CompanionLevelDef>,
     pub quests: HashMap<i32, QuestDef>,
@@ -731,6 +755,7 @@ impl GameData {
                         say: c.str_or(r, "Say", "").to_string(),
                         success_page: i32_of(c, r, "SuccessPage"),
                         arguments: c.str_or(r, "Arguments", "").to_string(),
+                        script_file: c.str_or(r, "ScriptFile", "").to_string(),
                         buttons: Vec::new(),
                         goods: Vec::new(),
                         checks: Vec::new(),
@@ -920,12 +945,48 @@ impl GameData {
                     index: c.index(r),
                     name: c.str_or(r, "Name", "").to_string(),
                     abbreviation: c.str_or(r, "Abbreviation", "").to_string(),
+                    currency_type: i32_of(c, r, "Type"),
                     drop_item: i32_of(c, r, "DropItem"),
                     exchange_rate: c.float_or(r, "ExchangeRate", 1.0),
                 })
                 .collect(),
             None => Vec::new(),
         };
+        let mut fames: Vec<FameDef> = match db.collection("FameInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| FameDef {
+                    index: c.index(r),
+                    name: c.str_or(r, "Name", "").to_string(),
+                    shape: i32_of(c, r, "Shape"),
+                    description: c.str_or(r, "Description", "").to_string(),
+                    cost: i32_of(c, r, "Cost"),
+                    order: i32_of(c, r, "Order"),
+                    stats: Vec::new(),
+                    rewards: Vec::new(),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        if let Some(c) = db.collection("FameInfoStat") {
+            for r in &c.records {
+                let fame = i32_of(c, r, "Fame");
+                if let Some(f) = fames.iter_mut().find(|f| f.index == fame) {
+                    f.stats.push((i32_of(c, r, "Stat"), i32_of(c, r, "Amount")));
+                }
+            }
+        }
+        if let Some(c) = db.collection("FameInfoReward") {
+            for r in &c.records {
+                let fame = i32_of(c, r, "Fame");
+                if let Some(f) = fames.iter_mut().find(|f| f.index == fame) {
+                    f.rewards
+                        .push((i32_of(c, r, "Item"), i32_of(c, r, "Amount")));
+                }
+            }
+        }
+        fames.sort_by_key(|f| f.order);
         let companions = match db.collection("CompanionInfo") {
             Some(c) => c
                 .records
@@ -1057,6 +1118,7 @@ impl GameData {
             fishing_drops,
             guards,
             currencies,
+            fames,
             companions,
             companion_levels,
             quests,

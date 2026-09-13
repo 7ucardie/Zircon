@@ -3339,3 +3339,152 @@ fn monster_ai_wave_four_fields_purify_healer_and_behaviours() {
     );
     world.test_set_behaviours(brute, 0);
 }
+
+#[test]
+fn fame_titles_are_bought_with_fame_points_and_buff_stats() {
+    use crate::data::{NpcActionDef, NpcCheckDef};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Famous")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let check = NpcCheckDef {
+        check_type: 21,
+        operator: 0,
+        string1: String::new(),
+        int1: 0,
+        int2: 0,
+        item1: 0,
+        stat1: 0,
+        fail_page: 0,
+    };
+    let promote = NpcActionDef {
+        action_type: 22,
+        string1: String::new(),
+        int1: 0,
+        int2: 0,
+        item1: 0,
+        map1: 0,
+        stat1: 0,
+    };
+    let first = world
+        .data
+        .fames
+        .first()
+        .cloned()
+        .expect("fame titles in the pack");
+    // Without Fame Points the check fails and the promotion is refused.
+    assert!(!world.test_npc_check(me, &check));
+    world.test_npc_action(me, &promote);
+    assert_eq!(world.test_fame(me), 0);
+    // With enough points the title is bought, its stats apply and the
+    // character sheet names it.
+    let dc_before = world.objects[&me].stats.max_dc;
+    world.test_set_currency_by_type(me, world::fame::CURRENCY_FP, first.cost as i64 + 5);
+    assert!(world.test_npc_check(me, &check));
+    drain(&mut world);
+    world.test_npc_action(me, &promote);
+    assert_eq!(world.test_fame(me), first.index);
+    assert_eq!(world.test_currency_total(me), 5);
+    let max_dc_bonus = first
+        .stats
+        .iter()
+        .filter(|(s, _)| *s == mir_formats::mirdb::stat::MAX_DC)
+        .map(|(_, a)| *a)
+        .sum::<i32>();
+    assert_eq!(world.objects[&me].stats.max_dc, dc_before + max_dc_bonus);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(m,
+        ServerMessage::StatsChanged(s) if s.fame == first.index && s.fame_title == first.name)));
+    // The next title costs more than what is left.
+    assert!(!world.test_npc_check(me, &check));
+}
+
+#[test]
+fn lua_page_scripts_run_checks_actions_and_on_open() {
+    use crate::data::{NpcActionDef, NpcCheckDef};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Scripted")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let check = |func: &str| NpcCheckDef {
+        check_type: 22,
+        operator: 0,
+        string1: func.into(),
+        int1: 0,
+        int2: 0,
+        item1: 0,
+        stat1: 0,
+        fail_page: 0,
+    };
+    let action = |func: &str| NpcActionDef {
+        action_type: 23,
+        string1: func.into(),
+        int1: 0,
+        int2: 0,
+        item1: 0,
+        map1: 0,
+        stat1: 0,
+    };
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .map(|d| d.index)
+        .expect("healing potion");
+    // No script on the page: checks pass (Zircon has no opinion).
+    world.test_set_script(None);
+    assert!(world.test_npc_check(me, &check("is_rich")));
+    // The example script: is_rich needs 1000 gold, has_potion a potion.
+    world.test_set_script(Some("example.lua"));
+    world.test_set_gold(me, 10);
+    assert!(!world.test_npc_check(me, &check("is_rich")));
+    assert!(!world.test_npc_check(me, &check("has_potion")));
+    // Unknown functions and missing files pass.
+    assert!(world.test_npc_check(me, &check("no_such_function")));
+    world.test_set_script(Some("missing.lua"));
+    assert!(world.test_npc_check(me, &check("is_rich")));
+    world.test_set_script(Some("example.lua"));
+    world.test_set_gold(me, 1500);
+    assert!(world.test_npc_check(me, &check("is_rich")));
+    // reward: takes 1000 gold, gives two potions, says something.
+    drain(&mut world);
+    world.test_npc_action(me, &action("reward"));
+    assert_eq!(world.test_gold(me), 500);
+    assert!(world
+        .test_bag(me)
+        .1
+        .iter()
+        .any(|(info, count)| *info == potion && *count == 2));
+    assert!(world.test_npc_check(me, &check("has_potion")));
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(m,
+        ServerMessage::Chat { text } if text == "Enjoy the potions, Scripted.")));
+    // on_open cancels the page for level 99 characters.
+    let page = world.test_page_with_dialog_type(0);
+    world.test_set_page_script(page, "example.lua");
+    world.test_run_page(me, page);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::NpcResponse { .. })));
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .level = 99;
+    world.test_run_page(me, page);
+    let msgs = drain(&mut world);
+    assert!(msgs.iter().any(|m| matches!(m, ServerMessage::NpcClose)));
+    assert!(!msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::NpcResponse { .. })));
+}
