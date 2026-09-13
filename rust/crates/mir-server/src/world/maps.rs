@@ -305,6 +305,7 @@ impl World {
             }
         }
         self.refresh_safe_zone(id);
+        self.refresh_war_flags();
         if !self.data.maps.get(&map).is_some_and(|m| m.can_horse) {
             self.remove_mount(id);
         }

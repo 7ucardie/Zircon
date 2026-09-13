@@ -11,8 +11,11 @@ use super::*;
 use mir_proto::{guild_permission, ChatKind, GuildMemberSummary, GuildSummary};
 
 /// Zircon `Globals`: creation 7,500,000 gold plus 1,000,000 per member
-/// slot; names 2-15 alphanumerics; notice up to 4000 chars.
+/// slot; names 2-15 alphanumerics; notice up to 4000 chars; a war costs
+/// 200,000 from the funds and lasts two hours.
 pub const GUILD_CREATION_COST: u64 = 7_500_000;
+pub const GUILD_WAR_COST: u64 = 200_000;
+pub const GUILD_WAR_SECS: u64 = 2 * 60 * 60;
 pub const GUILD_MEMBER_COST: u64 = 1_000_000;
 pub const MAX_NOTICE: usize = 4000;
 pub const MAX_MEMBER_LIMIT: i32 = 100;
@@ -43,10 +46,41 @@ pub struct Guild {
     pub members: Vec<GuildMember>,
 }
 
+/// A guild war (Zircon `GuildWarInfo`): two hours from the declaration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GuildWar {
+    pub guild1: u32,
+    pub guild2: u32,
+    /// Unix seconds when it ends.
+    pub ends_at: u64,
+}
+
+/// Which guild holds a castle (Zircon `GuildInfo.Castle`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CastleOwner {
+    pub castle: i32,
+    pub guild: u32,
+}
+
+/// A guild signed up for a castle's next war (Zircon `UserConquest`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConquestRequest {
+    pub castle: i32,
+    pub guild: u32,
+    /// Unix seconds of the midnight before the war.
+    pub war_day: u64,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct GuildStore {
     pub guilds: Vec<Guild>,
     pub next_id: u32,
+    #[serde(default)]
+    pub wars: Vec<GuildWar>,
+    #[serde(default)]
+    pub castles: Vec<CastleOwner>,
+    #[serde(default)]
+    pub conquests: Vec<ConquestRequest>,
     #[serde(skip)]
     path: Option<PathBuf>,
 }
@@ -61,7 +95,7 @@ impl GuildStore {
         store
     }
 
-    fn save(&self) {
+    pub(super) fn save(&self) {
         if let Some(p) = &self.path {
             if let Ok(json) = serde_json::to_vec_pretty(self) {
                 let _ = std::fs::write(p, json);
@@ -78,6 +112,38 @@ impl GuildStore {
     }
 
     /// The guild a character belongs to.
+    /// The guild that owns a castle.
+    pub fn castle_owner(&self, castle: i32) -> Option<u32> {
+        self.castles
+            .iter()
+            .find(|c| c.castle == castle)
+            .map(|c| c.guild)
+    }
+
+    /// The castle a guild owns.
+    pub fn castle_of(&self, guild: u32) -> Option<i32> {
+        self.castles
+            .iter()
+            .find(|c| c.guild == guild)
+            .map(|c| c.castle)
+    }
+
+    /// Guilds `guild` is at war with.
+    pub fn enemies_of(&self, guild: u32) -> Vec<u32> {
+        self.wars
+            .iter()
+            .filter_map(|w| {
+                if w.guild1 == guild {
+                    Some(w.guild2)
+                } else if w.guild2 == guild {
+                    Some(w.guild1)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
     pub fn of_character(&self, character: u32) -> Option<u32> {
         self.guilds
             .iter()
@@ -98,7 +164,7 @@ fn valid_name(name: &str) -> bool {
 }
 
 impl World {
-    fn guild_line(&mut self, id: ObjectId, text: String) {
+    pub(super) fn guild_line(&mut self, id: ObjectId, text: String) {
         self.send_to(
             id,
             ServerMessage::Say {
@@ -109,7 +175,7 @@ impl World {
         );
     }
 
-    fn guild_of(&self, id: ObjectId) -> Option<u32> {
+    pub(super) fn guild_of(&self, id: ObjectId) -> Option<u32> {
         self.objects.get(&id)?.player()?.guild
     }
 
@@ -128,7 +194,7 @@ impl World {
     }
 
     /// Online members of a guild.
-    fn guild_online(&self, guild: u32) -> Vec<ObjectId> {
+    pub(super) fn guild_online(&self, guild: u32) -> Vec<ObjectId> {
         self.players()
             .filter(|o| o.player().is_some_and(|p| p.guild == Some(guild)))
             .map(|o| o.id)
@@ -163,11 +229,186 @@ impl World {
                     online: self.online_character(m.character).is_some(),
                 })
                 .collect(),
+            castle: self
+                .guild_store
+                .castle_of(guild)
+                .and_then(|c| self.data.castles.iter().find(|d| d.index == c))
+                .map(|d| d.name.clone())
+                .unwrap_or_default(),
+            wars: {
+                let now = crate::accounts::now_secs();
+                self.guild_store
+                    .wars
+                    .iter()
+                    .filter(|w| w.guild1 == guild || w.guild2 == guild)
+                    .filter_map(|w| {
+                        let other = if w.guild1 == guild {
+                            w.guild2
+                        } else {
+                            w.guild1
+                        };
+                        let name = self.guild_store.get(other)?.name.clone();
+                        Some((name, w.ends_at.saturating_sub(now)))
+                    })
+                    .collect()
+            },
         })
     }
 
+    /// Zircon `GuildWar`: StartWar permission, a real other guild, no war
+    /// yet, 200,000 from the funds; two hours; both guilds told.
+    pub fn guild_war(&mut self, id: ObjectId, name: String) {
+        let Some((guild, permission, _)) = self.member_permission(id) else {
+            self.guild_line(id, "You are not in a guild.".into());
+            return;
+        };
+        if !has(permission, guild_permission::START_WAR) {
+            self.guild_line(id, "You do not have permission to start a war.".into());
+            return;
+        }
+        let Some(target) = self
+            .guild_store
+            .guilds
+            .iter()
+            .find(|g| g.name.eq_ignore_ascii_case(&name))
+            .map(|g| g.id)
+        else {
+            self.guild_line(id, format!("Could not find the guild {name}."));
+            return;
+        };
+        let tname = self.guild_store.get(target).unwrap().name.clone();
+        if target == guild {
+            self.guild_line(id, "You cannot declare war on your own guild.".into());
+            return;
+        }
+        if self.guild_store.enemies_of(guild).contains(&target) {
+            self.guild_line(id, format!("You are already at war with {tname}."));
+            return;
+        }
+        {
+            let g = self.guild_store.get_mut(guild).unwrap();
+            if g.funds < GUILD_WAR_COST as i64 {
+                self.guild_line(id, "The guild cannot afford a war.".into());
+                return;
+            }
+            g.funds -= GUILD_WAR_COST as i64;
+        }
+        let ends_at = crate::accounts::now_secs() + GUILD_WAR_SECS;
+        self.guild_store.wars.push(GuildWar {
+            guild1: guild,
+            guild2: target,
+            ends_at,
+        });
+        self.guild_store.save();
+        let gname = self.guild_store.get(guild).unwrap().name.clone();
+        for (side, enemy) in [(guild, tname), (target, gname)] {
+            for m in self.guild_online(side) {
+                self.send_to(
+                    m,
+                    ServerMessage::GuildWarStarted {
+                        guild: enemy.clone(),
+                        duration_secs: GUILD_WAR_SECS,
+                    },
+                );
+            }
+            self.guild_broadcast_info(side);
+        }
+        self.refresh_war_flags();
+    }
+
+    /// Wars end on their clock; both sides hear about it.
+    pub(super) fn process_guild_wars(&mut self) {
+        if self.guild_store.wars.is_empty() {
+            return;
+        }
+        let now = crate::accounts::now_secs();
+        let over: Vec<GuildWar> = self
+            .guild_store
+            .wars
+            .iter()
+            .filter(|w| now >= w.ends_at)
+            .cloned()
+            .collect();
+        if over.is_empty() {
+            return;
+        }
+        self.guild_store.wars.retain(|w| now < w.ends_at);
+        self.guild_store.save();
+        for w in over {
+            let names = (
+                self.guild_store
+                    .get(w.guild1)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default(),
+                self.guild_store
+                    .get(w.guild2)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default(),
+            );
+            for (side, enemy) in [(w.guild1, names.1), (w.guild2, names.0)] {
+                for m in self.guild_online(side) {
+                    self.send_to(
+                        m,
+                        ServerMessage::GuildWarFinished {
+                            guild: enemy.clone(),
+                        },
+                    );
+                }
+                self.guild_broadcast_info(side);
+            }
+        }
+        self.refresh_war_flags();
+    }
+
+    /// Recompute every online player's war flags: the guilds they are at
+    /// war with and whether they stand on a map under conquest (Zircon
+    /// `AtWar`, cached so `hostile_to` needs no world access).
+    pub(super) fn refresh_war_flags(&mut self) {
+        let conquest_map = self.conquest.as_ref().map(|c| c.map);
+        let ids: Vec<ObjectId> = self.players().map(|o| o.id).collect();
+        for id in ids {
+            let o = self.objects.get_mut(&id).unwrap();
+            let map = o.map;
+            let Some(p) = o.player_mut() else {
+                continue;
+            };
+            p.war_guilds = p
+                .guild
+                .map(|g| self.guild_store.enemies_of(g))
+                .unwrap_or_default();
+            p.conquest_map = conquest_map == Some(map);
+        }
+    }
+
+    /// Zircon `GuildWarDeath`: both guilds hear who fell to whom.
+    pub(super) fn guild_war_death(&mut self, victim: ObjectId, killer: ObjectId) {
+        let (Some(vg), Some(kg)) = (self.guild_of(victim), self.guild_of(killer)) else {
+            return;
+        };
+        let vname = self.player_name(victim);
+        let kname = self.player_name(killer);
+        let vg_name = self
+            .guild_store
+            .get(vg)
+            .map(|g| g.name.clone())
+            .unwrap_or_default();
+        let kg_name = self
+            .guild_store
+            .get(kg)
+            .map(|g| g.name.clone())
+            .unwrap_or_default();
+        let line = format!("{vname} of {vg_name} was killed by {kname} of {kg_name}.");
+        let mut members = self.guild_online(vg);
+        if vg != kg {
+            members.extend(self.guild_online(kg));
+        }
+        for m in members {
+            self.guild_line(m, line.clone());
+        }
+    }
+
     /// Send the full guild view to every online member (after any change).
-    fn guild_broadcast_info(&mut self, guild: u32) {
+    pub(super) fn guild_broadcast_info(&mut self, guild: u32) {
         for m in self.guild_online(guild) {
             let info = self.guild_summary(guild, m);
             self.send_to(m, ServerMessage::GuildInfo(info));
@@ -199,6 +440,8 @@ impl World {
         if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
             p.guild = guild;
         }
+        self.refresh_war_flags();
+        self.castle_login(id);
         let Some(guild) = guild else {
             return;
         };
@@ -313,7 +556,7 @@ impl World {
         self.refresh_appearance(id);
     }
 
-    fn member_permission(&self, id: ObjectId) -> Option<(u32, i32, u32)> {
+    pub(super) fn member_permission(&self, id: ObjectId) -> Option<(u32, i32, u32)> {
         let guild = self.guild_of(id)?;
         let character = self.character_of(id)?;
         let m = self
@@ -491,6 +734,7 @@ impl World {
         }
         self.guild_broadcast_info(guild);
         self.refresh_appearance(id);
+        self.refresh_war_flags();
     }
 
     /// Leave; the last leader cannot leave a guild with other members.
@@ -579,6 +823,17 @@ impl World {
         for m in self.guild_online(guild) {
             self.send_to(m, ServerMessage::GuildKick { index });
         }
+        // A dissolved guild loses its wars, castle and conquest requests.
+        if self.guild_store.get(guild).is_none() {
+            self.guild_store
+                .wars
+                .retain(|w| w.guild1 != guild && w.guild2 != guild);
+            self.guild_store.castles.retain(|c| c.guild != guild);
+            self.guild_store.conquests.retain(|c| c.guild != guild);
+            self.guild_store.save();
+            self.castle_broadcast_all();
+        }
+        self.refresh_war_flags();
     }
 
     pub fn guild_tax(&mut self, id: ObjectId, tax: i32) {

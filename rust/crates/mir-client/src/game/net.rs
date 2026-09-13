@@ -806,6 +806,69 @@ impl Game {
                     g.members.retain(|m| m.index != index);
                 }
             }
+            ServerMessage::GuildWarStarted {
+                guild,
+                duration_secs,
+            } => {
+                self.say_colored(
+                    format!(
+                        "Your guild is at war with {guild} for {} minutes.",
+                        duration_secs / 60
+                    ),
+                    now,
+                    [255, 80, 80, 255],
+                );
+            }
+            ServerMessage::GuildWarFinished { guild } => {
+                self.say_colored(
+                    format!("The war with {guild} is over."),
+                    now,
+                    [255, 200, 255, 255],
+                );
+            }
+            ServerMessage::GuildConquestDate { index, war_in_secs } => {
+                let name = self
+                    .castles
+                    .iter()
+                    .find(|c| c.0 == index)
+                    .map(|c| c.1.clone())
+                    .unwrap_or_else(|| format!("castle {index}"));
+                if war_in_secs >= 0 {
+                    self.say_colored(
+                        format!("The war for {name} starts in {} hours.", war_in_secs / 3600),
+                        now,
+                        [255, 200, 255, 255],
+                    );
+                }
+            }
+            ServerMessage::GuildConquestStarted { index } => {
+                self.conquest = Some(index);
+                let name = self
+                    .castles
+                    .iter()
+                    .find(|c| c.0 == index)
+                    .map(|c| c.1.clone())
+                    .unwrap_or_else(|| format!("castle {index}"));
+                self.say_colored(
+                    format!("The conquest of {name} has begun!"),
+                    now,
+                    [255, 80, 80, 255],
+                );
+            }
+            ServerMessage::GuildConquestFinished { index } => {
+                if self.conquest == Some(index) {
+                    self.conquest = None;
+                }
+            }
+            ServerMessage::CastleInfo { index, name, owner } => {
+                match self.castles.iter_mut().find(|c| c.0 == index) {
+                    Some(c) => {
+                        c.1 = name;
+                        c.2 = owner;
+                    }
+                    None => self.castles.push((index, name, owner)),
+                }
+            }
             ServerMessage::GuildMemberOffline { index } => {
                 if let Some(m) = self
                     .guild
@@ -913,6 +976,8 @@ impl Game {
         self.guild = None;
         self.guild_invite = None;
         self.mail.clear();
+        self.castles.clear();
+        self.conquest = None;
         self.partner = None;
         self.wedding_ring = None;
         self.marriage_invite = None;

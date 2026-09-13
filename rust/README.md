@@ -107,6 +107,24 @@ the guild and rank show under the player's name, and the Guild attack
 mode spares guild mates. Guilds persist in `guilds.json` under the data
 directory; see `docs/research/guilds.md` for the rest of the C# rules.
 
+Guild wars and castles follow the same C# (`docs/research/guild-wars-castles.md`).
+A member with the StartWar permission types a guild name in the guild
+window and presses "Declare war": 200,000 leaves the funds, both guilds are
+told, and for two hours members of the two guilds are enemies in the
+War/Red/Brown attack mode with no brown names or PK points for the kills
+(both guilds hear who fell to whom); enemy-guild names show in orange. The
+asset pack's castle, Sabuk Wall, opens its war every day at its start time
+for its duration: a leader of a castle-less guild presses "Request
+conquest" (it costs the castle's item) and the guild is signed up for the
+war the day after tomorrow, when the castle lord appears in the castle
+region, everyone not in the owner guild is moved to the attackers' region
+and, while the war lasts, anyone on the map outside your guild is an enemy.
+Only members of castle-less participating guilds can hurt the lord, one
+point per hit, and the guild that fells him takes the castle: owners earn
+10 % more experience and are announced when the war ends.
+`ZIRCON_DEV_CONQUEST=1` opens the war for everyone as soon as the server
+starts. Castle guards, gates and flags need info tables this pack lacks.
+
 Mail (`M`) works like Zircon's: compose to a character name (offline is
 fine) with a subject, message, gold and up to five bag items (right-click
 them while composing; items need a safe zone), one mail per ten seconds.

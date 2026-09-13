@@ -837,6 +837,31 @@ impl World {
         if magic {
             power += self.burn_shock_bonus(attacker, elem);
         }
+        // The castle lord takes one point per hit from eligible guilds only.
+        if self.is_castle_lord(target) {
+            match self.castle_lord_damage(attacker) {
+                Some(1) => power = 1,
+                _ => return 0,
+            }
+            let (hp, max_hp) = {
+                let o = self.objects.get_mut(&target).unwrap();
+                o.hp -= power;
+                (o.hp, o.max_hp)
+            };
+            self.events.push((
+                target,
+                ServerMessage::HealthChanged {
+                    id: target,
+                    hp,
+                    max_hp,
+                },
+            ));
+            if hp <= 0 {
+                self.castle_lord_died(Some(attacker));
+                self.monster_die(target, attacker);
+            }
+            return power;
+        }
         if let Some((ai, hidden)) = self.objects.get(&target).and_then(|o| match &o.kind {
             Kind::Monster(m) => Some((self.data.monsters[&m.def].ai, m.hidden)),
             _ => None,

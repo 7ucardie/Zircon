@@ -123,6 +123,9 @@ pub struct Game {
     fishing: Option<FishingUi>,
     /// Mailbox (Zircon `MailList`), newest last.
     mail: Vec<mir_proto::MailSummary>,
+    /// Castles: (index, name, owner guild), and the one under conquest.
+    castles: Vec<(i32, String, String)>,
+    conquest: Option<i32>,
     /// Marriage partner, wedding ring item id, and a pending proposal.
     partner: Option<String>,
     wedding_ring: Option<u32>,
@@ -279,6 +282,8 @@ impl Game {
             guild: None,
             fishing: None,
             mail: Vec::new(),
+            castles: Vec::new(),
+            conquest: None,
             partner: None,
             wedding_ring: None,
             marriage_invite: None,

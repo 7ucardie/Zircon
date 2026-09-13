@@ -310,6 +310,10 @@ pub struct PlayerData {
     /// Guild id (resolved from `guilds.json` on entry).
     pub guild: Option<u32>,
     pub guild_invite: Option<ObjectId>,
+    /// Guilds this player's guild is at war with, and whether the player
+    /// stands on a map under conquest (Zircon `AtWar`, cached).
+    pub war_guilds: Vec<u32>,
+    pub conquest_map: bool,
     /// Zircon `MailTime`: no mail before this.
     pub mail_time: u64,
     /// Channelled spell in progress (Elemental Hurricane).
@@ -577,7 +581,7 @@ impl Object {
                 mir_proto::attack_mode::GROUP => me.group.is_none() || me.group != them.group,
                 mir_proto::attack_mode::GUILD => me.guild.is_none() || me.guild != them.guild,
                 mir_proto::attack_mode::WAR_RED_BROWN => {
-                    them.brown || them.pk_points >= pvp::RED_POINT
+                    them.brown || them.pk_points >= pvp::RED_POINT || pvp::at_war(me, them)
                 }
                 _ => true,
             };
@@ -730,6 +734,12 @@ pub struct World {
     /// Groups by id; the first member leads.
     groups: BTreeMap<u32, Vec<ObjectId>>,
     pub guild_store: guilds::GuildStore,
+    /// The castle war in progress, if any.
+    pub conquest: Option<castles::Conquest>,
+    conquest_check: u64,
+    dev_conquest_done: bool,
+    /// (castle, day) wars already opened, so a start window fires once.
+    conquests_started: HashSet<(i32, u64)>,
     pub mail_store: mail::MailStore,
     /// Characters divorced while offline (drained by the account registry).
     divorced: Vec<u32>,
@@ -741,6 +751,7 @@ pub struct World {
 
 pub mod ai_profile;
 mod buffs;
+mod castles;
 mod chat;
 mod combat;
 mod companion;
@@ -842,6 +853,10 @@ impl World {
             groups: BTreeMap::new(),
             guild_store: guilds::GuildStore::default(),
             mail_store: mail::MailStore::default(),
+            conquest: None,
+            conquest_check: 0,
+            dev_conquest_done: false,
+            conquests_started: HashSet::new(),
             divorced: Vec::new(),
             next_group: 1,
             last_spawn_check: 0,
@@ -986,6 +1001,8 @@ impl World {
         self.process_monster_spells();
         self.process_day_time();
         self.process_pk();
+        self.process_guild_wars();
+        self.process_conquests();
         self.process_fishing();
         self.process_companions();
 

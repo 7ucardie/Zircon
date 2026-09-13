@@ -410,6 +410,7 @@ pub mod guild_permission {
     pub const ADD_MEMBER: i32 = 2;
     pub const REMOVE_MEMBER: i32 = 4;
     pub const STORAGE: i32 = 8;
+    pub const START_WAR: i32 = 128;
 }
 
 /// A guild as its members see it (Zircon `ClientGuildInfo`).
@@ -424,6 +425,10 @@ pub struct GuildSummary {
     pub default_permission: i32,
     pub user_index: u32,
     pub members: Vec<GuildMemberSummary>,
+    /// Name of the castle the guild owns ("" when none).
+    pub castle: String,
+    /// Guilds at war with this one and the seconds left in each war.
+    pub wars: Vec<(String, u64)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1599,6 +1604,15 @@ pub enum ClientMessage {
         tax: i32,
     },
     GuildIncreaseMember,
+    /// Declare a two-hour guild war on a guild by name (StartWar
+    /// permission, 200,000 from the funds).
+    GuildWar {
+        name: String,
+    },
+    /// Leader asks to fight for a castle at its next war window.
+    GuildRequestConquest {
+        index: i32,
+    },
     /// Send mail to a character by name (offline is fine); items are
     /// (grid, slot, count) cells, at most 5, from a safe zone.
     MailSend {
@@ -1978,6 +1992,33 @@ pub enum ServerMessage {
     },
     GuildMemberOffline {
         index: u32,
+    },
+    /// A guild war with `guild` began (both sides get it).
+    GuildWarStarted {
+        guild: String,
+        duration_secs: u64,
+    },
+    GuildWarFinished {
+        guild: String,
+    },
+    /// When the requested (or defended) castle war starts, in seconds
+    /// (negative: none scheduled).
+    GuildConquestDate {
+        index: i32,
+        war_in_secs: i64,
+    },
+    GuildConquestStarted {
+        index: i32,
+    },
+    GuildConquestFinished {
+        index: i32,
+    },
+    /// A castle and its owner guild ("" when unowned); sent on entry and
+    /// whenever ownership changes.
+    CastleInfo {
+        index: i32,
+        name: String,
+        owner: String,
     },
     MarriageInvite {
         from: String,
