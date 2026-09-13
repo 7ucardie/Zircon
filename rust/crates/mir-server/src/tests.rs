@@ -2475,3 +2475,215 @@ fn fishing_reels_in_a_catch_with_the_dev_zone() {
         .iter()
         .any(|m| matches!(m, ServerMessage::ObjectFishing { state, .. } if *state == fishing_state::CANCEL)));
 }
+
+#[test]
+fn refine_weapon_and_retrieve_it() {
+    use mir_proto::{refine_quality, refine_type, Grid};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Smith")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    // A level-1 warrior weapon and black iron ore (ItemEffect 20).
+    let weapon = world
+        .data
+        .items
+        .values()
+        .filter(|d| d.item_type == mir_proto::item_type::WEAPON && d.required_amount <= 1)
+        .find(|d| {
+            crate::items::can_use(d, mir_proto::Class::Warrior, mir_proto::Gender::Male, 1).is_ok()
+        })
+        .map(|d| d.index)
+        .expect("a starter weapon");
+    let ore = world
+        .data
+        .items
+        .values()
+        .find(|d| d.effect == 20)
+        .map(|d| d.index)
+        .expect("black iron ore");
+    world.test_give_item(me, weapon, 1);
+    world.test_give_item(me, ore, 1);
+    world.test_set_gold(me, 100_000);
+    let wslot = world.test_slot_of(me, weapon).unwrap();
+    world.item_move(me, Grid::Inventory, wslot, Grid::Equipment, 0);
+    let oslot = world.test_slot_of(me, ore).unwrap();
+    // Refining needs a Refine page open; the retrieve page is another type.
+    let refine_page = world.test_page_with_dialog_type(3);
+    let retrieve_page = world.test_page_with_dialog_type(4);
+    world.test_open_page(me, retrieve_page);
+    world.npc_refine(
+        me,
+        refine_type::DC,
+        refine_quality::RUSH,
+        vec![(Grid::Inventory, oslot, 1)],
+        vec![],
+        vec![],
+    );
+    assert!(world.objects[&me].player().unwrap().refines.is_empty());
+    world.test_open_page(me, refine_page);
+    world.npc_refine(
+        me,
+        refine_type::DC,
+        refine_quality::RUSH,
+        vec![(Grid::Inventory, oslot, 1)],
+        vec![],
+        vec![],
+    );
+    let p = world.objects[&me].player().unwrap();
+    assert_eq!(p.refines.len(), 1);
+    assert!(p.bag.equipment[0].is_none());
+    assert_eq!(p.bag.gold, 50_000);
+    assert_eq!(world.test_slot_of(me, ore), None);
+    let r = p.refines[0].clone();
+    assert_eq!(
+        (r.refine_type, r.quality),
+        (refine_type::DC, refine_quality::RUSH)
+    );
+    assert!(r.chance <= r.max_chance && r.max_chance <= 85);
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::RefineList(l) if l.len() == 1)));
+    // Not ready yet; then force it ready and collect on a retrieve page.
+    world.test_open_page(me, retrieve_page);
+    world.npc_refine_retrieve(me, r.index);
+    assert_eq!(world.objects[&me].player().unwrap().refines.len(), 1);
+    world
+        .objects
+        .get_mut(&me)
+        .and_then(|o| o.player_mut())
+        .unwrap()
+        .refines[0]
+        .ready_at = 0;
+    world.npc_refine_retrieve(me, r.index);
+    let p = world.objects[&me].player().unwrap();
+    assert!(p.refines.is_empty());
+    let back = p
+        .bag
+        .inventory
+        .iter()
+        .flatten()
+        .find(|i| i.info == weapon)
+        .expect("weapon back in the bag");
+    // Success adds +1 MaxDC and a refine level; failure returns it as it was.
+    let succeeded = back.level == 1;
+    assert_eq!(succeeded, back.added.contains(&(9, 1)));
+    assert!(succeeded || back.added.is_empty());
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::RefineRetrieved { index } if *index == r.index)));
+}
+
+#[test]
+fn companion_adopt_follow_pick_up_and_store() {
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    if world.data.companions.is_empty() {
+        eprintln!("no CompanionInfo rows; skipping");
+        return;
+    }
+    let me = world.add_player(1, 1, &test_character("Keeper")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let offer = world
+        .data
+        .companions
+        .iter()
+        .find(|d| d.available)
+        .or_else(|| world.data.companions.first())
+        .cloned()
+        .unwrap();
+    if !offer.available {
+        world
+            .objects
+            .get_mut(&me)
+            .and_then(|o| o.player_mut())
+            .unwrap()
+            .companion_unlocks
+            .push(offer.index);
+    }
+    world.test_set_gold(me, offer.price.max(0) as u64 + 1000);
+    let page = world.test_page_with_dialog_type(5);
+    // Adoption needs the page and a valid name.
+    world.companion_adopt(me, offer.index, "Rex".into());
+    assert!(world.objects[&me].player().unwrap().companions.is_empty());
+    world.test_open_page(me, page);
+    world.companion_adopt(me, offer.index, "R!".into());
+    assert!(world.objects[&me].player().unwrap().companions.is_empty());
+    world.companion_adopt(me, offer.index, "Rex".into());
+    let p = world.objects[&me].player().unwrap();
+    assert_eq!(p.companions.len(), 1);
+    assert_eq!(p.companions[0].name, "Rex");
+    assert!(p.companion.is_none());
+    // Out it comes: a companion object next to us that never fights.
+    world.companion_retrieve(me, 1);
+    let cid = world.objects[&me]
+        .player()
+        .unwrap()
+        .companion
+        .expect("spawned");
+    assert!(matches!(&world.objects[&cid].kind, world::Kind::Monster(m) if m.companion == Some(1)));
+    assert!(!world.objects[&cid].hostile_to(&world.objects[&me]));
+    let chicken = nearest_chicken(&world, me);
+    assert!(!world.objects[&chicken].hostile_to(&world.objects[&cid]));
+    // Our drop nearby gets collected into its bag within a few ticks.
+    let (map, loc, account) = {
+        let o = &world.objects[&me];
+        (o.map, o.location, o.player().unwrap().account)
+    };
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .unwrap()
+        .index;
+    let drop_at = Direction::ALL
+        .iter()
+        .map(|d| loc.step(*d, 2))
+        .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+        .unwrap();
+    // Level 1 companions carry nothing (CompanionLevelInfo); level it up.
+    world
+        .objects
+        .get_mut(&me)
+        .and_then(|o| o.player_mut())
+        .unwrap()
+        .companions[0]
+        .level = 2;
+    world.test_drop_item(map, drop_at, potion, 2, account);
+    let mut t = 100;
+    let mut picked = false;
+    while t < 20_000 {
+        world.tick(t);
+        t += 100;
+        if world.objects[&me].player().unwrap().companions[0]
+            .items
+            .len()
+            == 1
+        {
+            picked = true;
+            break;
+        }
+    }
+    assert!(picked, "companion did not pick up the drop");
+    drain(&mut world);
+    world.companion_bag_take(me, 1, 0);
+    assert_eq!(world.test_bag(me).1, vec![(potion, 2)]);
+    assert!(world.objects[&me].player().unwrap().companions[0]
+        .items
+        .is_empty());
+    // Store it away: the object disappears; release needs an empty bag.
+    world.companion_store(me);
+    let p = world.objects[&me].player().unwrap();
+    assert!(p.companion.is_none() && p.active_companion.is_none());
+    assert!(!world.objects.contains_key(&cid));
+    world.companion_release(me, 1);
+    assert!(world.objects[&me].player().unwrap().companions.is_empty());
+}

@@ -112,6 +112,12 @@ impl World {
                 marriage_invite: None,
                 marriage_teleport_time: 0,
                 fishing: None,
+                refines: rec.refines.clone(),
+                companions: rec.companions.clone(),
+                active_companion: rec.active_companion,
+                companion_unlocks: rec.companion_unlocks.clone(),
+                companion: None,
+                companion_tick: 0,
                 storage_size: crate::items::STORAGE_SIZE,
                 trade: None,
                 trade_request: None,
@@ -261,6 +267,9 @@ impl World {
         self.guild_login(id);
         self.mail_login(id);
         self.send_marriage_info(id);
+        self.send_refine_list(id);
+        self.send_companions(id);
+        self.companion_spawn(id);
         self.refresh_appearance(id);
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });
@@ -327,6 +336,10 @@ impl World {
             .map(|(_, n)| n.clone())
             .unwrap_or_default();
         rec.wedding_ring = p.wedding_ring.unwrap_or(0);
+        rec.refines = p.refines.clone();
+        rec.companions = p.companions.clone();
+        rec.active_companion = p.active_companion;
+        rec.companion_unlocks = p.companion_unlocks.clone();
         if let Some(m) = self.maps.get(&o.map) {
             rec.map = m.descriptor.file.clone();
             rec.location = o.location;

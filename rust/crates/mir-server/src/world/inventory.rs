@@ -175,6 +175,19 @@ impl World {
                 if self.now < p.use_item_time {
                     return Ok(Vec::new());
                 }
+                // Companion food (Zircon `Stat.CompanionHunger`).
+                let hunger = def.stat(super::companion::COMPANION_HUNGER_STAT);
+                if hunger > 0 {
+                    if !self.companion_feed(id, hunger) {
+                        return Err("Your companion is not hungry".into());
+                    }
+                    let p = self
+                        .objects
+                        .get_mut(&id)
+                        .and_then(|o| o.player_mut())
+                        .unwrap();
+                    return Ok(p.bag.take(Grid::Inventory, slot, 1).into_iter().collect());
+                }
                 self.use_consumable(id, slot, &def)
             }
             item_type::BOOK => self.learn_book(id, slot, &def),

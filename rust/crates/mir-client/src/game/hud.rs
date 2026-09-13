@@ -45,6 +45,9 @@ impl Game {
                 partner,
                 wedding_ring,
                 marriage_invite,
+                refines,
+                companions,
+                companion_shop,
                 ..
             } = self;
             let player_name = character
@@ -105,6 +108,9 @@ impl Game {
                 partner: partner.as_deref(),
                 wedding_ring: *wedding_ring,
                 marriage_invite: marriage_invite.as_deref(),
+                refines,
+                companions,
+                companion_shop,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -183,6 +189,7 @@ impl Game {
             || self.windows.storage_open
             || self.windows.guild_open
             || self.windows.mail_open
+            || self.windows.companion_open
             || self.trade.is_some()
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);

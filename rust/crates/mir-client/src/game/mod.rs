@@ -126,6 +126,11 @@ pub struct Game {
     partner: Option<String>,
     wedding_ring: Option<u32>,
     marriage_invite: Option<String>,
+    /// Weapons in the furnace (Zircon `RefineList`).
+    refines: Vec<mir_proto::RefineSummary>,
+    companions: Vec<mir_proto::CompanionSummary>,
+    /// Offers of the open CompanionManage page.
+    companion_shop: Vec<mir_proto::CompanionOffer>,
     /// Pending guild invite: (who, guild).
     guild_invite: Option<(String, String)>,
     /// Pending invite: who asked.
@@ -261,6 +266,9 @@ impl Game {
             partner: None,
             wedding_ring: None,
             marriage_invite: None,
+            refines: Vec::new(),
+            companions: Vec::new(),
+            companion_shop: Vec::new(),
             guild_invite: None,
             group_invite: None,
             auto_group_done: false,

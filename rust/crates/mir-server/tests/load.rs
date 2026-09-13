@@ -167,7 +167,7 @@ fn a_dozen_bots_play_while_abusers_are_dropped_and_sigterm_saves() {
     let _ = std::fs::remove_dir_all(&data);
     std::fs::create_dir_all(&data).unwrap();
     let port = free_port();
-    let mut server = Server(
+    let server = Server(
         Command::new(env!("CARGO_BIN_EXE_mir-server"))
             .args(["--port", &port.to_string(), "--data"])
             .arg(&data)
@@ -271,6 +271,8 @@ fn a_dozen_bots_play_while_abusers_are_dropped_and_sigterm_saves() {
     }
 
     // SIGTERM saves every character before exit.
+    #[cfg(unix)]
+    let mut server = server;
     #[cfg(unix)]
     {
         let _ = Command::new("kill")

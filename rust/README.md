@@ -140,6 +140,30 @@ This asset pack ships no fishing zones, rods, robes or bait, so
 `ZIRCON_DEV_FISHING=<item index>` (server side; set it on the client too
 to click without a rod) makes every unwalkable cell fishable for that
 item. See `docs/research/fishing-mining.md`.
+Weapon refining follows Zircon's `NPCRefine`: at an NPC page of the Refine
+dialog type a window opens under the dialog; pick the refine type (DC,
+durability, spell power or an element) and a quality (Rush to Precise,
+waiting one minute to one day), right-click black iron ore (up to five),
+common jewellery (three) and a refine special (one) in the bag to add them,
+and press Refine to pay 50,000 gold and send the equipped weapon into the
+furnace. The chance is 60% minus 5% per previous refine, plus 1% per 2,000
+ore durability and per 6 jewellery levels and 25% per superior item, under
+a ceiling of 90% adjusted by quality. A RefineRetrieve page lists the
+weapons and hands them back once ready: a success adds the stat (shown in
+the tooltip as refined) and a level, a failure returns the weapon as it
+was. Pending refines persist with the character.
+
+Companions come from a CompanionManage page (`docs/research/refining-
+companions.md`): adopt one of the `CompanionInfo` looks for its price with
+a name (locked looks need their unlock item), then bring it out, store it
+or release it there. A companion follows you, teleports after you when it
+falls behind, and picks up your own drops within eight cells into its bag
+(gold goes straight to you); its bag size and weight come from
+`CompanionLevelInfo` (level one carries nothing), it gains experience once
+a minute and levels up, and it loses one hunger a minute outside safe
+zones, refusing to gather when starving until fed with a consumable that
+has the companion hunger stat. `N` opens the companion window with its
+level, hunger and bag; Take moves an item into yours.
 
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the

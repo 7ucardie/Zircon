@@ -661,7 +661,10 @@ impl Game {
                     quests,
                 ));
             }
-            ServerMessage::NpcClose => self.windows.npc = None,
+            ServerMessage::NpcClose => {
+                self.windows.npc = None;
+                self.companion_shop.clear();
+            }
             ServerMessage::Chat { text } => self.say(text, now),
             ServerMessage::Storage { size, items } => {
                 self.storage = (0..size).map(|_| None).collect();
@@ -728,6 +731,15 @@ impl Game {
                     [255, 200, 120, 255],
                 );
             }
+            ServerMessage::RefineList(list) => {
+                for r in list {
+                    self.refines.retain(|x| x.index != r.index);
+                    self.refines.push(r);
+                }
+            }
+            ServerMessage::RefineRetrieved { index } => self.refines.retain(|r| r.index != index),
+            ServerMessage::CompanionShop(offers) => self.companion_shop = offers,
+            ServerMessage::Companions(list) => self.companions = list,
             ServerMessage::MailList(list) => {
                 let unread = list.iter().filter(|m| !m.opened).count();
                 if unread > 0 {
@@ -905,6 +917,9 @@ impl Game {
         self.wedding_ring = None;
         self.marriage_invite = None;
         self.fishing = None;
+        self.refines.clear();
+        self.companions.clear();
+        self.companion_shop.clear();
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

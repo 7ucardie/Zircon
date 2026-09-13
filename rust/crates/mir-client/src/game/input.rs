@@ -84,6 +84,7 @@ impl Game {
                         c.send(ClientMessage::Mount);
                     }
                 }
+                'n' => self.windows.companion_open = !self.windows.companion_open,
                 'h' => {
                     if let Some(c) = conn {
                         c.send(ClientMessage::AttackMode {
@@ -118,6 +119,7 @@ impl Game {
             self.windows.storage_open = false;
             self.windows.guild_open = false;
             self.windows.mail_open = false;
+            self.windows.companion_open = false;
             if self.trade.is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::TradeClose);

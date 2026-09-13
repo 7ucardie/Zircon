@@ -112,6 +112,11 @@ impl World {
                     quests: self.npc_quests(id, npc),
                 },
             );
+            match def.dialog_type {
+                4 => self.send_refine_list(id),
+                5 => self.send_companion_shop(id),
+                _ => {}
+            }
             return;
         }
     }

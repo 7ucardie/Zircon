@@ -12,6 +12,7 @@ pub struct ItemDef {
     pub name: String,
     pub item_type: u8,
     /// Zircon `ItemEffect` (5 pickaxe, 82 fishing rod, 83 fishing robe).
+    /// Zircon `ItemEffect` (20 = black iron ore).
     pub effect: u8,
     pub required_class: u8,
     pub required_type: u8,

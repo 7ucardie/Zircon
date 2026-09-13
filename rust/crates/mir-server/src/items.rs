@@ -16,6 +16,12 @@ pub struct UserItem {
     pub count: u32,
     pub durability: i32,
     pub max_durability: i32,
+    /// Added stats (Zircon `AddedStats` from refining): (stat id, amount).
+    #[serde(default)]
+    pub added: Vec<(i32, i32)>,
+    /// Refine level (Zircon `UserItem.Level`).
+    #[serde(default)]
+    pub level: i32,
 }
 
 impl UserItem {
@@ -26,6 +32,7 @@ impl UserItem {
             count: self.count,
             durability: self.durability,
             max_durability: self.max_durability,
+            added: self.added.clone(),
         }
     }
 }
@@ -235,6 +242,8 @@ impl Bag {
                     count: add,
                     durability: def.durability,
                     max_durability: def.durability,
+                    added: Vec::new(),
+                    level: 0,
                 };
                 changed.push((Grid::Inventory, i as u8, Some(item.instance())));
                 *it = Some(item);
@@ -306,6 +315,9 @@ impl Bag {
                 for (k, v) in &def.stats {
                     *out.entry(*k).or_insert(0) += v;
                 }
+            }
+            for (k, v) in &item.added {
+                *out.entry(*k).or_insert(0) += v;
             }
         }
         out

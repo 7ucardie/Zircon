@@ -287,6 +287,8 @@ pub struct ItemDef {
     pub can_drop: bool,
     pub can_trade: bool,
     pub can_store: bool,
+    /// Zircon `Rarity`: 0 common, 1 superior, 2 elite.
+    pub rarity: u8,
     pub description: String,
     pub stats: HashMap<i32, i32>,
 }
@@ -417,6 +419,30 @@ impl std::fmt::Display for Problem {
     }
 }
 
+/// Zircon `CompanionInfo`.
+#[derive(Debug, Clone)]
+pub struct CompanionDef {
+    pub index: i32,
+    /// `MonsterInfo` index for the look.
+    pub monster: i32,
+    pub description: String,
+    pub price: i32,
+    /// `CurrencyInfo` index (0 = gold).
+    pub currency: i32,
+    pub available: bool,
+    pub unlock_item: i32,
+}
+
+/// Zircon `CompanionLevelInfo`.
+#[derive(Debug, Clone)]
+pub struct CompanionLevelDef {
+    pub level: i32,
+    pub max_experience: i32,
+    pub inventory_space: i32,
+    pub inventory_weight: i32,
+    pub max_hunger: i32,
+}
+
 #[derive(Debug)]
 pub struct GameData {
     pub maps: BTreeMap<i32, MapDef>,
@@ -429,6 +455,8 @@ pub struct GameData {
     pub fishing_drops: Vec<FishingDropDef>,
     pub guards: Vec<GuardDef>,
     pub currencies: Vec<CurrencyDef>,
+    pub companions: Vec<CompanionDef>,
+    pub companion_levels: Vec<CompanionLevelDef>,
     pub quests: HashMap<i32, QuestDef>,
     pub base_stats: Vec<BaseStatDef>,
     pub npcs: Vec<NpcDef>,
@@ -659,6 +687,7 @@ impl GameData {
                     can_sell: c.bool_or(r, "CanSell", true),
                     can_trade: c.bool_or(r, "CanTrade", true),
                     can_store: c.bool_or(r, "CanStore", true),
+                    rarity: i32_of(c, r, "Rarity") as u8,
                     can_drop: c.bool_or(r, "CanDrop", true),
                     description: c.str_or(r, "Description", "").to_string(),
                     stats: item_stats.remove(&index).unwrap_or_default(),
@@ -892,6 +921,36 @@ impl GameData {
                 .collect(),
             None => Vec::new(),
         };
+        let companions = match db.collection("CompanionInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| CompanionDef {
+                    index: c.index(r),
+                    monster: i32_of(c, r, "MonsterInfo"),
+                    description: c.str_or(r, "Description", "").to_string(),
+                    price: i32_of(c, r, "Price"),
+                    currency: i32_of(c, r, "Currency"),
+                    available: c.bool_or(r, "Available", false),
+                    unlock_item: i32_of(c, r, "UnlockItem"),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let companion_levels = match db.collection("CompanionLevelInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| CompanionLevelDef {
+                    level: i32_of(c, r, "Level"),
+                    max_experience: i32_of(c, r, "MaxExperience"),
+                    inventory_space: i32_of(c, r, "InventorySpace"),
+                    inventory_weight: i32_of(c, r, "InventoryWeight"),
+                    max_hunger: i32_of(c, r, "MaxHunger"),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let mut quests: HashMap<i32, QuestDef> = match db.collection("QuestInfo") {
             Some(c) => c
                 .records
@@ -993,6 +1052,8 @@ impl GameData {
             fishing_drops,
             guards,
             currencies,
+            companions,
+            companion_levels,
             quests,
             base_stats,
             npcs,

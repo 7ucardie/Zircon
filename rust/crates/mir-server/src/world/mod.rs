@@ -319,6 +319,15 @@ pub struct PlayerData {
     pub marriage_teleport_time: u64,
     /// Zircon `Fishing`: the cast in progress.
     pub fishing: Option<gathering::FishingData>,
+    /// Weapons in the furnace (Zircon `RefineInfo`).
+    pub refines: Vec<StoredRefine>,
+    /// Zircon `UserCompanion`s; `active_companion` is the one out.
+    pub companions: Vec<StoredCompanion>,
+    pub active_companion: Option<u32>,
+    pub companion_unlocks: Vec<i32>,
+    /// The spawned companion object and its next upkeep tick.
+    pub companion: Option<ObjectId>,
+    pub companion_tick: u64,
     pub storage_size: u32,
     pub trade: Option<trade::Trade>,
     /// Who asked us to trade (Zircon `TradePartnerRequest`).
@@ -405,6 +414,9 @@ pub struct MonsterData {
     pub master: Option<ObjectId>,
     /// Town guard (AI -1): fights wild monsters, cannot be hurt.
     pub guard: bool,
+    /// Companion (owner's `StoredCompanion.index`): follows and picks up,
+    /// never fights and is never a target.
+    pub companion: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -507,6 +519,12 @@ impl Object {
     /// outside safe zones (pets never target players here).
     pub fn hostile_to(&self, other: &Object) -> bool {
         if other.dead || other.is_item() || other.is_spell() || matches!(other.kind, Kind::Npc(_)) {
+            return false;
+        }
+        // Companions neither fight nor get fought.
+        if matches!(&self.kind, Kind::Monster(m) if m.companion.is_some())
+            || matches!(&other.kind, Kind::Monster(m) if m.companion.is_some())
+        {
             return false;
         }
         // Guards police wild monsters and red names; nobody else fights
@@ -695,6 +713,7 @@ mod ai_profile;
 mod buffs;
 mod chat;
 mod combat;
+mod companion;
 mod gathering;
 mod groups;
 mod guilds;
@@ -712,6 +731,7 @@ mod npc;
 mod player;
 mod pvp;
 mod quests;
+mod refine;
 mod skills;
 mod spawn;
 mod spells;
@@ -719,6 +739,9 @@ mod storage;
 mod test_api;
 mod trade;
 mod visibility;
+
+pub use companion::StoredCompanion;
+pub use refine::StoredRefine;
 
 impl World {
     /// Replace the RNG with a seeded one so a test run is reproducible.
@@ -924,6 +947,7 @@ impl World {
         self.process_day_time();
         self.process_pk();
         self.process_fishing();
+        self.process_companions();
 
         if now >= self.last_spawn_check + 1000 {
             self.last_spawn_check = now;

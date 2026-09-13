@@ -72,6 +72,17 @@ pub struct CharacterRecord {
     /// Item id of the wedding ring (0 = none).
     #[serde(default)]
     pub wedding_ring: u32,
+    /// Weapons in the furnace (Zircon `RefineInfo`).
+    #[serde(default)]
+    pub refines: Vec<crate::world::StoredRefine>,
+    /// Zircon `UserCompanion`s (per character here, per account in Zircon).
+    #[serde(default)]
+    pub companions: Vec<crate::world::StoredCompanion>,
+    #[serde(default)]
+    pub active_companion: Option<u32>,
+    /// `CompanionInfo` indices unlocked with their items.
+    #[serde(default)]
+    pub companion_unlocks: Vec<i32>,
 }
 
 /// Zircon `UserQuest` as persisted.
@@ -331,6 +342,10 @@ impl Accounts {
             partner: 0,
             partner_name: String::new(),
             wedding_ring: 0,
+            refines: Vec::new(),
+            companions: Vec::new(),
+            active_companion: None,
+            companion_unlocks: Vec::new(),
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;
@@ -424,6 +439,10 @@ pub fn test_character(name: &str) -> CharacterRecord {
         partner: 0,
         partner_name: String::new(),
         wedding_ring: 0,
+        refines: Vec::new(),
+        companions: Vec::new(),
+        active_companion: None,
+        companion_unlocks: Vec::new(),
     }
 }
 
