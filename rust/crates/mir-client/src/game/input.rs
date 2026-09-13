@@ -217,43 +217,12 @@ impl Game {
             let distance = user_loc.distance(cell);
             let can_fish = weapon_effect == 82 || std::env::var_os("ZIRCON_DEV_FISHING").is_some();
             if !walkable && distance >= 1 && now >= self.action_time {
-                let direction = Direction::from_points(user_loc, cell);
                 if weapon_effect == 5 && distance == 1 {
-                    self.action_time = now + ATTACK_TIME;
-                    self.attack_time = now + attack_delay(self.stats.attack_speed as i64).max(800);
-                    if let Some(u) = self.user_mut() {
-                        u.queue.clear();
-                        u.enqueue(Queued {
-                            action: Action::Mining,
-                            direction,
-                            location: user_loc,
-                            distance: 0,
-                        });
-                    }
-                    if let Some(c) = conn {
-                        c.send(ClientMessage::Mining { direction });
-                    }
+                    self.swing_pickaxe(cell, now, conn);
                     return;
                 }
                 if can_fish && distance <= 4 {
-                    self.action_time = now + ATTACK_TIME;
-                    self.fishing = Some(FishingUi {
-                        direction,
-                        float: cell,
-                        found: false,
-                        reeled: false,
-                        next_cast: now + 1600,
-                        points: 0,
-                        required: 50,
-                    });
-                    if let Some(c) = conn {
-                        c.send(ClientMessage::FishingCast {
-                            state: mir_proto::fishing_state::CAST,
-                            direction,
-                            float: cell,
-                            caught: false,
-                        });
-                    }
+                    self.cast_rod(cell, now, conn);
                     return;
                 }
             }
@@ -591,6 +560,87 @@ impl Game {
     }
 
     /// One walk/run step toward `target`, turning if blocked.
+    /// Swing the pickaxe at an adjacent wall cell (Zircon `Mining`).
+    pub(super) fn swing_pickaxe(&mut self, cell: Point, now: u64, conn: Option<&Connection>) {
+        let Some(user_loc) = self.user().map(|u| u.location) else {
+            return;
+        };
+        let direction = Direction::from_points(user_loc, cell);
+        self.action_time = now + ATTACK_TIME;
+        self.attack_time = now + attack_delay(self.stats.attack_speed as i64).max(800);
+        if let Some(u) = self.user_mut() {
+            u.queue.clear();
+            u.enqueue(Queued {
+                action: Action::Mining,
+                direction,
+                location: user_loc,
+                distance: 0,
+            });
+        }
+        if let Some(c) = conn {
+            c.send(ClientMessage::Mining { direction });
+        }
+    }
+
+    /// Cast the rod at a water cell (Zircon `FishingCast`).
+    pub(super) fn cast_rod(&mut self, cell: Point, now: u64, conn: Option<&Connection>) {
+        let Some(user_loc) = self.user().map(|u| u.location) else {
+            return;
+        };
+        let direction = Direction::from_points(user_loc, cell);
+        self.action_time = now + ATTACK_TIME;
+        self.fishing = Some(FishingUi {
+            direction,
+            float: cell,
+            found: false,
+            reeled: false,
+            next_cast: now + 1600,
+            points: 0,
+            required: 50,
+        });
+        if let Some(c) = conn {
+            c.send(ClientMessage::FishingCast {
+                state: mir_proto::fishing_state::CAST,
+                direction,
+                float: cell,
+                caught: false,
+            });
+        }
+    }
+
+    /// Nearest unwalkable cell within `radius` of the player, closest first.
+    pub(super) fn nearest_wall(&self, radius: i32) -> Option<Point> {
+        let user_loc = self.user()?.location;
+        let map = self.map.as_ref()?;
+        let mut best: Option<(i32, Point)> = None;
+        for dx in -radius..=radius {
+            for dy in -radius..=radius {
+                let p = Point::new(user_loc.x + dx, user_loc.y + dy);
+                if p == user_loc
+                    || p.x < 0
+                    || p.y < 0
+                    || p.x >= map.width as i32
+                    || p.y >= map.height as i32
+                    || map.is_walkable(p.x, p.y)
+                {
+                    continue;
+                }
+                // Only walls with a walkable neighbour can be worked.
+                let reachable = Direction::ALL
+                    .iter()
+                    .any(|d| map.is_walkable(p.step(*d, 1).x, p.step(*d, 1).y));
+                if !reachable {
+                    continue;
+                }
+                let d = p.distance(user_loc);
+                if best.is_none_or(|(bd, _)| d < bd) {
+                    best = Some((d, p));
+                }
+            }
+        }
+        best.map(|(_, p)| p)
+    }
+
     pub(super) fn step_toward(
         &mut self,
         now: u64,

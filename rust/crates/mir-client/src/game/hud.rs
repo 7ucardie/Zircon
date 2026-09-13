@@ -344,13 +344,21 @@ impl Game {
         }
         if self.debug {
             let (pages, sprites) = renderer.stats();
+            // The key hints give way when the status line carries state
+            // (fishing), so the line never wraps into the skill bar.
+            let hints = if self.status.len() > 48 {
+                ""
+            } else {
+                " | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, L quests, Z belt, ` hide"
+            };
             let dbg = format!(
-                "{} | {:.0} fps | {} objects | {} sprites / {} pages | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, L quests, Z belt, ` hide",
+                "{} | {:.0} fps | {} objects | {} sprites / {} pages{}",
                 self.status,
                 fps,
                 self.objects.len(),
                 sprites,
-                pages
+                pages,
+                hints
             );
             let _ = y;
             text.draw(&dbg, 12, 12.0, height as f32 - 152.0, [200, 200, 200, 255]);

@@ -26,6 +26,17 @@ impl Frame {
 }
 
 /// `FrameSet.Players` (all have direction stride 10).
+/// Whether the body libraries carry the fishing frame block (2000-2239).
+static FISHING_FRAMES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_fishing_frames(available: bool) {
+    FISHING_FRAMES.store(available, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn fishing_frames() -> bool {
+    FISHING_FRAMES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn player_frame(action: Action) -> Frame {
     match action {
         Action::Standing => Frame::new(0, 4, 500),
@@ -42,9 +53,14 @@ pub fn player_frame(action: Action) -> Frame {
         Action::Struck => Frame::new(1840, 3, 100),
         Action::Die => Frame::new(1920, 10, 100),
         Action::Dead => Frame::new(1929, 1, 1000),
-        Action::FishingCast => Frame::new(2000, 8, 100),
-        Action::FishingWait => Frame::new(2080, 6, 120),
-        Action::FishingReel => Frame::new(2160, 8, 100),
+        // This asset pack's body libraries stop at 1999 before the horse
+        // block, so without the fishing frames the swing and standing poses
+        // stand in.
+        Action::FishingCast if fishing_frames() => Frame::new(2000, 8, 100),
+        Action::FishingWait if fishing_frames() => Frame::new(2080, 6, 120),
+        Action::FishingReel if fishing_frames() => Frame::new(2160, 8, 100),
+        Action::FishingCast | Action::FishingReel => Frame::new(160, 6, 100),
+        Action::FishingWait => Frame::new(0, 4, 500),
         Action::Mining => Frame::new(720, 6, 100),
     }
 }
@@ -228,9 +244,15 @@ impl ClientObject {
     }
 
     /// Body/armour/helmet/shield frame shift while riding (Zircon
-    /// `ArmourShift` = 80 for the horse animations).
+    /// `ArmourShift` = 80 for the horse animations) and, for assassins, while
+    /// fishing with the real fishing frames.
     pub fn armour_shift(&self) -> u32 {
-        if self.mounted() && self.riding_action() {
+        let fishing = matches!(
+            self.action,
+            Action::FishingCast | Action::FishingWait | Action::FishingReel
+        );
+        let assassin = matches!(&self.appearance, Appearance::Player { class, .. } if *class == mir_proto::Class::Assassin);
+        if (fishing && fishing_frames() && assassin) || (self.mounted() && self.riding_action()) {
             80
         } else {
             0

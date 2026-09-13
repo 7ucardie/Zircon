@@ -3488,3 +3488,36 @@ fn lua_page_scripts_run_checks_actions_and_on_open() {
         .iter()
         .any(|m| matches!(m, ServerMessage::NpcResponse { .. })));
 }
+
+#[test]
+#[ignore]
+fn report_mine_maps() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let mines: Vec<(i32, String, String)> = world
+        .data
+        .maps
+        .values()
+        .filter(|m| m.can_mine)
+        .map(|m| (m.index, m.file_name.clone(), m.description.clone()))
+        .collect();
+    for (index, file, desc) in mines {
+        if world.ensure_map(index).is_err() {
+            continue;
+        }
+        if let Some((cell, dir)) = world.test_wall_spot(index) {
+            eprintln!(
+                "MINE {desc:?} file {file} wall spot {:?} facing {:?}",
+                cell, dir
+            );
+        }
+    }
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .map(|d| d.index);
+    eprintln!("POTION {potion:?}");
+}
