@@ -316,10 +316,20 @@ impl Game {
                 }
                 let name_color = if o.is_npc() {
                     [0, 255, 0, 255]
-                } else if let Appearance::Player { name_color, .. } = &o.appearance {
+                } else if let Appearance::Player {
+                    name_color, guild, ..
+                } = &o.appearance
+                {
+                    // Members of a guild we are at war with show in orange.
+                    let enemy = !guild.is_empty()
+                        && self
+                            .guild
+                            .as_ref()
+                            .is_some_and(|g| g.wars.iter().any(|(n, _)| n == guild));
                     // Zircon ProcessNameColour: yellow at 50 PK points,
                     // brown after hitting an innocent, red at 200.
                     match name_color {
+                        _ if enemy => [255, 140, 0, 255],
                         1 => [255, 255, 0, 255],
                         2 => [165, 42, 42, 255],
                         3 => [255, 0, 0, 255],

@@ -3521,3 +3521,179 @@ fn report_mine_maps() {
         .map(|d| d.index);
     eprintln!("POTION {potion:?}");
 }
+
+/// Developer report: the castle collections of the asset pack.
+#[test]
+#[ignore]
+fn report_castle_collections() {
+    let Some(assets) = std::env::var_os("ZIRCON_ASSETS").map(PathBuf::from) else {
+        return;
+    };
+    let db = mir_formats::mirdb::MirDb::load(assets.join("../Database/System.db")).expect("db");
+    for name in [
+        "CastleInfo",
+        "CastleGuardInfo",
+        "CastleGateInfo",
+        "CastleFlagInfo",
+        "GuildWarInfo",
+        "UserConquest",
+    ] {
+        match db.collection(name) {
+            Some(c) => {
+                let fields: Vec<&str> = c
+                    .mapping
+                    .properties
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect();
+                eprintln!("{name}: {} records; fields {fields:?}", c.records.len());
+                for r in c.records.iter().take(4) {
+                    let row: Vec<String> = fields
+                        .iter()
+                        .map(|f| format!("{f}={:?}", c.get(r, f)))
+                        .collect();
+                    eprintln!("  {}", row.join(" "));
+                }
+            }
+            None => eprintln!("{name}: absent"),
+        }
+    }
+}
+
+#[test]
+fn guild_war_and_castle_conquest() {
+    use mir_proto::{attack_mode, ChatKind};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let mut bob_rec = test_character("Bob");
+    bob_rec.id = 2;
+    let bob = world.add_player(2, 2, &bob_rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let conn_of = |world: &World, id: ObjectId| world.objects[&id].player().unwrap().conn;
+    let (ca, cb) = (conn_of(&world, alice), conn_of(&world, bob));
+    let to = |world: &mut World| -> Vec<(world::ConnId, ServerMessage)> {
+        world
+            .outgoing
+            .drain(..)
+            .map(|o| match o {
+                Outgoing::To(c, m) => (c, m),
+            })
+            .collect()
+    };
+    // Two guilds of one, standing outside the safe zone.
+    world.test_set_gold(alice, 20_000_000);
+    world.test_set_gold(bob, 20_000_000);
+    world.guild_create(alice, "Knights".into(), 5);
+    world.guild_create(bob, "Rogues".into(), 5);
+    let knights = world.guild_store.guilds[0].id;
+    let rogues = world.guild_store.guilds[1].id;
+    let map = world.objects[&alice].map;
+    let start = world.objects[&alice].location;
+    let loc = world
+        .test_quiet_cell(map, start)
+        .expect("a quiet cell outside town");
+    world.teleport(alice, loc);
+    let next = Direction::ALL
+        .iter()
+        .map(|d| loc.step(*d, 1))
+        .find(|p| {
+            world.maps[&map].file.is_walkable(p.x, p.y) && !world.test_in_safe_zone_at(map, *p)
+        })
+        .expect("a neighbour cell");
+    world.teleport(bob, next);
+    world.set_attack_mode(alice, attack_mode::WAR_RED_BROWN);
+    assert!(!world.objects[&alice].hostile_to(&world.objects[&bob]));
+    drain(&mut world);
+
+    // War needs funds; then both guilds hear it and become fair game in
+    // War/Red/Brown mode without brown names or PK points.
+    world.guild_war(alice, "Rogues".into());
+    assert!(world.guild_store.wars.is_empty());
+    world.test_set_guild_funds(knights, 500_000);
+    world.guild_war(alice, "rogues".into());
+    assert_eq!(world.guild_store.wars.len(), 1);
+    assert_eq!(world.guild_store.guilds[0].funds, 300_000);
+    let out = to(&mut world);
+    assert!(out.iter().any(|(c, m)| *c == cb
+        && matches!(m, ServerMessage::GuildWarStarted { guild, .. } if guild == "Knights")));
+    assert!(out.iter().any(|(c, m)| *c == ca
+        && matches!(m, ServerMessage::GuildInfo(Some(g)) if g.wars.len() == 1 && g.wars[0].0 == "Rogues")));
+    assert!(world.objects[&alice].hostile_to(&world.objects[&bob]));
+    world.test_damage(bob, alice, 5);
+    assert!(!world.objects[&alice].player().unwrap().brown);
+    world.test_damage(bob, alice, 1_000_000);
+    assert!(world.objects[&bob].dead);
+    assert_eq!(world.objects[&alice].player().unwrap().pk_points, 0);
+    let out = to(&mut world);
+    assert!(out.iter().any(|(_, m)| matches!(m,
+        ServerMessage::Say { kind: ChatKind::System, text, .. }
+            if text.contains("Bob of Rogues was killed by Alice of Knights"))));
+    world.test_expire_wars();
+    world.tick(2000);
+    assert!(world.guild_store.wars.is_empty());
+    let out = to(&mut world);
+    assert!(out.iter().any(|(c, m)| *c == ca
+        && matches!(m, ServerMessage::GuildWarFinished { guild } if guild == "Rogues")));
+    assert!(!world.objects[&alice].hostile_to(&world.objects[&bob]));
+
+    // Conquest: the pack has Sabuk Wall; Bob's guild signs up (paying the
+    // castle's item), a forced war spawns the lord on the castle map, only
+    // castle-less participants hurt it for one point per hit, and the
+    // killer's guild takes the castle.
+    let Some(castle) = world.data.castles.first().cloned() else {
+        eprintln!("no CastleInfo in this pack; conquest part skipped");
+        return;
+    };
+    world.revive_player_test(bob);
+    world.guild_request_conquest(bob, castle.index);
+    assert!(
+        world.guild_store.conquests.is_empty(),
+        "the castle item is required first"
+    );
+    if castle.item != 0 {
+        world.test_give_item(bob, castle.item, 1);
+    }
+    world.guild_request_conquest(bob, castle.index);
+    assert_eq!(world.guild_store.conquests.len(), 1);
+    let out = to(&mut world);
+    assert!(out.iter().any(|(c, m)| *c == cb
+        && matches!(m, ServerMessage::GuildConquestDate { index, war_in_secs } if *index == castle.index && *war_in_secs > 0)));
+    assert!(world.start_conquest(castle.index, true));
+    let lord = world.test_castle_lord().expect("a castle lord");
+    assert_eq!(world.objects[&lord].map, castle.map);
+    let lord_loc = world.objects[&lord].location;
+    let beside = Direction::ALL
+        .iter()
+        .map(|d| lord_loc.step(*d, 1))
+        .find(|p| world.maps[&castle.map].file.is_walkable(p.x, p.y))
+        .expect("a cell beside the lord");
+    world.test_change_map(bob, castle.map, beside);
+    world.test_change_map(alice, castle.map, beside);
+    // On the castle map, guilds that are not each other's are at war.
+    assert!(world.objects[&alice].hostile_to(&world.objects[&bob]));
+    let hp = world.objects[&lord].hp;
+    assert_eq!(world.test_damage(lord, bob, 5000), 1);
+    assert_eq!(world.objects[&lord].hp, hp - 1);
+    world.test_set_hp(lord, 1);
+    drain(&mut world);
+    world.test_damage(lord, bob, 5000);
+    assert_eq!(world.guild_store.castle_owner(castle.index), Some(rogues));
+    let out = to(&mut world);
+    assert!(out.iter().any(|(_, m)| matches!(m,
+        ServerMessage::CastleInfo { owner, .. } if owner == "Rogues")));
+    // Owners earn 10 % more experience and cannot request another castle.
+    let before = world.test_experience(bob);
+    world.gain_experience_test(bob, 20);
+    assert_eq!(world.test_experience(bob) - before, 22);
+    world.test_end_conquest();
+    assert!(world.conquest.is_none());
+    drain(&mut world);
+    world.guild_request_conquest(bob, castle.index);
+    let out = to(&mut world);
+    assert!(out.iter().any(|(c, m)| *c == cb
+        && matches!(m, ServerMessage::Say { text, .. } if text.contains("already holds"))));
+}

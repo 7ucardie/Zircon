@@ -293,6 +293,9 @@ pub struct Bag<'a> {
     pub refines: &'a [mir_proto::RefineSummary],
     pub companions: &'a [mir_proto::CompanionSummary],
     pub companion_shop: &'a [mir_proto::CompanionOffer],
+    /// Castles as (index, name, owner) and the one under conquest.
+    pub castles: &'a [(i32, String, String)],
+    pub conquest: Option<i32>,
 }
 
 /// An open trade as the client sees it.
@@ -1124,10 +1127,32 @@ impl WindowState {
                         [255, 255, 200, 255],
                     );
                     let mut y = win.y + 56.0;
-                    for line in wrap_text(c, &g.notice, 300.0, 11).into_iter().take(3) {
+                    for line in wrap_text(c, &g.notice, 300.0, 11).into_iter().take(2) {
                         c.text
                             .draw(&line, 11, win.x + 16.0, y, [200, 200, 255, 255]);
                         y += 14.0;
+                    }
+                    // Castle and wars (Zircon GuildDialog war tab).
+                    let mut status = String::new();
+                    if !g.castle.is_empty() {
+                        status.push_str(&format!("Holds {}. ", g.castle));
+                    }
+                    for (enemy, secs) in &g.wars {
+                        status.push_str(&format!("War with {enemy} ({}m). ", secs / 60));
+                    }
+                    for (index, name, owner) in bag.castles {
+                        let state = if bag.conquest == Some(*index) {
+                            "under siege"
+                        } else if owner.is_empty() {
+                            "unclaimed"
+                        } else {
+                            owner.as_str()
+                        };
+                        status.push_str(&format!("{name}: {state}. "));
+                    }
+                    if !status.is_empty() {
+                        c.text
+                            .draw(&status, 11, win.x + 16.0, y, [255, 200, 120, 255]);
                     }
                     y = win.y + 104.0;
                     if self.guild_kick.len() != g.members.len() {
@@ -1137,7 +1162,7 @@ impl WindowState {
                             .map(|_| Button::default_style(0.0, 0.0, 50.0, "Kick"))
                             .collect();
                     }
-                    for (i, m) in g.members.iter().enumerate().take(11) {
+                    for (i, m) in g.members.iter().enumerate().take(9) {
                         let col = if m.index == g.user_index {
                             [255, 255, 0, 255]
                         } else if m.online {
@@ -1160,6 +1185,44 @@ impl WindowState {
                             }
                         }
                         y += 18.0;
+                    }
+                    // War on the named guild, and a conquest request for
+                    // the first castle (StartWar / leader permissions).
+                    let can_war = me.is_some_and(|m| m.permission == -1 || m.permission & 128 != 0);
+                    let wy = win.y + win.h - 3.0 - 42.0 - 60.0;
+                    if self.guild_buttons.len() < 6 {
+                        self.guild_buttons.push(Button::default_style(
+                            0.0,
+                            0.0,
+                            90.0,
+                            "Declare war",
+                        ));
+                        self.guild_buttons.push(Button::default_style(
+                            0.0,
+                            0.0,
+                            120.0,
+                            "Request conquest",
+                        ));
+                    }
+                    let name_now = name_box.text.trim().to_string();
+                    let b = &mut self.guild_buttons[4];
+                    b.pos = (win.x + 16.0, wy);
+                    b.enabled = can_war && !name_now.is_empty();
+                    if b.update(c) && b.enabled {
+                        out.push(ClientMessage::GuildWar {
+                            name: name_now.clone(),
+                        });
+                    }
+                    let b = &mut self.guild_buttons[5];
+                    b.pos = (win.x + 112.0, wy);
+                    b.enabled = leader
+                        && g.castle.is_empty()
+                        && !bag.castles.is_empty()
+                        && bag.conquest.is_none();
+                    if b.update(c) && b.enabled {
+                        if let Some((index, _, _)) = bag.castles.first() {
+                            out.push(ClientMessage::GuildRequestConquest { index: *index });
+                        }
                     }
                     // Footer: invite box, Leave, and the notice box above.
                     let notice_box = self

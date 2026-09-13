@@ -587,6 +587,47 @@ impl World {
         }
     }
 
+    /// Test helper: revive a dead player where they stand.
+    #[cfg(test)]
+    pub fn revive_player_test(&mut self, id: ObjectId) {
+        let _ = self.revive_player(id);
+    }
+
+    /// Test helper: grant experience through the normal path (castle bonus
+    /// included).
+    #[cfg(test)]
+    pub fn gain_experience_test(&mut self, id: ObjectId, amount: u64) {
+        self.gain_experience(id, amount);
+    }
+
+    /// Test helper: give a guild funds.
+    #[cfg(test)]
+    pub fn test_set_guild_funds(&mut self, guild: u32, funds: i64) {
+        if let Some(g) = self.guild_store.guilds.iter_mut().find(|g| g.id == guild) {
+            g.funds = funds;
+        }
+    }
+
+    /// Test helper: end every guild war at the next tick.
+    #[cfg(test)]
+    pub fn test_expire_wars(&mut self) {
+        for w in self.guild_store.wars.iter_mut() {
+            w.ends_at = 0;
+        }
+    }
+
+    /// Test helper: the castle lord of the running conquest.
+    #[cfg(test)]
+    pub fn test_castle_lord(&self) -> Option<ObjectId> {
+        self.conquest.as_ref().and_then(|c| c.lord)
+    }
+
+    /// Test helper: end the running conquest now.
+    #[cfg(test)]
+    pub fn test_end_conquest(&mut self) {
+        self.end_conquest();
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

@@ -914,6 +914,13 @@ pub fn profile(ai: i32) -> AiProfile {
         59 => p.weakness_every_ms = 10_000,
         78 => p.death_cloud_every_ms = 15_000,
         127 => p.death_cloud_every_ms = 8_000,
+        // Castle lord: rays within 3, line attack, death clouds every 15 s.
+        1000 => {
+            p.attack_range = 3;
+            p.rays_only = true;
+            p.line_attack = 3;
+            p.death_cloud_every_ms = 15_000;
+        }
         30 | 69 => {
             p.gate = Some(if ai == 30 { 0 } else { 1 });
             p.passive = true;

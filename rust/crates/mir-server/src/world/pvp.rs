@@ -14,6 +14,17 @@ pub const PK_TICK: u64 = 60_000;
 
 /// Name colour code sent in `Appearance::Player`: 0 white, 1 yellow (50+
 /// PK points), 2 brown, 3 red (Zircon `ProcessNameColour`).
+/// Zircon `AtWar`: the guilds are at war, or both stand on a map under
+/// conquest and are not guild mates.
+pub fn at_war(me: &PlayerData, them: &PlayerData) -> bool {
+    if them.guild.is_some_and(|g| me.war_guilds.contains(&g)) {
+        return true;
+    }
+    me.conquest_map
+        && them.conquest_map
+        && (me.guild.is_none() || them.guild.is_none() || me.guild != them.guild)
+}
+
 pub fn name_color(p: &PlayerData) -> u8 {
     if p.pk_points >= RED_POINT {
         3
@@ -76,6 +87,10 @@ impl World {
         if tp.brown || tp.pk_points >= RED_POINT {
             return;
         }
+        // Guild wars and conquests are fair fights.
+        if ao.player().is_some_and(|ap| at_war(ap, tp)) {
+            return;
+        }
         let ap = self
             .objects
             .get_mut(&a)
@@ -105,6 +120,15 @@ impl World {
             (vp.name.clone(), !vp.brown && vp.pk_points < RED_POINT)
         };
         let kname = self.objects[&k].player().unwrap().name.clone();
+        let war = {
+            let kp = self.objects[&k].player().unwrap();
+            let vp = self.objects[&victim].player().unwrap();
+            at_war(kp, vp)
+        };
+        if war {
+            self.guild_war_death(victim, k);
+            return;
+        }
         if innocent {
             self.system_line(victim, format!("You have been murdered by {kname}."));
             self.system_line(k, format!("You have murdered {vname}."));

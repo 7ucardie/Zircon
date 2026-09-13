@@ -20,7 +20,7 @@ impl World {
         );
     }
 
-    fn player_name(&self, id: ObjectId) -> String {
+    pub(super) fn player_name(&self, id: ObjectId) -> String {
         self.objects
             .get(&id)
             .and_then(|o| o.player())

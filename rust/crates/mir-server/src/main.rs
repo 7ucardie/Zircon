@@ -716,6 +716,12 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::GuildIncreaseMember) => {
             world.guild_increase_member(object)
         }
+        (Stage::InGame { object, .. }, ClientMessage::GuildWar { name }) => {
+            world.guild_war(object, name)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GuildRequestConquest { index }) => {
+            world.guild_request_conquest(object, index)
+        }
         (
             Stage::InGame { object, .. },
             ClientMessage::MailSend {

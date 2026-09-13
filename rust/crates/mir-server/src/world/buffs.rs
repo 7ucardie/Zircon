@@ -196,6 +196,10 @@ impl World {
 
     /// Zircon `ApplyPoison`: a stronger instance of the same type wins.
     pub(super) fn apply_poison(&mut self, target: ObjectId, poison: Poison) {
+        // The castle lord shrugs off every poison.
+        if self.is_castle_lord(target) {
+            return;
+        }
         let Some(o) = self.objects.get_mut(&target) else {
             return;
         };

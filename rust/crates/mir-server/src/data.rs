@@ -42,6 +42,28 @@ pub struct FishingZoneDef {
     pub region: i32,
 }
 
+/// `CastleInfo`: a conquerable castle (Zircon `SEnvir.StartConquest`).
+#[derive(Debug, Clone)]
+pub struct CastleDef {
+    pub index: i32,
+    pub name: String,
+    pub map: i32,
+    /// Seconds after midnight when the war starts, and how long it lasts.
+    pub start_secs: i64,
+    pub duration_secs: i64,
+    pub castle_region: i32,
+    /// Where the lord stands (this pack has no `ObjectiveRegion`, so the
+    /// castle region doubles for it).
+    pub objective_region: i32,
+    pub attack_spawn_region: i32,
+    /// Item consumed by a conquest request (0 = none).
+    pub item: i32,
+    /// The castle lord (`MonsterInfo`).
+    pub monster: i32,
+    /// Shop discount for the owner guild (unused here).
+    pub discount: f64,
+}
+
 /// `FishingDropInfo`: 1 in `chance` per catch; `throw_quality` 0 = any.
 #[derive(Debug, Clone)]
 pub struct FishingDropDef {
@@ -479,6 +501,7 @@ pub struct GameData {
     pub mines: Vec<MineDef>,
     pub fishing_zones: Vec<FishingZoneDef>,
     pub fishing_drops: Vec<FishingDropDef>,
+    pub castles: Vec<CastleDef>,
     pub guards: Vec<GuardDef>,
     pub currencies: Vec<CurrencyDef>,
     /// Zircon `FameInfo` titles in promotion order.
@@ -922,6 +945,37 @@ impl GameData {
                 .collect(),
             None => Vec::new(),
         };
+        // .NET ticks (100 ns) to seconds.
+        let secs_of = |c: &Collection, r: &Record, name: &str| -> i64 {
+            match c.get(r, name) {
+                Some(Value::TimeSpan(t)) => t / 10_000_000,
+                _ => 0,
+            }
+        };
+        let castles = match db.collection("CastleInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| {
+                    let castle_region = i32_of(c, r, "CastleRegion");
+                    CastleDef {
+                        index: c.index(r),
+                        name: c.str_or(r, "Name", "").to_string(),
+                        map: i32_of(c, r, "Map"),
+                        start_secs: secs_of(c, r, "StartTime"),
+                        duration_secs: secs_of(c, r, "Duration"),
+                        castle_region,
+                        objective_region: c.int_or(r, "ObjectiveRegion", castle_region as i64)
+                            as i32,
+                        attack_spawn_region: i32_of(c, r, "AttackSpawnRegion"),
+                        item: i32_of(c, r, "Item"),
+                        monster: i32_of(c, r, "Monster"),
+                        discount: c.float_or(r, "Discount", 0.0),
+                    }
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let guards = match db.collection("GuardInfo") {
             Some(c) => c
                 .records
@@ -1116,6 +1170,7 @@ impl GameData {
             mines,
             fishing_zones,
             fishing_drops,
+            castles,
             guards,
             currencies,
             fames,

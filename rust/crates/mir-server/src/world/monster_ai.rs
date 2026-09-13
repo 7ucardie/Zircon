@@ -209,8 +209,9 @@ impl World {
             return;
         }
 
-        // Regen: 2 % every 10 s, never while bleeding.
-        if !has_poison(&self.objects[&id], poison_kind::HEMORRHAGE) {
+        // Regen: 2 % every 10 s, never while bleeding (the castle lord
+        // never heals).
+        if !has_poison(&self.objects[&id], poison_kind::HEMORRHAGE) && !self.is_castle_lord(id) {
             let o = self.objects.get_mut(&id).unwrap();
             let m = match &mut o.kind {
                 Kind::Monster(m) => m,

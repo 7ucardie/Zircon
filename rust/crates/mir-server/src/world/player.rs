@@ -105,6 +105,8 @@ impl World {
                 brown: false,
                 guild: None,
                 guild_invite: None,
+                war_guilds: Vec::new(),
+                conquest_map: false,
                 mail_time: 0,
                 channel: None,
                 dragon_blood: false,
@@ -385,6 +387,12 @@ impl World {
     }
 
     pub(super) fn gain_experience(&mut self, id: ObjectId, amount: u64) {
+        // Castle owners earn 10 % more (Zircon `ApplyCastleBuff`).
+        let amount = if self.castle_experience_bonus(id) {
+            amount + amount / 10
+        } else {
+            amount
+        };
         let Some(o) = self.objects.get_mut(&id) else {
             return;
         };

@@ -48,6 +48,8 @@ impl Game {
                 refines,
                 companions,
                 companion_shop,
+                castles,
+                conquest,
                 ..
             } = self;
             let player_name = character
@@ -112,6 +114,8 @@ impl Game {
                 refines,
                 companions,
                 companion_shop,
+                castles,
+                conquest: *conquest,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
