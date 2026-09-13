@@ -162,6 +162,21 @@ pub struct AiProfile {
     /// Doom Claw: stationary parts boss; only attackers within 10 hurt it;
     /// its claws, spit and wave deal class-reduced damage with pushes.
     pub doom_claw: bool,
+    /// Healer Ant: heals injured allies in view with a ticking heal instead
+    /// of fighting when one needs it.
+    pub heals_allies: bool,
+    /// Purification on the target every 3 s with 1-in-n chance (Banyo
+    /// Captain); 0 = never.
+    pub purify_chance: i32,
+    /// Mass purification of everything in view every n ms (Banyo Lord
+    /// Guzak); 0 = never.
+    pub purify_every_ms: u64,
+    /// Frost Lord Hwa: every 60 s scatters everything in view and stacks
+    /// Abyss, Silenced and Red poison for 10 s plus Wraith Grip for 5 s.
+    pub scatter_curse: bool,
+    /// Queen Of Dawn: every 60 s teleports every attackable object on the
+    /// map to a random cell.
+    pub map_scatter: bool,
 }
 
 impl Default for AiProfile {
@@ -206,6 +221,11 @@ impl Default for AiProfile {
             mode_windows: false,
             phase: None,
             doom_claw: false,
+            heals_allies: false,
+            purify_chance: 0,
+            purify_every_ms: 0,
+            scatter_curse: false,
+            map_scatter: false,
         }
     }
 }
@@ -356,10 +376,11 @@ pub fn profile(ai: i32) -> AiProfile {
             })
         }
         12 => {
-            // Healer ant: keeps its distance like an archer; healing allies
-            // is not modelled, so it only shoots.
+            // Healer ant: keeps its distance like an archer and heals
+            // injured allies in view with a ticking heal.
             p.attack_range = 7;
             p.kite = true;
+            p.heals_allies = true;
         }
         13 => {
             p.hidden = Some(Hidden {
@@ -596,6 +617,7 @@ pub fn profile(ai: i32) -> AiProfile {
         }
         70 => {
             p.blink_when_far = Some((3, 5000));
+            p.scatter_curse = true;
         }
         71 => {
             p.blink_chance = 7;
@@ -609,6 +631,7 @@ pub fn profile(ai: i32) -> AiProfile {
             p.spell_chance_near = 5;
             p.spell_chance_far = 5;
             p.spell_cooldown_ms = 3000;
+            p.purify_chance = 5;
         }
         75 => p.die_splash = Some((2, 140, 4)),
         76 => p.die_splash = Some((2, 141, 4)),
@@ -707,6 +730,7 @@ pub fn profile(ai: i32) -> AiProfile {
             p.blink_chance = 10;
             p.self_aoe = 2;
             p.self_aoe_chance = 5;
+            p.map_scatter = true;
         }
         98 | 100 | 101 => {
             p.attack_range = 10;
@@ -896,6 +920,7 @@ pub fn profile(ai: i32) -> AiProfile {
             p.immobile = true;
             p.invulnerable = true;
         }
+        74 => p.purify_every_ms = 20_000,
         _ => {}
     }
     p

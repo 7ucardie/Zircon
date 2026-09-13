@@ -121,14 +121,29 @@ impl World {
             }
             match effect {
                 spell_effect::FIRE_WALL => {
+                    let owner_is_monster = self.objects[&owner].is_monster();
                     let victims: Vec<ObjectId> = self.maps[&map]
                         .objects_at(loc)
                         .iter()
                         .copied()
-                        .filter(|v| self.objects[v].is_monster() && !self.objects[v].dead)
+                        .filter(|v| {
+                            !self.objects[v].dead
+                                && self.objects[&owner].hostile_to(&self.objects[v])
+                        })
                         .collect();
                     for v in victims {
-                        self.magic_attack(owner, v, magic, element::FIRE, 60);
+                        if owner_is_monster {
+                            // Zircon: `monster.Attack(ob, GetDC(), Fire)`.
+                            let s = self.objects[&owner].stats;
+                            let dc = self.roll_dc(s);
+                            let ts = self.objects[&v].stats;
+                            let dealt = dc - self.roll_range(ts.min_mr, ts.max_mr);
+                            if dealt > 0 {
+                                self.damage(v, owner, dealt, element::FIRE, true);
+                            }
+                        } else {
+                            self.magic_attack(owner, v, magic, element::FIRE, 60);
+                        }
                     }
                 }
                 spell_effect::DEATH_CLOUD => {
@@ -253,6 +268,10 @@ impl World {
                     if !held {
                         self.remove_object(sid);
                     }
+                }
+                spell_effect::POISONOUS_CLOUD if self.objects[&owner].is_monster() => {
+                    // A monster's cloud would buff its allies; monsters carry
+                    // no buffs here, so it only lingers.
                 }
                 spell_effect::POISONOUS_CLOUD => {
                     // Everyone within 2 cells gains +5 agility while it lasts.

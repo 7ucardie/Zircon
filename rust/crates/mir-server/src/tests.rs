@@ -3239,3 +3239,103 @@ fn monster_ai_wave_three_shinsu_terracotta_and_doom_claw() {
     world.teleport(me, close);
     assert!(world.test_damage(claw, me, 500) > 0);
 }
+
+#[test]
+fn monster_ai_wave_four_fields_purify_healer_and_behaviours() {
+    use mir_proto::{buff_type, spell_effect};
+    use world::ai_profile::Spell;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let mut rec = test_character("Tester");
+    rec.level = 60;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let map = world.objects[&me].map;
+    let start = world.objects[&me].location;
+    let loc = world
+        .test_quiet_cell(map, start)
+        .expect("a quiet cell outside town");
+    world.teleport(me, loc);
+    let cell_at = |world: &World, d: Direction, n: i32| -> Option<Point> {
+        let p = loc.step(d, n);
+        (world.maps[&map].file.is_walkable(p.x, p.y) && world.maps[&map].objects_at(p).is_empty())
+            .then_some(p)
+    };
+
+    // A monster fire wall is a real field: five walls on the target that
+    // burn the player standing in them every 2 s.
+    let spot = Direction::ALL
+        .iter()
+        .find_map(|d| cell_at(&world, *d, 3))
+        .expect("a cell three away");
+    let caster = world.test_spawn_ai(0, map, spot).expect("a plain monster");
+    world.test_set_target(caster, me);
+    world.test_monster_cast(caster, me, Spell::FireWall);
+    assert!(world.test_spell_at(map, loc, spell_effect::FIRE_WALL));
+    let hp = world.objects[&me].hp;
+    for t in 1..=6 {
+        world.tick(t * 1000);
+    }
+    assert!(world.objects[&me].hp < hp, "the wall should burn");
+    // A poisonous cloud lingers as a 5x5 field around the caster.
+    world.test_monster_cast(caster, me, Spell::PoisonousCloud);
+    assert!(world.test_spell_at(map, spot, spell_effect::POISONOUS_CLOUD));
+    world.remove_object(caster);
+    world.test_set_hp(me, world.objects[&me].max_hp);
+
+    // Purification strips a player's helpful buffs.
+    let might = learn(&mut world, me, "Might");
+    world.test_refill_mp(me);
+    drain(&mut world);
+    world.cast(me, might, Direction::Down, None, loc);
+    world.tick(7_000);
+    assert!(world.objects[&me].has_buff(buff_type::MIGHT));
+    let captain = world.test_spawn_ai(72, map, spot).expect("a banyo captain");
+    world.test_purify(captain, me);
+    assert!(!world.objects[&me].has_buff(buff_type::MIGHT));
+    world.remove_object(captain);
+
+    // A healer ant tends an injured ally with a ticking heal.
+    let ally_spot = Direction::ALL
+        .iter()
+        .find_map(|d| cell_at(&world, *d, 4))
+        .expect("a cell four away");
+    let ally = world.test_spawn_ai(0, map, ally_spot).expect("an ally");
+    let max_hp = world.objects[&ally].max_hp;
+    world.test_set_hp(ally, max_hp / 2);
+    let ant = world.test_spawn_ai(12, map, spot).expect("a healer ant");
+    for t in 8..=12 {
+        world.tick(t * 1000);
+    }
+    assert!(
+        world.test_has_heal(ally) || world.objects[&ally].hp > max_hp / 2,
+        "the ant should heal its ally"
+    );
+    world.remove_object(ant);
+    world.remove_object(ally);
+
+    // Behaviour flags: at a quarter HP the monster jumps away and enrages,
+    // and it heals a tenth every 30 s while hurt.
+    let brute = world.test_spawn_ai(0, map, spot).expect("a brute");
+    world.test_set_behaviours(brute, 4 | 8 | 64);
+    let delay = world.test_monster_attack_delay(brute);
+    let max_hp = world.objects[&brute].max_hp;
+    world.test_set_hp(brute, max_hp / 5);
+    world.tick(13_000);
+    assert!(
+        world.objects[&brute].location.distance(spot) >= 5,
+        "should have jumped away"
+    );
+    assert!(
+        world.test_monster_attack_delay(brute) < delay,
+        "should have enraged"
+    );
+    assert!(
+        world.objects[&brute].hp > max_hp / 5,
+        "should have healed a tenth"
+    );
+    world.test_set_behaviours(brute, 0);
+}

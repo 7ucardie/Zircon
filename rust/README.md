@@ -357,8 +357,17 @@ invisible and show themselves two cells from their target (the sub boss
 fades out again when far), and Doom Claw stands still while its claws,
 maw and wave strike whoever stands in each part's reach with class-reduced
 damage and pushes, ignoring attackers more than ten cells away.
-`cargo test -p mir-server report_monster_ai -- --ignored --nocapture`
-prints which AI ids still fall back to the plain melee profile.
+Wave four makes monster fire walls and poison clouds real fields (a cross
+of five walls burning for 30 s, a 5x5 cloud for 20 s), gives Banyo
+Captain and Banyo Lord Guzak Zircon's Purification (stripping a player's
+helpful buffs, always when the target is no higher level and otherwise 42
+% of the time), lets Healer Ants tend injured allies with a ticking heal,
+scatters and curses everyone in view around Frost Lord Hwa every minute,
+scatters the whole map around the Queen Of Dawn, and honours
+`MonsterInfo.Behaviours` flags (Heals every 30 s, Teleports and Enrages
+once at a quarter HP) when the pack sets them. `cargo test -p mir-server
+report_monster_ai -- --ignored --nocapture` prints which AI ids still fall
+back to the plain melee profile.
 
 ## Editing content
 

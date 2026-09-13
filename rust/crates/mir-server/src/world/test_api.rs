@@ -463,6 +463,44 @@ impl World {
         self.objects[&id].monster_ref().target
     }
 
+    /// Test helper: make a monster cast a spell at a target now.
+    #[cfg(test)]
+    pub fn test_monster_cast(
+        &mut self,
+        id: ObjectId,
+        target: ObjectId,
+        spell: super::ai_profile::Spell,
+    ) {
+        self.monster_cast(id, target, spell);
+    }
+
+    /// Test helper: set a monster definition's behaviour flags.
+    #[cfg(test)]
+    pub fn test_set_behaviours(&mut self, id: ObjectId, flags: i32) {
+        let def = self.objects[&id].monster_ref().def;
+        if let Some(d) = self.data.monsters.get_mut(&def) {
+            d.behaviours = flags;
+        }
+    }
+
+    /// Test helper: a monster's current attack delay.
+    #[cfg(test)]
+    pub fn test_monster_attack_delay(&self, id: ObjectId) -> u64 {
+        self.objects[&id].monster_ref().attack_delay
+    }
+
+    /// Test helper: is a ticking heal on the object?
+    #[cfg(test)]
+    pub fn test_has_heal(&self, id: ObjectId) -> bool {
+        self.objects[&id].heal.is_some()
+    }
+
+    /// Test helper: purify a target as a monster would.
+    #[cfg(test)]
+    pub fn test_purify(&mut self, caster: ObjectId, target: ObjectId) {
+        self.purify(caster, target);
+    }
+
     /// Test helper: (hidden, mode) of a monster.
     #[cfg(test)]
     pub fn test_monster_hidden_mode(&self, id: ObjectId) -> (bool, bool) {
