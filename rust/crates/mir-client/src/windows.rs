@@ -321,6 +321,8 @@ pub struct PlayerView {
     pub max_ac: i32,
     pub accuracy: i32,
     pub agility: i32,
+    /// Held fame title ("" when none).
+    pub fame_title: String,
 }
 
 /// Draw the item icon (StoreItems) centred in a cell, plus the count.
@@ -2223,6 +2225,14 @@ impl WindowState {
                 (
                     "Hand",
                     format!("{}/{}", bag.weights.hand, bag.weights.max_hand),
+                ),
+                (
+                    "Fame",
+                    if s.fame_title.is_empty() {
+                        "-".to_string()
+                    } else {
+                        s.fame_title.clone()
+                    },
                 ),
             ];
             for (i, (k, v)) in rows.iter().enumerate() {

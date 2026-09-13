@@ -324,6 +324,8 @@ impl Game {
                 accuracy: 0,
                 agility: 0,
                 attack_speed: 0,
+                fame: 0,
+                fame_title: String::new(),
             },
             mouse: (0.0, 0.0),
             lmb: false,

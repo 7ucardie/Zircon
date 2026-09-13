@@ -16,3 +16,6 @@ rand.workspace = true
 serde.workspace = true
 serde_json = "1"
 argon2 = { version = "0.5", features = ["std"] }
+# NPC page scripts (Zircon NpcScriptEngine); vendored Lua 5.4 so CI needs no
+# system Lua on any OS.
+mlua = { version = "0.10", features = ["lua54", "vendored"] }

@@ -99,6 +99,7 @@ impl World {
                 group: None,
                 attack_mode: rec.attack_mode,
                 pk_points: rec.pk_points,
+                fame: rec.fame,
                 pk_tick: if rec.pk_points > 0 { 1 } else { 0 },
                 brown_until: 0,
                 brown: false,
@@ -339,6 +340,7 @@ impl World {
         rec.allow_group = p.allow_group;
         rec.attack_mode = p.attack_mode;
         rec.pk_points = p.pk_points;
+        rec.fame = p.fame;
         rec.horse = p.horse;
         rec.partner = p.partner.as_ref().map(|(c, _)| *c).unwrap_or(0);
         rec.partner_name = p
@@ -374,6 +376,11 @@ impl World {
             accuracy: o.stats.accuracy,
             agility: o.stats.agility,
             attack_speed: o.player().map(|p| p.attack_speed as i32).unwrap_or(0),
+            fame: p.fame,
+            fame_title: self
+                .fame_def(p.fame)
+                .map(|f| f.name.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -499,7 +506,12 @@ impl World {
         let Some(base) = self.data.base_stat(p.class.mir_class(), p.level).cloned() else {
             return;
         };
-        let eq = p.bag.equipment_stats(&self.data);
+        let mut eq = p.bag.equipment_stats(&self.data);
+        // A held fame title adds its stats like a permanent buff (Zircon
+        // ApplyFameBuff).
+        for (stat, amount) in self.fame_stats(p.fame) {
+            *eq.entry(stat).or_insert(0) += amount;
+        }
         let g = |k: i32| eq.get(&k).copied().unwrap_or(0);
         let horse = p.horse;
         // Passive skills (Zircon `GetPassiveStats`).
