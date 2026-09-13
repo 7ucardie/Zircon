@@ -351,8 +351,14 @@ clouds around their targets that burst after a few seconds, and the
 Netherworld and Jinam gates stand invulnerable for twenty minutes, sweeping
 players in view to the region named by `ZIRCON_MYSTERY_SHIP_REGION` /
 `ZIRCON_LAIR_REGION` (Zircon's `Config` region indices; unset = no
-teleport). `cargo test -p mir-server report_monster_ai -- --ignored
---nocapture` prints which AI ids still fall back to the plain melee profile.
+teleport). Wave three covers the odd bosses: Shinsu fights only inside ten
+second windows and is unseen between them, Terracotta warriors rush in
+invisible and show themselves two cells from their target (the sub boss
+fades out again when far), and Doom Claw stands still while its claws,
+maw and wave strike whoever stands in each part's reach with class-reduced
+damage and pushes, ignoring attackers more than ten cells away.
+`cargo test -p mir-server report_monster_ai -- --ignored --nocapture`
+prints which AI ids still fall back to the plain melee profile.
 
 ## Editing content
 

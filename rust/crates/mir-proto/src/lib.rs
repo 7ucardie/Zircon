@@ -783,6 +783,12 @@ pub mod magic_type {
     pub const GREEN_SLUDGE_BALL: u16 = 540;
     pub const MONSTER_SPLASH: u16 = 550;
     pub const MONSTER_DARK_BEAM: u16 = 551;
+    pub const DOOM_CLAW_LEFT_PINCH: u16 = 520;
+    pub const DOOM_CLAW_LEFT_SWIPE: u16 = 521;
+    pub const DOOM_CLAW_RIGHT_PINCH: u16 = 522;
+    pub const DOOM_CLAW_RIGHT_SWIPE: u16 = 523;
+    pub const DOOM_CLAW_WAVE: u16 = 524;
+    pub const DOOM_CLAW_SPIT: u16 = 525;
     pub const FLAMING_DAGGERS: u16 = 454;
     pub const SHREDDING: u16 = 455;
 

@@ -848,6 +848,15 @@ impl World {
             if prof.clamp_damage && power > 1 {
                 power = 1;
             }
+            // Doom Claw only feels attackers within 10 cells.
+            if prof.doom_claw
+                && self.objects[&attacker]
+                    .location
+                    .distance(self.objects[&target].location)
+                    > 10
+            {
+                return 0;
+            }
             if let Some(mit) = prof.class_mitigation {
                 if let Some(class) = self.objects[&attacker]
                     .player()

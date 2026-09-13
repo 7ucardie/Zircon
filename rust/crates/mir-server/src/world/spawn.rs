@@ -62,7 +62,10 @@ impl World {
                 summon_level,
                 tame_until: if owner.is_some() { u64::MAX } else { 0 },
                 explode_at: None,
-                hidden: super::ai_profile::profile(def.ai).hidden.is_some(),
+                hidden: {
+                    let prof = super::ai_profile::profile(def.ai);
+                    prof.hidden.is_some() || prof.phase.is_some() || prof.mode_windows
+                },
                 hide_check: 0,
                 range_time: 0,
                 fear_time: 0,
@@ -78,6 +81,9 @@ impl World {
                 death_count: 0,
                 revive_at: 0,
                 cadence_time: 0,
+                mode: false,
+                mode_time: 0,
+                phase_time: 0,
                 minions: Vec::new(),
                 master: None,
                 guard: def.ai == -1,

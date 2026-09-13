@@ -228,6 +228,12 @@ pub fn monster_alias(magic: u16) -> u16 {
         magic_type::GREEN_SLUDGE_BALL => magic_type::ICE_BOLT,
         magic_type::MONSTER_SPLASH => magic_type::FIRE_STORM,
         magic_type::MONSTER_DARK_BEAM => magic_type::LIGHTNING_BEAM,
+        magic_type::DOOM_CLAW_LEFT_PINCH
+        | magic_type::DOOM_CLAW_RIGHT_PINCH
+        | magic_type::DOOM_CLAW_LEFT_SWIPE
+        | magic_type::DOOM_CLAW_RIGHT_SWIPE => magic_type::FIRE_STORM,
+        magic_type::DOOM_CLAW_WAVE => magic_type::DRAGON_TORNADO,
+        magic_type::DOOM_CLAW_SPIT => magic_type::POISONOUS_CLOUD,
         m => m,
     }
 }

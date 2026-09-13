@@ -6,11 +6,12 @@ ranged/line/splash/self-area shapes, casters, poisons, blink-strikers,
 hidden monsters, stages, guards, larva, corpse spawns). Wave two (2026-09-13)
 added VoraciousGhost revives, the MagicWeakness debuff (a poison kind that
 zeroes MR), JinchonDevil DeathCloud fields and the two gates (regions from
-`ZIRCON_MYSTERY_SHIP_REGION` / `ZIRCON_LAIR_REGION`). Still open:
+`ZIRCON_MYSTERY_SHIP_REGION` / `ZIRCON_LAIR_REGION`). Wave three added Shinsu
+mode windows, Terracotta phasing and DoomClaw's parts (the class
+percentages are damage dealt to players, not taken). Still open:
 persistent FireWall/PoisonousCloud monster fields, Purification,
-heal/teleport/enrage behaviour flags (not in this asset pack), Shinsu mode
-windows, Terracotta phasing speed, DoomClaw's part layout, castle classes,
-ally healers.
+heal/teleport/enrage behaviour flags (not in this asset pack), castle
+classes, ally healers.
 File:line references are into the C# projects
 (ServerLibrary/Models/MonsterObject.cs unless a class file is named;
 class files live in ServerLibrary/Models/Monsters/).

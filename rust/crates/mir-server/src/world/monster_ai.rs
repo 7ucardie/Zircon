@@ -185,6 +185,16 @@ impl World {
                 return;
             }
         }
+        // Shinsu's fighting window opens and closes on its own clock.
+        if prof.mode_windows {
+            self.process_mode_window(id, now);
+        }
+        // Doom Claw never moves or searches like the others: every attack
+        // delay one of its parts strikes whoever stands in its reach.
+        if prof.doom_claw {
+            self.process_doom_claw(id, map, loc);
+            return;
+        }
 
         // Regen: 2 % every 10 s, never while bleeding.
         if !has_poison(&self.objects[&id], poison_kind::HEMORRHAGE) {
@@ -585,6 +595,17 @@ impl World {
         };
         let tloc = self.objects[&t].location;
         let dist = tloc.distance(loc);
+        // Shinsu fights only inside its window; outside it is unseen.
+        if prof.mode_windows && !self.objects[&id].monster_ref().mode {
+            return;
+        }
+        // Terracotta: unseen it rushes in and shows itself at 2 cells;
+        // seen and far it may fade out again.
+        if let Some(can_phase_out) = prof.phase {
+            if self.process_phase(id, t, can_phase_out, dist, now) {
+                return;
+            }
+        }
         // Fear: run straight away and never swing.
         if has_poison(&self.objects[&id], poison_kind::FEAR) {
             if self.monster_can_move(id) && !prof.immobile {
@@ -1352,6 +1373,160 @@ impl World {
     }
 
     /// Zircon `UnTame`: back to the wild at a tenth of its health.
+    /// Zircon `Shinsu.Process`: with a target the window is extended to 10 s
+    /// ahead; the mode flips on (visible, 2 s pause) when a window is due and
+    /// off (hidden, 2 s pause) when it lapses. Returns whether it may fight.
+    fn process_mode_window(&mut self, id: ObjectId, now: u64) {
+        let o = self.objects.get_mut(&id).unwrap();
+        if now < o.action_time {
+            return;
+        }
+        let m = o.monster_mut().unwrap();
+        if m.target.is_some() {
+            m.mode_time = now + 10_000;
+        }
+        if !m.mode && now < m.mode_time {
+            m.mode = true;
+            m.hidden = false;
+            o.action_time = now + 2000;
+        } else if m.mode && now > m.mode_time {
+            m.mode = false;
+            m.hidden = true;
+            o.action_time = now + 2000;
+        }
+    }
+
+    /// Zircon `Terracotta.ProcessTarget`: returns true when the tick is
+    /// consumed (walking unseen or phasing).
+    fn process_phase(
+        &mut self,
+        id: ObjectId,
+        t: ObjectId,
+        can_phase_out: bool,
+        dist: i32,
+        now: u64,
+    ) -> bool {
+        let hidden = self.objects[&id].monster_ref().hidden;
+        if hidden {
+            if dist <= 2 {
+                self.reveal_monster(id, None);
+                return true;
+            }
+            if self.monster_can_move(id) {
+                let goal = self.objects[&t].location;
+                self.move_toward(id, goal, false);
+                // Unseen it moves every 20 ms.
+                let o = self.objects.get_mut(&id).unwrap();
+                o.move_time = now + 20;
+                o.action_time = now + 20;
+            }
+            return true;
+        }
+        let phase_due = now >= self.objects[&id].monster_ref().phase_time;
+        if can_phase_out && dist > 4 && phase_due && self.rng.random_range(0..45) == 0 {
+            let o = self.objects.get_mut(&id).unwrap();
+            o.move_time = now + 1200;
+            o.action_time = now + 1200;
+            let m = o.monster_mut().unwrap();
+            m.hidden = true;
+            m.phase_time = now + 5000;
+            return true;
+        }
+        false
+    }
+
+    /// Zircon `DoomClaw.ProcessAI`: right claw covers 5 cells right (radius
+    /// 5), left claw 5 cells down (radius 5), the maw 5 cells down-right
+    /// (view range); 1 in 20 attacks is a wave on everything in view.
+    fn process_doom_claw(&mut self, id: ObjectId, map: i32, loc: Point) {
+        use mir_proto::magic_type as m;
+        if !self.monster_can_attack(id) {
+            return;
+        }
+        let right = self.hostiles_within(id, loc.step(Direction::Right, 5), 5);
+        let left = self.hostiles_within(id, loc.step(Direction::Down, 5), 5);
+        let middle = self.hostiles_within(id, loc.step(Direction::DownRight, 5), MAX_VIEW_RANGE);
+        let dir = self.objects[&id].direction;
+        self.face_and_swing(id, dir, None);
+        let (magic, victims, push): (u16, Vec<ObjectId>, Option<(Direction, i32)>) =
+            if self.rng.random_range(0..20) == 0 {
+                let all = self.hostiles_within(id, loc, MAX_VIEW_RANGE);
+                if all.is_empty() {
+                    return;
+                }
+                (m::DOOM_CLAW_WAVE, all, Some((Direction::DownRight, 15)))
+            } else {
+                let total = right.len() + left.len() + middle.len();
+                if total == 0 {
+                    return;
+                }
+                let mut value = self.rng.random_range(0..total) as i64;
+                value -= right.len() as i64;
+                if value < 0 {
+                    if self.rng.random_range(0..10) > 0 {
+                        (m::DOOM_CLAW_RIGHT_PINCH, middle, None)
+                    } else {
+                        (
+                            m::DOOM_CLAW_RIGHT_SWIPE,
+                            middle,
+                            Some((Direction::DownLeft, 5)),
+                        )
+                    }
+                } else {
+                    value -= left.len() as i64;
+                    if value < 0 {
+                        if self.rng.random_range(0..10) > 0 {
+                            (m::DOOM_CLAW_LEFT_PINCH, middle, None)
+                        } else {
+                            (
+                                m::DOOM_CLAW_LEFT_SWIPE,
+                                middle,
+                                Some((Direction::UpRight, 5)),
+                            )
+                        }
+                    } else {
+                        (m::DOOM_CLAW_SPIT, middle, None)
+                    }
+                }
+            };
+        self.events.push((
+            id,
+            ServerMessage::ObjectMagic {
+                id,
+                direction: dir,
+                location: loc,
+                magic,
+                targets: victims.clone(),
+                locations: Vec::new(),
+                cast: true,
+            },
+        ));
+        let stats = self.objects[&id].stats;
+        for v in victims {
+            let mut power = self.roll_dc(stats);
+            // Warriors take 60 %, wizards 70 %, taoists 40 %, assassins 80 %.
+            if let Some(class) = self.objects[&v].player().map(|p| p.class.mir_class()) {
+                power = power * [60, 70, 40, 80][(class as usize).min(3)] / 100;
+            }
+            let tloc = self.objects[&v].location;
+            self.pending_hits.push(PendingHit {
+                time: self.now + 400,
+                attacker: id,
+                target_cell: (map, tloc),
+                power,
+                target: Some(v),
+                magics: Vec::new(),
+                primary: true,
+                raw: false,
+                element: element::NONE,
+                ranged: true,
+            });
+            if let Some((pdir, cells)) = push {
+                self.push_back(v, pdir, cells);
+            }
+        }
+    }
+
     /// Voracious ghost: back on its feet with half the HP per death so far.
     fn monster_revive(&mut self, id: ObjectId) {
         let now = self.now;

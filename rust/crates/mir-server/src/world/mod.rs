@@ -432,6 +432,11 @@ pub struct MonsterData {
     pub revive_at: u64,
     /// Timed class behaviours (weakness curse, death clouds, gate sweeps).
     pub cadence_time: u64,
+    /// Shinsu: fighting window on/off and when it ends.
+    pub mode: bool,
+    pub mode_time: u64,
+    /// Terracotta: earliest next phase-out.
+    pub phase_time: u64,
     pub minions: Vec<ObjectId>,
     pub master: Option<ObjectId>,
     /// Town guard (AI -1): fights wild monsters, cannot be hurt.

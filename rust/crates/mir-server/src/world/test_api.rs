@@ -457,6 +457,19 @@ impl World {
         None
     }
 
+    /// Test helper: a monster's current target.
+    #[cfg(test)]
+    pub fn test_monster_target(&self, id: ObjectId) -> Option<ObjectId> {
+        self.objects[&id].monster_ref().target
+    }
+
+    /// Test helper: (hidden, mode) of a monster.
+    #[cfg(test)]
+    pub fn test_monster_hidden_mode(&self, id: ObjectId) -> (bool, bool) {
+        let m = self.objects[&id].monster_ref();
+        (m.hidden, m.mode)
+    }
+
     /// Test helper: set a ghost's remaining revives.
     #[cfg(test)]
     pub fn test_set_revives(&mut self, id: ObjectId, n: i32) {

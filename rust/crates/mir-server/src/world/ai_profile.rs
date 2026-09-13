@@ -152,6 +152,16 @@ pub struct AiProfile {
     /// Gate: 0 = mystery ship, 1 = lair; teleports players in view every
     /// 3 s to the configured region, vanishes after 20 minutes.
     pub gate: Option<u8>,
+    /// Shinsu: invisible and harmless except in 10 s fighting windows that
+    /// open while it has a target (2 s transitions).
+    pub mode_windows: bool,
+    /// Terracotta: starts invisible, walks fast while unseen, shows itself
+    /// within 2 cells of the target; `Some(true)` may also phase out again
+    /// (1 in 45 per tick when further than 4 away, 5 s cooldown).
+    pub phase: Option<bool>,
+    /// Doom Claw: stationary parts boss; only attackers within 10 hurt it;
+    /// its claws, spit and wave deal class-reduced damage with pushes.
+    pub doom_claw: bool,
 }
 
 impl Default for AiProfile {
@@ -193,6 +203,9 @@ impl Default for AiProfile {
             weakness_every_ms: 0,
             death_cloud_every_ms: 0,
             gate: None,
+            mode_windows: false,
+            phase: None,
+            doom_claw: false,
         }
     }
 }
@@ -528,6 +541,7 @@ pub fn profile(ai: i32) -> AiProfile {
             p.attack_range = 2;
             p.rays_only = true;
             p.line_attack = 2;
+            p.mode_windows = true;
         }
         56 => {
             p.blink_when_far = Some((3, 5000));
@@ -826,9 +840,8 @@ pub fn profile(ai: i32) -> AiProfile {
         119 => p.hit_poison = poison(poison_kind::SILENCED, 1, 5, 10),
         120 => {
             p.immobile = true;
-            p.attack_range = 10;
-            p.splash = 5;
-            p.class_mitigation = Some([60, 70, 40, 80]);
+            p.attack_range = 18;
+            p.doom_claw = true;
         }
         121 | 126 => {
             p.spell = Some(bolt(
@@ -857,12 +870,9 @@ pub fn profile(ai: i32) -> AiProfile {
             p.self_aoe = 1;
         }
         131..=134 => {
-            p.hidden = Some(Hidden {
-                find_range: 2,
-                hide_range: 0,
-                heal_on_hide: false,
-                wake_range: 0,
-            });
+            if ai != 134 {
+                p.phase = Some(ai == 133);
+            }
             if ai == 133 || ai == 134 {
                 p.hit_poison = poison(poison_kind::PARALYSIS, 1, 5, 15);
             }

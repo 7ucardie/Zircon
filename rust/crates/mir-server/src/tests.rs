@@ -3130,3 +3130,112 @@ fn report_buttons_to_refine_pages() {
         }
     }
 }
+
+#[test]
+fn monster_ai_wave_three_shinsu_terracotta_and_doom_claw() {
+    use mir_proto::magic_type;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let mut rec = test_character("Tester");
+    rec.level = 40;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let map = world.objects[&me].map;
+    let start = world.objects[&me].location;
+    let loc = world
+        .test_quiet_cell(map, start)
+        .expect("a quiet cell outside town");
+    world.teleport(me, loc);
+    let cell_at = |world: &World, d: Direction, n: i32| -> Option<Point> {
+        let p = loc.step(d, n);
+        (world.maps[&map].file.is_walkable(p.x, p.y) && world.maps[&map].objects_at(p).is_empty())
+            .then_some(p)
+    };
+
+    // Terracotta: invisible at spawn, walks in unseen and shows itself
+    // within two cells of its target.
+    let far = Direction::ALL
+        .iter()
+        .find_map(|d| cell_at(&world, *d, 6))
+        .expect("a cell six away");
+    let terra = world.test_spawn_ai(133, map, far).expect("a terracotta");
+    assert!(world.test_monster_hidden_mode(terra).0);
+    world.test_set_target(terra, me);
+    for t in 1..=60 {
+        world.tick(1000 + t * 50);
+    }
+    assert!(
+        !world.test_monster_hidden_mode(terra).0,
+        "terracotta should have shown itself"
+    );
+    assert!(world.objects[&terra].location.distance(loc) <= 2);
+    world.remove_object(terra);
+
+    // Shinsu: hidden until a target opens a 10 s fighting window; the
+    // window closes 2 s after the target is gone.
+    let near = Direction::ALL
+        .iter()
+        .find_map(|d| cell_at(&world, *d, 1))
+        .expect("an adjacent cell");
+    let shinsu = world.test_spawn_ai(53, map, near).expect("a shinsu");
+    assert!(world.test_monster_hidden_mode(shinsu).0);
+    world.test_set_target(shinsu, me);
+    for t in 0..8 {
+        world.tick(10_000 + t * 500);
+    }
+    assert_eq!(world.test_monster_hidden_mode(shinsu), (false, true));
+    // Out of view range (18) but still within the 20-cell tick radius: the
+    // target lapses and the window closes 10 s later.
+    let sloc = world.objects[&shinsu].location;
+    let away = (0..8)
+        .map(Direction::from_index)
+        .find_map(|d| {
+            let p = sloc.step(d, 19);
+            world.maps[&map].file.is_walkable(p.x, p.y).then_some(p)
+        })
+        .expect("a cell 19 away");
+    world.teleport(me, away);
+    for t in 0..60 {
+        world.tick(15_000 + t * 500);
+    }
+    assert!(
+        !world.test_monster_hidden_mode(shinsu).1,
+        "window should have closed"
+    );
+    world.remove_object(shinsu);
+    world.teleport(me, loc);
+
+    // Doom Claw: stands still, strikes the zone the player stands in, and
+    // ignores attackers further than ten cells.
+    let claw = world
+        .test_spawn_ai(120, map, loc.step(Direction::UpLeft, 5))
+        .expect("a doom claw");
+    let hp = world.objects[&me].hp;
+    drain(&mut world);
+    for t in 0..20 {
+        world.tick(40_000 + t * 300);
+    }
+    let msgs = drain(&mut world);
+    // A pinch, swipe or spit lands within 400 ms; the rarer wave shoves the
+    // player 15 cells down-right (out of the claw's view, so its cast
+    // message may not reach them).
+    let struck = msgs.iter().any(|m| matches!(m,
+        ServerMessage::ObjectMagic { id, magic, .. }
+            if *id == claw && (magic_type::DOOM_CLAW_LEFT_PINCH..=magic_type::DOOM_CLAW_SPIT).contains(magic)));
+    let hurt = world.objects[&me].hp < hp || world.objects[&me].dead;
+    let shoved = world.objects[&me].location != loc;
+    assert!(struck || hurt || shoved, "the claw never struck");
+    assert!(hurt || shoved, "the claw's strike had no effect");
+    world.teleport(me, away);
+    assert_eq!(world.test_damage(claw, me, 500), 0);
+    let close = Direction::ALL
+        .iter()
+        .map(|d| world.objects[&claw].location.step(*d, 2))
+        .find(|p| world.maps[&map].file.is_walkable(p.x, p.y))
+        .expect("a cell near the claw");
+    world.teleport(me, close);
+    assert!(world.test_damage(claw, me, 500) > 0);
+}
