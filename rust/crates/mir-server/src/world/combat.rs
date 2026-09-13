@@ -254,6 +254,10 @@ impl World {
             );
             return;
         }
+        // Shuriken users throw instead of swinging.
+        if valid.is_none() && self.shuriken_attack(id, direction, map, loc, stats) {
+            return;
+        }
         let power = self.roll_dc(stats);
         self.events.push((
             id,
@@ -514,8 +518,10 @@ impl World {
                     continue;
                 }
                 let elemental = hit.element != element::NONE;
-                let sure_hit =
-                    elemental || lotus.is_some() || hit.magics.contains(&magic_type::SWIFT_BLADE);
+                let sure_hit = elemental
+                    || lotus.is_some()
+                    || hit.magics.contains(&magic_type::SWIFT_BLADE)
+                    || hit.magics.contains(&magic_type::SHURIKEN);
                 let accuracy =
                     attacker_stats.accuracy + attacker_stats.accuracy * resolution_pct / 100;
                 if !sure_hit && roll > accuracy {
@@ -706,6 +712,9 @@ impl World {
                 if dealt > 0 && !attacker_is_player {
                     self.monster_hit_poison(hit.attacker, tid);
                 }
+                if dealt > 0 && attacker_is_player {
+                    self.melee_landed(hit.attacker, tid, dealt);
+                }
                 // Offensive Blow: shove the target Level + 3 cells; a
                 // successful shove also paralyses and silences for 3 s.
                 if dealt > 0 && hit.magics.contains(&magic_type::OFFENSIVE_BLOW) {
@@ -818,6 +827,9 @@ impl World {
         // Monster class rules: untouchable guards and statues, 1-damage
         // trees, class-based mitigation.
         let mut power = power;
+        if magic {
+            power += self.burn_shock_bonus(attacker, elem);
+        }
         if let Some((ai, hidden)) = self.objects.get(&target).and_then(|o| match &o.kind {
             Kind::Monster(m) => Some((self.data.monsters[&m.def].ai, m.hidden)),
             _ => None,
@@ -1089,6 +1101,14 @@ impl World {
         }
         if is_player {
             self.check_brown(attacker, target);
+            if power > 0 {
+                self.frost_store(target, power);
+                self.channel_cancel(target);
+            }
+        }
+        // A cursed doll passes its suffering on to its victim.
+        if let Some(victim) = self.doll_link(target) {
+            self.damage(victim, attacker, power, elem, magic);
         }
         if died {
             if is_player {

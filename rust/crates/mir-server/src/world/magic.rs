@@ -73,10 +73,15 @@ impl World {
             return;
         }
         // Target must be visible and within magic range.
+        let corpse_magic = matches!(magic, magic_type::CORPSE_EXPLODER | magic_type::SUMMON_DEAD);
         let target = target.filter(|t| {
             self.objects
                 .get(t)
-                .map(|to| to.map == map && !to.dead && to.location.distance(loc) <= MAGIC_RANGE)
+                .map(|to| {
+                    to.map == map
+                        && (!to.dead || corpse_magic)
+                        && to.location.distance(loc) <= MAGIC_RANGE
+                })
                 .unwrap_or(false)
         });
         let mut targets: Vec<ObjectId> = Vec::new();
@@ -214,6 +219,23 @@ impl World {
                 pending.push(pm(now + 500, None, loc, true))
             }
             magic_type::RENOUNCE => pending.push(pm(now + 600, None, loc, true)),
+            // ---- Wave six ----
+            mm if magic_wave6::handled(mm) => {
+                if !self.wave6_cast(
+                    id,
+                    magic,
+                    target,
+                    location,
+                    direction,
+                    loc,
+                    now,
+                    &mut pending,
+                    &mut targets,
+                    &mut locations,
+                ) {
+                    cast_ok = false;
+                }
+            }
             // ---- Wave five ----
             mm if magic_wave5::handled(mm) => {
                 if !self.wave5_cast(
@@ -956,7 +978,30 @@ impl World {
                         next_tick: self.now + 2000,
                         owner: Some(pm.caster),
                     };
-                    self.apply_poison(t, poison);
+                    self.apply_poison(t, poison.clone());
+                    // Augment Poison Dust: GetPower() + 1 more monsters within 3.
+                    if self.knows(pm.caster, magic_type::AUGMENT_POISON_DUST) {
+                        let (amin, amax, _) =
+                            self.caster_power(pm.caster, magic_type::AUGMENT_POISON_DUST);
+                        let extra = (self.roll_range(amin, amax) + 1) as usize;
+                        let at = self.objects[&t].location;
+                        let map = self.objects[&t].map;
+                        let more: Vec<ObjectId> = self
+                            .on_map(map)
+                            .filter(|o| {
+                                o.id != t
+                                    && o.is_monster()
+                                    && !o.dead
+                                    && o.location.distance(at) <= 3
+                                    && !o.poisons.iter().any(|p| p.kind == kind)
+                            })
+                            .map(|o| o.id)
+                            .take(extra)
+                            .collect();
+                        for v in more {
+                            self.apply_poison(v, poison.clone());
+                        }
+                    }
                     self.level_magic(pm.caster, pm.magic);
                 }
                 // Single-target elemental bolts with side effects.
@@ -1453,6 +1498,8 @@ impl World {
                         self.level_magic(pm.caster, pm.magic);
                     }
                 }
+                // ---- Wave six ----
+                mm if magic_wave6::handled(mm) => self.wave6_land(&pm, cmap, cloc),
                 // ---- Wave five ----
                 mm if magic_wave5::handled(mm) => self.wave5_land(&pm, cmap, cloc),
                 // ---- Wave four ----

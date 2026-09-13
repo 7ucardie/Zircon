@@ -371,6 +371,11 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         magic_type::INVINCIBILITY => (MAGIC_EX5, 400, 10, 100, WHITE, false),
         magic_type::CRUSHING_WAVE => (MAGIC_EX6, 100, 6, 100, LIGHTNING, false),
         magic_type::FIRE_BOUNCE => (MAGIC, 1560, 9, 65, FIRE, false),
+        magic_type::MIRROR_IMAGE => (MAGIC_EX2, 1260, 6, 100, DARK, false),
+        magic_type::FROST_BITE => (MAGIC_EX5, 500, 16, 60, ICE, false),
+        magic_type::CURSED_DOLL => (MAGIC_EX3, 690, 10, 60, DARK, false),
+        magic_type::CHAIN => (MAGIC_EX7, 0, 7, 140, FIRE, false),
+        magic_type::DRAGON_BLOOD => (MAGIC_EX5, 200, 7, 100, DARK, false),
         magic_type::LIGHTNING_STRIKE => (MAGIC_EX6, 400, 8, 100, LIGHTNING, false),
         magic_type::DRAGON_REPULSE => (MAGIC_EX4, 1000, 10, 60, LIGHTNING, false),
         magic_type::THUNDER_KICK => (MAGIC_EX2, 1190, 10, 100, WHITE, false),
@@ -650,7 +655,8 @@ pub fn payload(
         | magic_type::BINDING_TALISMAN
         | magic_type::BRAIN_STORM
         | magic_type::IMPROVED_EXPLOSIVE_TALISMAN
-        | magic_type::HUNDRED_FIST => {
+        | magic_type::HUNDRED_FIST
+        | magic_type::CORPSE_EXPLODER => {
             let (lib, start, count, col, hit) = match magic {
                 magic_type::FIRE_BOUNCE => (MAGIC, 1640, 6, FIRE, (MAGIC, 1800, 10)),
                 magic_type::LIGHTNING_STRIKE => (MAGIC_EX6, 500, 8, LIGHTNING, (MAGIC_EX6, 500, 8)),
@@ -659,6 +665,7 @@ pub fn payload(
                 magic_type::IMPROVED_EXPLOSIVE_TALISMAN => {
                     (MAGIC_EX2, 980, 6, DARK, (MAGIC_EX2, 1160, 10))
                 }
+                magic_type::CORPSE_EXPLODER => (MAGIC_EX7, 300, 4, DARK, (MAGIC_EX7, 1000, 17)),
                 _ => (MAGIC_EX, 1270, 3, WHITE, (MAGIC_EX, 1270, 3)),
             };
             for a in anchors {

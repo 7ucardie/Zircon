@@ -2687,3 +2687,151 @@ fn companion_adopt_follow_pick_up_and_store() {
     world.companion_release(me, 1);
     assert!(world.objects[&me].player().unwrap().companions.is_empty());
 }
+
+#[test]
+fn wave_six_frost_bite_chain_hurricane_and_corpses() {
+    use mir_proto::buff_type;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let mut rec = test_character("Wiz");
+    rec.class = mir_proto::Class::Wizard;
+    rec.level = 90;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    // An assassin for Chain and a taoist for Corpse Exploder, standing with
+    // the wizard (assassins start elsewhere).
+    let mut sin_rec = test_character("Sin");
+    sin_rec.class = mir_proto::Class::Assassin;
+    sin_rec.level = 90;
+    sin_rec.id = 2;
+    let sin = world.add_player(2, 2, &sin_rec).unwrap();
+    let mut tao_rec = test_character("Tao");
+    tao_rec.class = mir_proto::Class::Taoist;
+    tao_rec.level = 90;
+    tao_rec.id = 3;
+    let tao = world.add_player(3, 3, &tao_rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let map = world.objects[&me].map;
+    let loc = world.objects[&me].location;
+    let mut spots = Direction::ALL
+        .iter()
+        .map(|d| loc.step(*d, 1))
+        .filter(|p| world.maps[&map].file.is_walkable(p.x, p.y));
+    let sin_loc = spots.next().unwrap();
+    let tao_loc = spots.next().unwrap();
+    world.test_change_map(sin, map, sin_loc);
+    world.test_change_map(tao, map, tao_loc);
+    let frost = learn(&mut world, me, "Frost Bite");
+    let hurricane = learn(&mut world, me, "Elemental Hurricane");
+    let chain = learn(&mut world, sin, "Chain");
+    let exploder = learn(&mut world, tao, "Corpse Exploder");
+
+    // Frost Bite banks damage taken and bursts it on monsters within 3.
+    world.test_refill_mp(me);
+    world.cast(me, frost, Direction::Down, None, loc);
+    world.tick(600);
+    assert!(world.objects[&me].has_buff(buff_type::FROST_BITE));
+    let chicken = nearest_chicken(&world, me);
+    let near = Direction::ALL
+        .iter()
+        .map(|d| loc.step(*d, 2))
+        .find(|p| {
+            world.maps[&map].file.is_walkable(p.x, p.y)
+                && world.maps[&map].objects_at(*p).is_empty()
+        })
+        .unwrap();
+    world.teleport(chicken, near);
+    let before = world.objects[&chicken].hp;
+    world.test_damage(me, chicken, 20);
+    // Let the buff run out: 3 + 3L seconds at level 0 is 3 s.
+    world.tick(600 + 3_100);
+    world.tick(600 + 3_200);
+    assert!(!world.objects[&me].has_buff(buff_type::FROST_BITE));
+    assert!(world.objects[&chicken].hp < before || world.objects[&chicken].dead);
+
+    // Chain tethers monsters near the target for the spell's power.
+    let now = 10_000;
+    world.tick(now);
+    let leader = nearest_chicken(&world, me);
+    world.teleport(leader, near);
+    let second = world
+        .objects
+        .values()
+        .find(|o| {
+            !o.dead
+                && o.id != leader
+                && matches!(&o.appearance, Appearance::Monster { name, .. } if name == "Chicken")
+        })
+        .map(|o| o.id)
+        .expect("a second chicken");
+    let beside = Direction::ALL
+        .iter()
+        .map(|d| near.step(*d, 1))
+        .find(|p| {
+            world.maps[&map].file.is_walkable(p.x, p.y)
+                && world.maps[&map].objects_at(*p).is_empty()
+        })
+        .unwrap();
+    world.teleport(second, beside);
+    world.test_refill_mp(sin);
+    let sin_dir = Direction::from_points(sin_loc, near);
+    world.cast(sin, chain, sin_dir, Some(leader), near);
+    world.tick(now + 1500);
+    assert_eq!(world.test_monster_chained(second), Some(leader));
+
+    // Elemental Hurricane ticks along the facing line and stops on a turn.
+    let dir = Direction::from_points(loc, near);
+    world.test_refill_mp(me);
+    let hp = world.objects[&leader].hp;
+    world.cast(me, hurricane, dir, None, loc);
+    assert!(world.test_channelling(me));
+    world.tick(now + 2100);
+    world.tick(now + 2700);
+    assert!(world.objects[&leader].hp < hp || world.objects[&leader].dead);
+    world.player_turn(me, dir.opposite());
+    assert!(!world.test_channelling(me));
+
+    // Corpse Exploder needs a corpse target and two amulets.
+    let amulet = world
+        .data
+        .items
+        .values()
+        .find(|d| {
+            d.item_type == mir_proto::item_type::AMULET && d.shape == 0 && d.required_amount <= 13
+        })
+        .map(|d| d.index)
+        .expect("an amulet");
+    world.test_give_item(tao, amulet, 20);
+    let slot = world.test_slot_of(tao, amulet).unwrap();
+    world.item_move(
+        tao,
+        mir_proto::Grid::Inventory,
+        slot,
+        mir_proto::Grid::Equipment,
+        mir_proto::slot::AMULET as u8,
+    );
+    world.test_set_target(leader, me);
+    world.test_damage(leader, me, 100_000);
+    assert!(world.objects[&leader].dead);
+    world.tick(now + 3000);
+    world.test_refill_mp(tao);
+    drain(&mut world);
+    world.cast(
+        tao,
+        exploder,
+        Direction::from_points(tao_loc, near),
+        Some(leader),
+        near,
+    );
+    world.tick(now + 4600);
+    assert!(
+        !world.objects.contains_key(&leader),
+        "the corpse was consumed"
+    );
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::ObjectMagic { magic, .. } if *magic == exploder)));
+}

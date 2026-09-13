@@ -413,6 +413,21 @@ impl World {
         index
     }
 
+    /// Test helper: the leader a monster is chained to.
+    #[cfg(test)]
+    pub fn test_monster_chained(&self, id: ObjectId) -> Option<ObjectId> {
+        self.objects.get(&id)?.monster_ref().chained.map(|(l, _)| l)
+    }
+
+    /// Test helper: is the player channelling a spell?
+    #[cfg(test)]
+    pub fn test_channelling(&self, id: ObjectId) -> bool {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .is_some_and(|p| p.channel.is_some())
+    }
+
     /// Test helper: set PK points directly.
     #[cfg(test)]
     pub fn test_set_pk(&mut self, id: ObjectId, points: i32) {

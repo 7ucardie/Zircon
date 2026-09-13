@@ -86,11 +86,15 @@ impl World {
         let mut conversions = Vec::new();
         let mut repulses = Vec::new();
         let mut swords = Vec::new();
+        let mut frosts = Vec::new();
         for o in self.players() {
             if let Some(p) = o.player() {
                 for b in &p.buffs {
                     if b.expires <= now {
                         expired.push((o.id, b.kind));
+                        if b.kind == buff_type::FROST_BITE {
+                            frosts.push((o.id, b.stats.frost));
+                        }
                     } else if b.kind == buff_type::CLOAK && now >= b.tick_at {
                         // Cloak drains HP every 2 s and drops instead of killing.
                         if b.stats.cloak_damage >= o.hp {
@@ -112,6 +116,9 @@ impl World {
                     }
                 }
             }
+        }
+        for (id, stored) in frosts {
+            self.frost_bite_burst(id, stored);
         }
         for (id, amount) in drains {
             let (hp, max_hp) = {
@@ -223,6 +230,7 @@ impl World {
             .filter(|o| !o.poisons.is_empty())
             .map(|o| o.id)
             .collect();
+        let mut spreads: Vec<(ObjectId, ObjectId, i32)> = Vec::new();
         for id in ids {
             let (damage, owner, cleared) = {
                 let o = self.objects.get_mut(&id).unwrap();
@@ -234,6 +242,11 @@ impl World {
                     }
                     p.next_tick = now + 2000;
                     p.ticks_left -= 1;
+                    if p.kind == poison_kind::PARASITE {
+                        if let Some(owner) = p.owner {
+                            spreads.push((id, owner, p.value));
+                        }
+                    }
                     if matches!(
                         p.kind,
                         poison_kind::GREEN
@@ -278,6 +291,10 @@ impl World {
                     },
                 ));
             }
+        }
+        // Infection: Parasite ticks spread to a neighbour of the victim.
+        for (victim, owner, value) in spreads {
+            self.infection_spread(victim, owner, value);
         }
     }
 

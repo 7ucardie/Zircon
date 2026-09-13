@@ -66,6 +66,7 @@ impl World {
         self.events
             .push((id, ServerMessage::ObjectTurn { id, direction }));
         self.trade_close(id);
+        self.channel_cancel(id);
         self.fishing_cancel(id);
     }
 
@@ -111,6 +112,7 @@ impl World {
         }
         self.quest_region_progress(id);
         self.trade_close(id);
+        self.channel_cancel(id);
         self.fishing_cancel(id);
         self.events.push((
             id,

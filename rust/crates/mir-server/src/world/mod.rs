@@ -193,6 +193,8 @@ pub struct BuffStats {
     pub raging_wind: i32,
     /// Life steal percent from a buff.
     pub life_steal: i32,
+    /// Damage banked by Frost Bite.
+    pub frost: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).
@@ -308,6 +310,12 @@ pub struct PlayerData {
     pub guild_invite: Option<ObjectId>,
     /// Zircon `MailTime`: no mail before this.
     pub mail_time: u64,
+    /// Channelled spell in progress (Elemental Hurricane).
+    pub channel: Option<magic_wave6::Channel>,
+    /// Dragon Blood armed: melee hits poison.
+    pub dragon_blood: bool,
+    /// Soul Resonance partner.
+    pub soul_link: Option<ObjectId>,
     /// Owned horse (`horse_type::*`) and whether it is being ridden.
     pub horse: u8,
     pub mounted: bool,
@@ -410,6 +418,12 @@ pub struct MonsterData {
     pub spell_time: u64,
     /// Boss summon phase (-1 = not started).
     pub stage: i32,
+    /// Timed summons (mirror images, tornadoes, cursed dolls) vanish then.
+    pub despawn_at: Option<u64>,
+    /// Cursed doll: the victim that suffers what the doll suffers.
+    pub link: Option<ObjectId>,
+    /// Chain: tethered to a leader until the time.
+    pub chained: Option<(ObjectId, u64)>,
     pub minions: Vec<ObjectId>,
     pub master: Option<ObjectId>,
     /// Town guard (AI -1): fights wild monsters, cannot be hurt.
@@ -721,6 +735,7 @@ mod inventory;
 mod magic;
 mod magic_wave4;
 mod magic_wave5;
+mod magic_wave6;
 mod mail;
 mod maps;
 mod marriage;
@@ -940,6 +955,7 @@ impl World {
         self.process_poisons();
         self.process_heals();
         self.process_buffs();
+        self.process_channels();
         self.process_charges();
         self.process_dashes();
         self.process_spells();

@@ -234,6 +234,18 @@ and the original effect sprites:
   Explosive Talisman; augments Augment Defiance, Augment Reflect Damage,
   Augment Destructive Surge, Advanced Potion Mastery, Empowered Healing,
   Stealth, Art Of Shadows, Dragon Wave.
+- Wave six: Elemental Hurricane (channelled 8-cell beam with flanks, ticking
+  every half second until you move, turn, are struck or run dry), Mirror
+  Image (a Dark Stone decoy), Frost Bite (banks the damage you take and
+  bursts it on monsters within 3 when it ends), Tornado (a 10 s summon),
+  Cursed Doll (a doll that forwards what it suffers to its victim), Soul
+  Resonance (linked group members die together), Corpse Exploder and
+  Summon Dead (target a corpse; click one), Dragon Blood (poisoned blades),
+  Chain (tethers monsters within 2 of the target to it) with Chain Of
+  Fire, and the passives Shuriken (thrown attacks with a shuriken weapon),
+  Burning, Shocked, Augment Poison Dust, Infection and Magic Combustion.
+  Zircon's ~174 player magics are now all present; see
+  `docs/research/skills-remaining.md` for the simplifications.
 
 Buff icons with their remaining time sit top-right. Other skills show in the
 window but cannot be cast yet.

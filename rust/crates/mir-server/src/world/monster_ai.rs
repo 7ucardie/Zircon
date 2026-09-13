@@ -48,6 +48,34 @@ impl World {
             }
             return;
         }
+        // Timed summons vanish.
+        if let Some(t) = self.objects[&id].monster_ref().despawn_at {
+            if now >= t {
+                self.despawn_summon(id);
+                return;
+            }
+        }
+        // Chained followers stay within two cells of their leader.
+        if let Some((leader, until)) = self.objects[&id].monster_ref().chained {
+            let leader_loc = self
+                .objects
+                .get(&leader)
+                .filter(|l| !l.dead && l.map == self.objects[&id].map)
+                .map(|l| l.location);
+            match leader_loc {
+                Some(ll) if now < until => {
+                    if self.objects[&id].location.distance(ll) > 2 && self.monster_can_move(id) {
+                        self.move_toward(id, ll, false);
+                        return;
+                    }
+                }
+                _ => {
+                    if let Some(mm) = self.objects.get_mut(&id).and_then(|o| o.monster_mut()) {
+                        mm.chained = None;
+                    }
+                }
+            }
+        }
         // Companions only follow their owner and gather drops.
         if self.objects[&id].monster_ref().companion.is_some() {
             if let Some(owner) = self.objects[&id].monster_ref().owner {

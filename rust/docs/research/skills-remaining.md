@@ -3,11 +3,16 @@
 Extracted 2026-09-12. Wave four (commit after d06b2d4) implemented the
 passives, self bursts, single-target spells, cell areas and self buffs
 listed in the README; wave five added the charges, lines, bounces,
-fields, summons, kicks, dashes, channels and augments. Still open:
-Shuriken, Elemental Hurricane, Mirror Image, Frost Bite, Tornado,
-Burning/Shocked, Cursed Doll, Soul Resonance, the taoist extra-target
-augments, Infection, Corpse Exploder, Summon Dead (needs corpse targeting
-on the client), Dragon Blood, Magic Combustion (PvP), Chain, Chain Of Fire.
+fields, summons, kicks, dashes, channels and augments. Wave six (2026-09-13,
+`world/magic_wave6.rs`) closed the list: Shuriken, Elemental Hurricane,
+Mirror Image, Frost Bite, Tornado, Burning/Shocked, Cursed Doll, Soul
+Resonance, Augment Poison Dust, Infection, Corpse Exploder, Summon Dead
+(corpses are clickable), Dragon Blood, Magic Combustion, Chain, Chain Of
+Fire. Simplifications: the hurricane's element is always fire and it
+stops after 10 s; Mirror Image takes any Dark Stone; Cursed Doll takes a
+plain amulet and skips the boss check; Soul Resonance lasts 60 s; Dragon
+Blood re-arms without a poison item; Frost Bite's Slow chance and the
+IceAttack terms are dropped; augment rolls use MaxLevel 3.
 Field art for Ice Aura, Burning Fire and Dark Soul Prison uses placeholder
 frames on the client.
 Originally: 98 magics implemented in Rust; 92 missing with C#

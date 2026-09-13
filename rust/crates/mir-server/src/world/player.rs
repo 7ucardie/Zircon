@@ -105,6 +105,9 @@ impl World {
                 guild: None,
                 guild_invite: None,
                 mail_time: 0,
+                channel: None,
+                dragon_blood: false,
+                soul_link: None,
                 horse: rec.horse,
                 mounted: false,
                 partner: (rec.partner != 0).then(|| (rec.partner, rec.partner_name.clone())),
@@ -415,6 +418,8 @@ impl World {
         let pets = std::mem::take(&mut p.pets);
         self.events.push((id, ServerMessage::ObjectDie { id }));
         self.trade_close(id);
+        self.channel_cancel(id);
+        self.soul_resonance_death(id);
         self.remove_mount(id);
         self.fishing_cancel(id);
         for pet in pets {

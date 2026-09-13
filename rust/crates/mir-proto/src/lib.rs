@@ -842,7 +842,12 @@ pub mod magic_type {
     pub fn is_directional(m: u16) -> bool {
         matches!(
             m,
-            SEISMIC_SLAM | FLASH_OF_LIGHT | CRUSHING_WAVE | ICE_AURA | THUNDER_KICK
+            SEISMIC_SLAM
+                | FLASH_OF_LIGHT
+                | CRUSHING_WAVE
+                | ICE_AURA
+                | THUNDER_KICK
+                | ELEMENTAL_HURRICANE
         )
     }
     /// Stance skills switched with a hotkey and applied on melee swings.
@@ -909,6 +914,11 @@ pub mod magic_type {
         matches!(
             m,
             FIRE_BALL
+                | CURSED_DOLL
+                | SOUL_RESONANCE
+                | CHAIN
+                | CORPSE_EXPLODER
+                | SUMMON_DEAD
                 | ICE_BOLT
                 | THUNDER_BOLT
                 | POISON_DUST
@@ -978,6 +988,8 @@ pub mod magic_type {
         matches!(
             m,
             TELEPORTATION
+                | FROST_BITE
+                | DRAGON_BLOOD
                 | TAECHEON_SWORD
                 | FIRE_SWORD
                 | THUNDER_STRIKE
@@ -1047,6 +1059,16 @@ pub mod magic_type {
         matches!(
             m,
             FIRE_BALL
+                | ELEMENTAL_HURRICANE
+                | MIRROR_IMAGE
+                | FROST_BITE
+                | TORNADO
+                | CURSED_DOLL
+                | SOUL_RESONANCE
+                | CORPSE_EXPLODER
+                | SUMMON_DEAD
+                | DRAGON_BLOOD
+                | CHAIN
                 | ICE_BOLT
                 | REPULSION
                 | THUNDER_BOLT
@@ -1166,6 +1188,9 @@ pub mod magic_type {
 
 /// Zircon `BuffType` values used by the prototype.
 pub mod buff_type {
+    pub const FROST_BITE: u16 = 205;
+    pub const TORNADO: u16 = 206;
+    pub const SOUL_RESONANCE: u16 = 311;
     pub const DEFIANCE: u16 = 100;
     pub const MIGHT: u16 = 101;
     pub const ENDURANCE: u16 = 102;

@@ -8,7 +8,8 @@ impl Game {
         let ids: Vec<ObjectId> = self.objects.keys().copied().collect();
         for id in ids {
             let o = &self.objects[&id];
-            if Some(id) == self.user || o.dead || o.is_spell() {
+            // Corpses stay clickable for Corpse Exploder and Summon Dead.
+            if Some(id) == self.user || o.is_spell() || (o.dead && !o.is_monster()) {
                 continue;
             }
             let Some((library, index)) = self.body_sprite(o) else {
@@ -512,6 +513,9 @@ impl Game {
         }
         let self_cast = magic_type::is_self_cast(magic);
         let target = match magic {
+            magic_type::CORPSE_EXPLODER | magic_type::SUMMON_DEAD => {
+                hovered.filter(|o| o.is_monster() && o.dead).map(|o| o.id)
+            }
             magic_type::HEAL => hovered
                 .filter(|o| o.is_player())
                 .map(|o| o.id)
