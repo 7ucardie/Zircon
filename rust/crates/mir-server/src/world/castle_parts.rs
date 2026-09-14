@@ -229,15 +229,19 @@ impl World {
                     .cadence_time = now + 1000;
                 let at_war = self.conquest.as_ref().map(|c| c.castle) == Some(castle);
                 let owner = self.guild_store.castle_owner(castle);
-                let owner_near = owner.is_some()
-                    && self.on_map(map).any(|o| {
-                        !o.dead
-                            && o.location.distance(loc) <= 4
-                            && o.player().and_then(|p| p.guild) == owner
+                // Zircon opens for owner members in peacetime, and holds the
+                // door while anyone at all stands within four cells.
+                let (owner_near, anyone_near) =
+                    self.on_map(map).fold((false, false), |(own, any), o| {
+                        if o.dead || o.player().is_none() || o.location.distance(loc) > 4 {
+                            return (own, any);
+                        }
+                        let mine = owner.is_some() && o.player().and_then(|p| p.guild) == owner;
+                        (own || mine, true)
                     });
                 if closed && !at_war && owner_near {
                     self.set_gate(id, false, now + 10_000);
-                } else if !closed && close_at > 0 && now >= close_at && !owner_near {
+                } else if !closed && close_at > 0 && now >= close_at && !anyone_near {
                     self.set_gate(id, true, 0);
                 }
             }
@@ -326,7 +330,6 @@ impl World {
         } else {
             Direction::UpLeft
         };
-        let loc = self.objects[&id].location;
         if let Some(CastleRole::Gate {
             closed, close_at, ..
         }) = self
@@ -348,7 +351,6 @@ impl World {
                 attack_magic: None,
             },
         ));
-        let _ = loc;
     }
 
     fn set_flag(&mut self, id: ObjectId, guild: Option<u32>, until: u64) {
