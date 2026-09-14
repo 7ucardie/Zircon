@@ -105,6 +105,11 @@ impl Game {
                     }
                 }
                 'u' => self.windows.companion_open = !self.windows.companion_open,
+                // Zircon cycles the minimap with V (shown, dimmed, hidden)
+                // and opens the big map with B; B is storage here, so the
+                // big map takes X.
+                'v' => self.minimap.cycle(),
+                'x' => self.minimap.big_open = !self.minimap.big_open,
                 'n' => self.windows.menu.menu_open = !self.windows.menu.menu_open,
                 'h' => self.windows.menu.help_open = !self.windows.menu.help_open,
                 'a' => self.windows.menu.auto_potion_open = !self.windows.menu.auto_potion_open,
@@ -139,6 +144,7 @@ impl Game {
             self.windows.skills_open = false;
             self.windows.group_open = false;
             self.windows.storage_open = false;
+            self.minimap.big_open = false;
             self.windows.guild_open = false;
             self.windows.mail_open = false;
             self.windows.companion_open = false;

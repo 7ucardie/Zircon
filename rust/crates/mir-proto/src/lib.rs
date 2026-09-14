@@ -1331,6 +1331,8 @@ pub struct MapDescriptor {
     pub light: u8,
     /// `MapInfo.Music` sound index (0 = none).
     pub music: i32,
+    /// `MapInfo.MiniMap`: image in the `MiniMap` library (0 = none).
+    pub mini_map: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

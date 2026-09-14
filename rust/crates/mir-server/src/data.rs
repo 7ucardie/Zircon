@@ -24,6 +24,9 @@ pub struct MapDef {
     pub can_marriage_recall: bool,
     /// `MapInfo.CanMine`: pickaxes work on the map's walls.
     pub can_mine: bool,
+    /// `MapInfo.MiniMap`: index into the `MiniMap` library (0 = none); the
+    /// big map uses the same image.
+    pub mini_map: i32,
 }
 
 /// `MineInfo`: one ore roll per swing on a map (1 in `chance`).
@@ -581,6 +584,7 @@ impl GameData {
                     can_horse: c.bool_or(r, "CanHorse", false),
                     can_marriage_recall: c.bool_or(r, "CanMarriageRecall", false),
                     can_mine: c.bool_or(r, "CanMine", false),
+                    mini_map: i32_of(c, r, "MiniMap"),
                 };
                 (m.index, m)
             })

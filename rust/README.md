@@ -55,6 +55,19 @@ the wheel. When you die a Revive button returns you to town at once; the
 server forces it after ten minutes. The backquote key toggles the debug line,
 `F12` saves a screenshot.
 
+The minimap sits under the buff icons in the top-right corner and draws
+`MapInfo.MiniMap` from the `MiniMap` library, the same image Zircon uses, so
+one map cell is `image size / map size` pixels. It scrolls to keep you in the
+middle and clips at the panel edge (Zircon's `ClipMap`), with your
+coordinates in the corner. `V` cycles it between shown, dimmed and hidden,
+matching Zircon's one-key cycle. `X` opens the big map: the same image at
+full size, centred on screen and titled with the map name, closed again by
+`X`, `Esc` or its close button. Both windows dot everything you can see:
+you in lime with a white pip, group mates lime, your partner pink, guild
+mates sky blue, other players white, monsters red, your own pets orange and
+NPCs yellow. A map whose `MiniMap` column is 0 ships no image, and the
+window then says so instead of drawing one.
+
 Chat follows Zircon's prefixes: `Enter` opens the chat bar, `Enter` sends
 and `Esc` closes it. Plain text talks to players in view range (with a
 bubble over your head), `/name text` whispers, `!text` shouts to the whole
@@ -319,7 +332,7 @@ swapchain);
 warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
 `ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills,`
-`companion,menu,help,exit,currency,autopotion,dropfilter`
+`companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,nominimap`
 opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
 daylight (night screenshots);
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;

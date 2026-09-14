@@ -74,6 +74,9 @@ pub struct Game {
     map_name: String,
     /// `MapInfo.Light` of the current map and the server's daylight.
     map_light: u8,
+    /// `MapInfo.MiniMap` of the current map (0 = none).
+    mini_map_index: i32,
+    minimap: minimap::MiniMap,
     day_time: f32,
     objects: HashMap<ObjectId, ClientObject>,
     user: Option<ObjectId>,
@@ -228,6 +231,7 @@ impl View {
 mod fx;
 mod hud;
 mod input;
+mod minimap;
 mod net;
 mod render;
 mod sound;
@@ -325,6 +329,8 @@ impl Game {
             map: None,
             map_name: String::new(),
             map_light: 0,
+            mini_map_index: 0,
+            minimap: minimap::MiniMap::default(),
             day_time: 1.0,
             objects: HashMap::new(),
             user: None,
