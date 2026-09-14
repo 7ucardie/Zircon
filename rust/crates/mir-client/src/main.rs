@@ -15,6 +15,7 @@ mod effects;
 mod game;
 mod gfx;
 mod items;
+mod market;
 mod menu;
 mod net;
 mod overlay;

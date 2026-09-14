@@ -763,6 +763,7 @@ pub struct World {
     /// (castle, day) wars already opened, so a start window fires once.
     conquests_started: HashSet<(i32, u64)>,
     pub mail_store: mail::MailStore,
+    pub market_store: market::MarketStore,
     /// Characters divorced while offline (drained by the account registry).
     divorced: Vec<u32>,
     next_group: u32,
@@ -790,6 +791,7 @@ mod magic_wave5;
 mod magic_wave6;
 mod mail;
 mod maps;
+pub mod market;
 mod marriage;
 mod monster_ai;
 mod mounts;
@@ -880,6 +882,7 @@ impl World {
             groups: BTreeMap::new(),
             guild_store: guilds::GuildStore::default(),
             mail_store: mail::MailStore::default(),
+            market_store: market::MarketStore::default(),
             conquest: None,
             conquest_check: 0,
             dev_conquest_done: false,
@@ -907,6 +910,16 @@ impl World {
         self.npc_store = NpcStore::load(dir.join("npc_lists.json"));
         self.guild_store = guilds::GuildStore::load(dir.join("guilds.json"));
         self.mail_store = mail::MailStore::load(dir.join("mail.json"));
+        self.market_store = market::MarketStore::load(dir.join("market.json"));
+        // ZIRCON_DEV_MARKET=<n> seeds a board of n listings for screenshots.
+        if self.market_store.listings.is_empty() {
+            if let Some(n) = std::env::var("ZIRCON_DEV_MARKET")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+            {
+                self.dev_seed_market(n);
+            }
+        }
         self.scripts.set_root(dir.join("scripts").join("npc"));
     }
 

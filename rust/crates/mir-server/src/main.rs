@@ -401,6 +401,10 @@ fn valid(msg: &ClientMessage) -> bool {
                 && items.len() <= 5
         }
         ClientMessage::NpcSell { slots } => slots.len() <= 64,
+        // Zircon caps the seller's note at 150 characters; the name box is
+        // an item name, so the same limit as a character name is plenty.
+        ClientMessage::MarketConsign { message, .. } => message.len() <= 600,
+        ClientMessage::MarketSearch { name, .. } => name.len() <= 128,
         _ => true,
     }
 }
@@ -743,6 +747,30 @@ fn handle_message(
         }
         (Stage::InGame { object, .. }, ClientMessage::MailOpened { index }) => {
             world.mail_opened(object, index)
+        }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::MarketSearch {
+                name,
+                item_type,
+                sort,
+                page,
+            },
+        ) => world.market_search(object, name, item_type, sort, page),
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::MarketConsign {
+                slot,
+                count,
+                price,
+                message,
+            },
+        ) => world.market_consign(object, slot, count, price, message),
+        (Stage::InGame { object, .. }, ClientMessage::MarketCancelConsign { index, count }) => {
+            world.market_cancel_consign(object, index, count)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::MarketBuy { index, count }) => {
+            world.market_buy(object, index, count)
         }
         (
             Stage::InGame { object, .. },

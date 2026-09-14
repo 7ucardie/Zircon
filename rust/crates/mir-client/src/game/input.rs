@@ -105,6 +105,13 @@ impl Game {
                     }
                 }
                 'u' => self.windows.companion_open = !self.windows.companion_open,
+                // Zircon's MarketPlaceWindow default.
+                'c' => {
+                    self.windows.market.open = !self.windows.market.open;
+                    if self.windows.market.open {
+                        self.windows.market.refresh();
+                    }
+                }
                 // Zircon cycles the minimap with V (shown, dimmed, hidden)
                 // and opens the big map with B; B is storage here, so the
                 // big map takes X.
@@ -148,6 +155,7 @@ impl Game {
             self.windows.guild_open = false;
             self.windows.mail_open = false;
             self.windows.companion_open = false;
+            self.windows.market.open = false;
             if self.trade.is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::TradeClose);

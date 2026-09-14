@@ -283,6 +283,15 @@ impl Game {
                         "currency" => w.menu.currency_open = true,
                         "autopotion" => w.menu.auto_potion_open = true,
                         "dropfilter" => w.menu.drop_filter_open = true,
+                        "market" => {
+                            w.market.open = true;
+                            w.market.refresh();
+                        }
+                        "marketconsign" => {
+                            w.market.open = true;
+                            w.market.tab = crate::market::Tab::Consign;
+                            w.market.refresh();
+                        }
                         _ => {}
                     }
                 }
