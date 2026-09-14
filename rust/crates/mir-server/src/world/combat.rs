@@ -837,6 +837,11 @@ impl World {
         if magic {
             power += self.burn_shock_bonus(attacker, elem);
         }
+        // Castle guards are hurt only by enemy guilds at war, gates only
+        // while closed, flags never.
+        if self.castle_object_accepts_hit(attacker, target) == Some(false) {
+            return 0;
+        }
         // The castle lord takes one point per hit from eligible guilds only.
         if self.is_castle_lord(target) {
             match self.castle_lord_damage(attacker) {
@@ -1168,7 +1173,12 @@ impl World {
             o.dead = true;
             o.hp = 0;
             let m = o.monster_mut().unwrap();
-            m.dead_time = self.now + DEAD_DURATION;
+            // Castle parts stay as wrecks until the owners repair them.
+            m.dead_time = if m.castle.is_some() {
+                u64::MAX
+            } else {
+                self.now + DEAD_DURATION
+            };
             m.target = None;
             // Voracious ghosts yield half the experience per revive left.
             let exp = m.experience / 2f64.powi(m.revives_left);

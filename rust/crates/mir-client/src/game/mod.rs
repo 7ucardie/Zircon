@@ -91,6 +91,11 @@ pub struct Game {
     chat_box: TextBox,
     chat_open: bool,
     auto_chat_done: bool,
+    /// Server time of the Welcome (the chat bar ignores Enter for a moment
+    /// after entry so a stray key event cannot open it).
+    entered_at: u64,
+    /// When the local fishing float effect must be replayed.
+    float_time: u64,
     auto_mount_done: bool,
     hovered: Option<ObjectId>,
     pub debug: bool,
@@ -345,6 +350,8 @@ impl Game {
             chat_box: TextBox::new(Rect::new(0.0, 0.0, 10.0, 22.0), 200),
             chat_open: false,
             auto_chat_done: false,
+            entered_at: 0,
+            float_time: 0,
             auto_mount_done: false,
             hovered: None,
             debug: true,
@@ -385,7 +392,7 @@ impl Game {
 
     /// Chat bar keys: Enter opens the box, Enter sends, Escape closes; while
     /// it is open the keyboard belongs to it.
-    fn chat_keys(&mut self, conn: Option<&Connection>) {
+    fn chat_keys(&mut self, now: u64, conn: Option<&Connection>) {
         if self.chat_open {
             for c in self.input.text.chars() {
                 if !c.is_control() && self.chat_box.text.chars().count() < self.chat_box.max_len {
@@ -416,9 +423,11 @@ impl Game {
             self.input.digit = None;
             self.input.fkey = None;
         } else if self.input.enter {
-            self.chat_open = true;
-            self.chat_box.focused = true;
             self.input.enter = false;
+            if self.user.is_some() && now > self.entered_at + 1000 {
+                self.chat_open = true;
+                self.chat_box.focused = true;
+            }
         }
     }
 
@@ -608,6 +617,15 @@ impl Game {
                         caught,
                     });
                 }
+            }
+        }
+        // The float bobs the whole time a line is out (the server only
+        // replays it on each cast).
+        if let Some(f) = &self.fishing {
+            if now >= self.float_time {
+                self.float_time = now + 700;
+                self.effects
+                    .extend(effects::fishing_float(f.float, f.found, now));
             }
         }
         if let Some(u) = self.user() {

@@ -713,15 +713,14 @@ impl World {
         })
     }
 
-    /// `NPCCheckType.Script`: false only when the function returns false or
-    /// nil, or fails; a missing script or function passes.
+    /// `NPCCheckType.Script`: fails only when the function returns `false`
+    /// or errors (Zircon's code; `nil` passes); a missing script or
+    /// function passes too.
     pub(super) fn script_check(&mut self, id: ObjectId, func: &str) -> bool {
         match self.run_script(id, func) {
             None => true,
             Some(Err(_)) => false,
-            Some(Ok((value, _))) => {
-                !matches!(value, mlua::Value::Boolean(false) | mlua::Value::Nil)
-            }
+            Some(Ok((value, _))) => !matches!(value, mlua::Value::Boolean(false)),
         }
     }
 

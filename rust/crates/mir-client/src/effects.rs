@@ -2,6 +2,7 @@
 //! animations anchored on an object or a cell, and projectiles that travel
 //! between cells with 16 direction blocks.
 
+use crate::gfx::Blend;
 use mir_proto::{element, magic_type, ObjectId, Point};
 
 pub const PROG_USE: u16 = 13;
@@ -39,6 +40,9 @@ pub struct Effect {
     /// 8-way direction block (`start + dir * 10`).
     pub direction: Option<u8>,
     pub started: u64,
+    /// Zircon `MirEffect.Blend`: screen (additive-looking) for glows,
+    /// alpha for dark sprites such as the fishing float.
+    pub blend: Blend,
 }
 
 impl Effect {
@@ -74,6 +78,7 @@ impl Effect {
             anchor,
             direction: None,
             started,
+            blend: Blend::Screen,
         }
     }
 }
@@ -160,6 +165,7 @@ pub fn struck_effect(e: u8, target: ObjectId, now: u64) -> Effect {
         anchor: Anchor::Object(target),
         direction: None,
         started: now,
+        blend: Blend::Screen,
     }
 }
 
@@ -185,6 +191,7 @@ pub fn attack_effect(magic: u16, attacker: ObjectId, dir: u8, now: u64) -> Optio
         anchor: Anchor::Object(attacker),
         direction: if directed { Some(dir) } else { None },
         started: now + wait,
+        blend: Blend::Screen,
     })
 }
 
@@ -292,18 +299,21 @@ pub fn map_effect(kind: u8, cell: Point, now: u64) -> Vec<Effect> {
 /// while a fish nibbles), replayed on every wait cycle.
 pub fn fishing_float(float: Point, found: bool, now: u64) -> Vec<Effect> {
     let base = if found { 1400 } else { 1420 };
-    vec![
-        Effect::at(MAGIC_EX5, base, 6, 120, WHITE, Anchor::Cell(float), now),
-        Effect::at(
-            MAGIC_EX5,
-            base + 10,
-            6,
-            120,
-            WHITE,
-            Anchor::Cell(float),
-            now,
-        ),
-    ]
+    let mut ripple = Effect::at(MAGIC_EX5, base, 6, 120, WHITE, Anchor::Cell(float), now);
+    let mut stick = Effect::at(
+        MAGIC_EX5,
+        base + 10,
+        6,
+        120,
+        WHITE,
+        Anchor::Cell(float),
+        now,
+    );
+    // Zircon: the ripple is blended (dark, subtle over water), the float
+    // itself is drawn plainly so it stays visible.
+    ripple.blend = Blend::Screen;
+    stick.blend = Blend::Alpha;
+    vec![ripple, stick]
 }
 
 /// Looping Magic Shield ring on a shielded player (`Magic` 850..852).
@@ -428,6 +438,7 @@ pub fn cast_effect(magic: u16, caster: ObjectId, dir: u8, now: u64) -> Option<Ef
         anchor: Anchor::Object(caster),
         direction: if directed { Some(dir) } else { None },
         started: now,
+        blend: Blend::Screen,
     })
 }
 
@@ -986,6 +997,7 @@ pub fn payload(
                     anchor: Anchor::Cell(caster_cell),
                     direction: Some(dir.index()),
                     started: now,
+                    blend: Blend::Screen,
                 });
             }
         }
@@ -1024,6 +1036,7 @@ pub fn payload(
                     anchor: a,
                     direction: None,
                     started: now,
+                    blend: Blend::Screen,
                 });
             }
         }
@@ -1038,6 +1051,7 @@ pub fn payload(
                     anchor: a,
                     direction: None,
                     started: now,
+                    blend: Blend::Screen,
                 });
             }
         }
@@ -1052,6 +1066,7 @@ pub fn payload(
                     anchor: a,
                     direction: None,
                     started: now,
+                    blend: Blend::Screen,
                 });
             }
         }

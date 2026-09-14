@@ -68,7 +68,6 @@ NPC check/action arms in `world/npc.rs`.
 - Script effects are recorded as commands while the function runs and
   applied to the world afterwards (the world cannot be borrowed mutably
   from inside Lua callbacks); ordering within one call is preserved.
-- A Lua return of `nil` fails a check here (Zircon passes on nil since it
-  only fails on boolean false). The C# doc comment says nil fails, the code
-  says otherwise; the comment's intent was kept.
+- A Lua return of `nil` passes a check, as Zircon's code does (it only
+  fails on boolean `false`, whatever its doc comment says).
 - `player.has_item` counts bag items only (Zircon: inventory only too).

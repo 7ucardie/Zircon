@@ -456,6 +456,8 @@ pub struct MonsterData {
     /// Companion (owner's `StoredCompanion.index`): follows and picks up,
     /// never fights and is never a target.
     pub companion: Option<u32>,
+    /// Castle guard, gate or flag.
+    pub castle: Option<castle_parts::CastleRole>,
 }
 
 #[derive(Debug)]
@@ -542,6 +544,12 @@ impl Object {
         matches!(self.kind, Kind::Spell(_))
     }
     pub fn blocking(&self) -> bool {
+        // An open castle gate is a doorway, not a body.
+        if let Kind::Monster(m) = &self.kind {
+            if let Some(castle_parts::CastleRole::Gate { closed, .. }) = &m.castle {
+                return *closed && !self.dead;
+            }
+        }
         !self.dead && !self.is_item() && !self.is_spell()
     }
     /// The player behind an object: itself for players, the owner for pets.
@@ -571,7 +579,9 @@ impl Object {
         if let Kind::Monster(me) = &self.kind {
             if me.guard {
                 return match &other.kind {
-                    Kind::Monster(them) => them.owner.is_none() && !them.guard,
+                    Kind::Monster(them) => {
+                        them.owner.is_none() && !them.guard && them.castle.is_none()
+                    }
                     Kind::Player(p) => p.pk_points >= pvp::RED_POINT,
                     _ => false,
                 };
@@ -763,6 +773,7 @@ pub struct World {
 
 pub mod ai_profile;
 mod buffs;
+mod castle_parts;
 mod castles;
 mod chat;
 mod combat;
@@ -770,7 +781,7 @@ mod companion;
 pub mod fame;
 mod gathering;
 mod groups;
-mod guilds;
+pub mod guilds;
 mod inventory;
 mod lua;
 mod magic;

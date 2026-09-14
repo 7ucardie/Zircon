@@ -85,6 +85,7 @@ impl World {
         self.do_spawns(index);
         self.spawn_npcs(index);
         self.spawn_guards(index);
+        self.spawn_castle_objects(index);
         Ok(())
     }
 

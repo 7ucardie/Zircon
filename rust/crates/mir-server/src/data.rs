@@ -62,6 +62,22 @@ pub struct CastleDef {
     pub monster: i32,
     /// Shop discount for the owner guild (unused here).
     pub discount: f64,
+    /// `CastleGuardInfo` / `CastleGateInfo` / `CastleFlagInfo` rows.
+    pub guards: Vec<CastlePartDef>,
+    pub gates: Vec<CastlePartDef>,
+    pub flags: Vec<CastlePartDef>,
+}
+
+/// A castle guard (kind 0), gate (1) or flag (2): the monster placed at
+/// (x, y) facing `direction`, repaired for `repair_cost` from guild funds.
+#[derive(Debug, Clone)]
+pub struct CastlePartDef {
+    pub kind: u8,
+    pub monster: i32,
+    pub x: i32,
+    pub y: i32,
+    pub direction: i32,
+    pub repair_cost: i64,
 }
 
 /// `FishingDropInfo`: 1 in `chance` per catch; `throw_quality` 0 = any.
@@ -139,6 +155,8 @@ pub struct MonsterDef {
     /// Teleports 8, AOEAttack 16, RangeAttack 32, Enrages 64); 0 when the
     /// pack's `MonsterInfo` has no such column.
     pub behaviours: i32,
+    /// `MonsterInfo.FaceImage` (castle gates pick their block layout by it).
+    pub face_image: i32,
     stats: HashMap<i32, i32>,
 }
 
@@ -627,6 +645,7 @@ impl GameData {
                     index,
                     name: c.str_or(r, "MonsterName", "").to_string(),
                     image: i32_of(c, r, "Image") as u16,
+                    face_image: c.int_or(r, "FaceImage", 0) as i32,
                     ai: i32_of(c, r, "AI"),
                     level: i32_of(c, r, "Level"),
                     view_range: i32_of(c, r, "ViewRange"),
@@ -971,11 +990,42 @@ impl GameData {
                         item: i32_of(c, r, "Item"),
                         monster: i32_of(c, r, "Monster"),
                         discount: c.float_or(r, "Discount", 0.0),
+                        guards: Vec::new(),
+                        gates: Vec::new(),
+                        flags: Vec::new(),
                     }
                 })
                 .collect(),
             None => Vec::new(),
         };
+        let mut castles = castles;
+        for (kind, name) in [
+            (0u8, "CastleGuardInfo"),
+            (1, "CastleGateInfo"),
+            (2, "CastleFlagInfo"),
+        ] {
+            let Some(c) = db.collection(name) else {
+                continue;
+            };
+            for r in &c.records {
+                let castle = i32_of(c, r, "Castle");
+                let part = CastlePartDef {
+                    kind,
+                    monster: i32_of(c, r, "Monster"),
+                    x: i32_of(c, r, "X"),
+                    y: i32_of(c, r, "Y"),
+                    direction: c.int_or(r, "Direction", 0) as i32,
+                    repair_cost: c.int_or(r, "RepairCost", 0),
+                };
+                if let Some(def) = castles.iter_mut().find(|d| d.index == castle) {
+                    match kind {
+                        0 => def.guards.push(part),
+                        1 => def.gates.push(part),
+                        _ => def.flags.push(part),
+                    }
+                }
+            }
+        }
         let guards = match db.collection("GuardInfo") {
             Some(c) => c
                 .records

@@ -1616,6 +1616,10 @@ pub enum ClientMessage {
     GuildRequestConquest {
         index: i32,
     },
+    /// Owner guild: open every castle gate if one is shut, else shut them.
+    GuildToggleCastleGates,
+    /// Owner guild leader: repair gates and guards from the funds.
+    GuildRepairCastleGates,
     /// Send mail to a character by name (offline is fine); items are
     /// (grid, slot, count) cells, at most 5, from a safe zone.
     MailSend {

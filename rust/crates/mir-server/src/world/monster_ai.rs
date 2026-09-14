@@ -185,6 +185,11 @@ impl World {
                 return;
             }
         }
+        // Castle guards, gates and flags run their own routine.
+        if self.objects[&id].monster_ref().castle.is_some() {
+            self.process_castle_object(id);
+            return;
+        }
         // Shinsu's fighting window opens and closes on its own clock.
         if prof.mode_windows {
             self.process_mode_window(id, now);
@@ -962,7 +967,12 @@ impl World {
     }
 
     /// Face the target, broadcast the swing and start the attack timers.
-    fn face_and_swing(&mut self, id: ObjectId, dir: Direction, ranged_at: Option<ObjectId>) {
+    pub(super) fn face_and_swing(
+        &mut self,
+        id: ObjectId,
+        dir: Direction,
+        ranged_at: Option<ObjectId>,
+    ) {
         {
             let o = self.objects.get_mut(&id).unwrap();
             o.direction = dir;
@@ -1010,7 +1020,7 @@ impl World {
             .collect()
     }
 
-    fn push_monster_hit(
+    pub(super) fn push_monster_hit(
         &mut self,
         id: ObjectId,
         target: ObjectId,

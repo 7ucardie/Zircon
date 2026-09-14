@@ -108,6 +108,15 @@ mode spares guild mates. Guilds persist in `guilds.json` under the data
 directory; see `docs/research/guilds.md` for the rest of the C# rules.
 
 Guild wars and castles follow the same C# (`docs/research/guild-wars-castles.md`).
+Castle guards, gates and flags come from the `CastleGuardInfo`,
+`CastleGateInfo` and `CastleFlagInfo` rows (this pack has none, so the
+mechanics are exercised by the tests): guards shoot enemy guild members
+within 15 cells during a war and are hurt only by them, gates block their
+cells while shut, open by themselves for owner members walking up in
+peacetime and shut again ten seconds later, the owner guild toggles them
+with "Gates" and its leader repairs wrecked gates and guards with
+"Repair" from the funds, and a flag changes hands after an enemy guild
+stands beside it unopposed for thirty seconds.
 A member with the StartWar permission types a guild name in the guild
 window and presses "Declare war": 200,000 leaves the funds, both guilds are
 told, and for two hours members of the two guilds are enemies in the
@@ -123,7 +132,7 @@ Only members of castle-less participating guilds can hurt the lord, one
 point per hit, and the guild that fells him takes the castle: owners earn
 10 % more experience and are announced when the war ends.
 `ZIRCON_DEV_CONQUEST=1` opens the war for everyone as soon as the server
-starts. Castle guards, gates and flags need info tables this pack lacks.
+starts.
 
 Mail (`M`) works like Zircon's: compose to a character name (offline is
 fine) with a subject, message, gold and up to five bag items (right-click

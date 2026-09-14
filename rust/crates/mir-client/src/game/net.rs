@@ -14,6 +14,7 @@ impl Game {
             } => {
                 self.load_map(&map.file, &map.name);
                 self.map_light = map.light;
+                self.entered_at = now;
                 self.audio.stop_all();
                 self.audio.play_music(music_index(map.music));
                 self.objects.clear();
@@ -214,6 +215,9 @@ impl Game {
                         }
                         self.effects
                             .extend(effects::fishing_float(float, found, now));
+                        if Some(id) == self.user {
+                            self.float_time = now + 700;
+                        }
                     }
                     Action::FishingReel => self.audio.play(sound_table::idx::FISHING_REEL),
                     _ => {}

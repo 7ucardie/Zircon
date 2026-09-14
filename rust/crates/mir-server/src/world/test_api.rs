@@ -109,7 +109,14 @@ impl World {
     /// Test helper: spawn a monster whose definition uses `ai` next to `at`.
     #[cfg(test)]
     pub fn test_spawn_ai(&mut self, ai: i32, map: i32, at: Point) -> Option<ObjectId> {
-        let def = self.data.monsters.values().find(|d| d.ai == ai)?.index;
+        // Lowest index so the pick does not follow HashMap order.
+        let def = self
+            .data
+            .monsters
+            .values()
+            .filter(|d| d.ai == ai)
+            .min_by_key(|d| d.index)?
+            .index;
         Some(self.create_monster(def, map, at, None, None, 0))
     }
 
@@ -291,6 +298,58 @@ impl World {
         None
     }
 
+    /// Test helper: is the cell blocked for walking?
+    #[cfg(test)]
+    pub fn test_cell_blocked(&self, map: i32, p: Point) -> bool {
+        self.cell_blocked(map, p, false)
+    }
+
+    /// Test helper: place a castle's guards, gates and flags now.
+    #[cfg(test)]
+    pub fn test_spawn_castle_objects(&mut self, map: i32) {
+        let _ = self.ensure_map(map);
+        self.spawn_castle_objects(map);
+    }
+
+    /// Test helper: castle objects on a map as (id, kind 0 guard / 1 gate /
+    /// 2 flag).
+    #[cfg(test)]
+    pub fn test_castle_parts(&self, map: i32) -> Vec<(ObjectId, u8)> {
+        use super::castle_parts::CastleRole;
+        self.on_map(map)
+            .filter_map(|o| match &o.kind {
+                Kind::Monster(m) => m.castle.as_ref().map(|r| {
+                    (
+                        o.id,
+                        match r {
+                            CastleRole::Guard { .. } => 0,
+                            CastleRole::Gate { .. } => 1,
+                            CastleRole::Flag { .. } => 2,
+                        },
+                    )
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Test helper: the first flag's (contester, contest_until) on a map.
+    #[cfg(test)]
+    pub fn test_castle_flag_state(&self, map: i32) -> Option<(Option<u32>, u64)> {
+        use super::castle_parts::CastleRole;
+        self.on_map(map).find_map(|o| match &o.kind {
+            Kind::Monster(m) => match &m.castle {
+                Some(CastleRole::Flag {
+                    contester,
+                    contest_until,
+                    ..
+                }) => Some((*contester, *contest_until)),
+                _ => None,
+            },
+            _ => None,
+        })
+    }
+
     /// Test helper: is a cell in a safe zone?
     #[cfg(test)]
     pub fn test_in_safe_zone_at(&self, map: i32, p: Point) -> bool {
@@ -397,11 +456,13 @@ impl World {
     /// Test helper: a page's dialog type can be forced for a scenario.
     #[cfg(test)]
     pub fn test_page_with_dialog_type(&mut self, dialog_type: i32) -> i32 {
+        // Lowest index so the pick does not follow HashMap order.
         if let Some(p) = self
             .data
             .npc_pages
             .values()
-            .find(|p| p.dialog_type == dialog_type)
+            .filter(|p| p.dialog_type == dialog_type)
+            .min_by_key(|p| p.index)
         {
             return p.index;
         }

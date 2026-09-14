@@ -56,7 +56,7 @@ impl Game {
         height: i32,
         conn: Option<&Connection>,
     ) {
-        self.chat_keys(conn);
+        self.chat_keys(now, conn);
         // A focused window text box owns the keyboard.
         if self.windows.typing() {
             self.input.digit = None;

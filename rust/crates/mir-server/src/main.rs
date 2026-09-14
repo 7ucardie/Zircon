@@ -719,6 +719,12 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::GuildWar { name }) => {
             world.guild_war(object, name)
         }
+        (Stage::InGame { object, .. }, ClientMessage::GuildToggleCastleGates) => {
+            world.guild_toggle_castle_gates(object)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::GuildRepairCastleGates) => {
+            world.guild_repair_castle_gates(object)
+        }
         (Stage::InGame { object, .. }, ClientMessage::GuildRequestConquest { index }) => {
             world.guild_request_conquest(object, index)
         }

@@ -1190,7 +1190,7 @@ impl WindowState {
                     // the first castle (StartWar / leader permissions).
                     let can_war = me.is_some_and(|m| m.permission == -1 || m.permission & 128 != 0);
                     let wy = win.y + win.h - 3.0 - 42.0 - 60.0;
-                    if self.guild_buttons.len() < 6 {
+                    if self.guild_buttons.len() < 8 {
                         self.guild_buttons.push(Button::default_style(
                             0.0,
                             0.0,
@@ -1203,6 +1203,23 @@ impl WindowState {
                             120.0,
                             "Request conquest",
                         ));
+                        self.guild_buttons
+                            .push(Button::default_style(0.0, 0.0, 60.0, "Gates"));
+                        self.guild_buttons
+                            .push(Button::default_style(0.0, 0.0, 70.0, "Repair"));
+                    }
+                    if !g.castle.is_empty() {
+                        let b = &mut self.guild_buttons[6];
+                        b.pos = (win.x + 16.0, wy - 26.0);
+                        if b.update(c) {
+                            out.push(ClientMessage::GuildToggleCastleGates);
+                        }
+                        let b = &mut self.guild_buttons[7];
+                        b.pos = (win.x + 82.0, wy - 26.0);
+                        b.enabled = leader;
+                        if b.update(c) && b.enabled {
+                            out.push(ClientMessage::GuildRepairCastleGates);
+                        }
                     }
                     let name_now = name_box.text.trim().to_string();
                     let b = &mut self.guild_buttons[4];

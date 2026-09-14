@@ -63,6 +63,7 @@ impl Game {
                     anchor: p.to,
                     direction: None,
                     started: now,
+                    blend: Blend::Screen,
                 });
             }
         }
@@ -112,6 +113,7 @@ impl Game {
                 anchor: Anchor::Object(id),
                 direction: None,
                 started: now,
+                blend: Blend::Screen,
             });
         }
         for id in reflecting {
@@ -124,6 +126,7 @@ impl Game {
                 anchor: Anchor::Object(id),
                 direction: None,
                 started: now,
+                blend: Blend::Screen,
             });
         }
         for id in shielded {
@@ -136,6 +139,7 @@ impl Game {
                 anchor: Anchor::Object(id),
                 direction: None,
                 started: now,
+                blend: Blend::Screen,
             });
         }
         for e in effects {
@@ -157,7 +161,7 @@ impl Game {
                         (dx + info.offset_x as i32) as f32,
                         (dy + info.offset_y as i32) as f32,
                         e.color,
-                        Blend::Screen,
+                        e.blend,
                     );
                 }
             }

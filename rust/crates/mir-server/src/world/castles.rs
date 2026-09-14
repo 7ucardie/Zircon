@@ -5,7 +5,7 @@
 //! during a war, everyone not in the same guild is an enemy (`AtWar`).
 //! Ownership and requests persist in `guilds.json`.
 
-use super::guilds::{CastleOwner, ConquestRequest};
+use super::guilds::ConquestRequest;
 use super::*;
 use mir_proto::{guild_permission, ChatKind};
 
@@ -38,7 +38,7 @@ impl World {
 
     /// A system line to everyone online (Zircon broadcasts to every
     /// connection).
-    fn announce(&mut self, text: String) {
+    pub(super) fn announce(&mut self, text: String) {
         let ids: Vec<ObjectId> = self.players().map(|o| o.id).collect();
         for id in ids {
             self.send_to(
@@ -374,30 +374,7 @@ impl World {
         let Some(guild) = guild else {
             return;
         };
-        if self.guild_store.castle_of(guild).is_some() {
-            return;
-        }
-        self.guild_store.castles.retain(|c| c.castle != index);
-        self.guild_store.castles.push(CastleOwner {
-            castle: index,
-            guild,
-        });
-        self.guild_store.save();
-        let gname = self
-            .guild_store
-            .get(guild)
-            .map(|g| g.name.clone())
-            .unwrap_or_default();
-        let name = self
-            .castle_def(index)
-            .map(|d| d.name.clone())
-            .unwrap_or_default();
-        self.announce(format!("{gname} has captured {name}!"));
-        self.castle_broadcast_all();
-        let guilds: Vec<u32> = self.guild_store.guilds.iter().map(|g| g.id).collect();
-        for g in guilds {
-            self.guild_broadcast_info(g);
-        }
+        self.castle_capture(index, guild);
         self.ping_castle_players(index);
     }
 

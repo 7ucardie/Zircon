@@ -92,6 +92,7 @@ impl World {
                 master: None,
                 guard: def.ai == -1,
                 companion: None,
+                castle: None,
             }),
             map,
             location,

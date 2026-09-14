@@ -3697,3 +3697,163 @@ fn guild_war_and_castle_conquest() {
     assert!(out.iter().any(|(c, m)| *c == cb
         && matches!(m, ServerMessage::Say { text, .. } if text.contains("already holds"))));
 }
+
+#[test]
+fn castle_guards_gates_and_flags() {
+    use crate::data::CastlePartDef;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let Some(castle) = world.data.castles.first().cloned() else {
+        eprintln!("no castle in this pack; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let mut bob_rec = test_character("Bob");
+    bob_rec.id = 2;
+    let bob = world.add_player(2, 2, &bob_rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    world.test_set_gold(alice, 20_000_000);
+    world.test_set_gold(bob, 20_000_000);
+    world.guild_create(alice, "Knights".into(), 5);
+    world.guild_create(bob, "Rogues".into(), 5);
+    let knights = world.guild_store.guilds[0].id;
+    let rogues = world.guild_store.guilds[1].id;
+    // Knights hold the castle already.
+    world.guild_store.castles.push(world::guilds::CastleOwner {
+        castle: castle.index,
+        guild: knights,
+    });
+
+    // Lay out a guard, a gate and a flag in the castle region.
+    let map = castle.map;
+    world.test_spawn_castle_objects(map);
+    let width = world.maps[&map].file.width as i32;
+    let open_patch = |world: &World, p: Point| {
+        (-2..=2).all(|dx| {
+            (-2..=2).all(|dy| {
+                let q = Point::new(p.x + dx, p.y + dy);
+                world.maps[&map].file.is_walkable(q.x, q.y)
+                    && world.maps[&map].objects_at(q).is_empty()
+            })
+        })
+    };
+    let origin = world.data.regions[&castle.castle_region]
+        .points(width)
+        .first()
+        .map(|(x, y)| Point::new(*x, *y))
+        .expect("a castle region cell");
+    let base = (0..80)
+        .flat_map(|r| {
+            (-r..=r).flat_map(move |dx| [(dx, -r), (dx, r), (-r, dx), (r, dx)].into_iter())
+        })
+        .map(|(dx, dy)| Point::new(origin.x + dx, origin.y + dy))
+        .find(|p| open_patch(&world, *p))
+        .expect("an open 5x5 patch near the castle");
+    let part = |kind: u8, x: i32, y: i32| CastlePartDef {
+        kind,
+        monster: castle.monster,
+        x,
+        y,
+        direction: 0,
+        repair_cost: 10_000,
+    };
+    let guard_at = Point::new(base.x - 2, base.y - 2);
+    let gate_at = Point::new(base.x + 2, base.y);
+    let flag_at = Point::new(base.x, base.y + 2);
+    {
+        let def = world
+            .data
+            .castles
+            .iter_mut()
+            .find(|c| c.index == castle.index)
+            .unwrap();
+        def.guards.push(part(0, guard_at.x, guard_at.y));
+        def.gates.push(part(1, gate_at.x, gate_at.y));
+        def.flags.push(part(2, flag_at.x, flag_at.y));
+    }
+    world.test_spawn_castle_objects(map);
+    let parts = world.test_castle_parts(map);
+    let guard = parts
+        .iter()
+        .find(|(_, k)| *k == 0)
+        .map(|(i, _)| *i)
+        .expect("guard");
+    let gate = parts
+        .iter()
+        .find(|(_, k)| *k == 1)
+        .map(|(i, _)| *i)
+        .expect("gate");
+    assert!(parts.iter().any(|(_, k)| *k == 2), "flag");
+
+    // A shut gate blocks its cell; the owner walking up opens it in peace.
+    assert!(world.test_cell_blocked(map, gate_at));
+    world.test_change_map(alice, map, base);
+    world.test_change_map(bob, map, Point::new(base.x, base.y - 1));
+    for t in 1..=3 {
+        world.tick(t * 1000);
+    }
+    assert!(
+        !world.test_cell_blocked(map, gate_at),
+        "owner should open the gate"
+    );
+
+    // War: the owner's toggle shuts and opens every gate; the guard shoots
+    // the enemy and only the enemy can hurt it.
+    assert!(world.start_conquest(castle.index, true));
+    // The lord has its own test; here it would only kill Bob.
+    if let Some(lord) = world.test_castle_lord() {
+        world.remove_object(lord);
+    }
+    world.test_change_map(bob, map, Point::new(base.x, base.y - 1));
+    world.test_change_map(alice, map, base);
+    world.guild_toggle_castle_gates(alice);
+    assert!(world.test_cell_blocked(map, gate_at));
+    world.guild_toggle_castle_gates(bob);
+    assert!(
+        world.test_cell_blocked(map, gate_at),
+        "only the owner toggles"
+    );
+    world.guild_toggle_castle_gates(alice);
+    assert!(!world.test_cell_blocked(map, gate_at));
+    assert_eq!(world.test_damage(guard, alice, 500), 0);
+    assert!(world.test_damage(guard, bob, 500) > 0);
+    let bob_hp = world.objects[&bob].hp;
+    for t in 4..=12 {
+        world.tick(t * 1000);
+    }
+    assert!(
+        world.objects[&bob].hp < bob_hp || world.objects[&bob].dead,
+        "the guard should shoot"
+    );
+    world.test_set_hp(bob, 1_000_000);
+    if world.objects[&bob].dead {
+        world.revive_player_test(bob);
+        world.test_change_map(bob, map, Point::new(base.x, base.y - 1));
+    }
+
+    // Repairs: the leader pays the damage share from the funds.
+    world.guild_toggle_castle_gates(alice);
+    let dealt = world.test_damage(gate, bob, 1000);
+    assert!(dealt > 0);
+    world.test_set_guild_funds(knights, 50_000);
+    world.guild_repair_castle_gates(alice);
+    assert_eq!(world.objects[&gate].hp, world.objects[&gate].max_hp);
+    assert!(world.guild_store.guilds[0].funds < 50_000);
+
+    // Flag: Rogues stand beside it unopposed for 30 s and take the castle.
+    world.remove_object(guard);
+    if world.objects[&bob].dead {
+        world.revive_player_test(bob);
+    }
+    world.test_set_hp(bob, 1_000_000);
+    world.test_change_map(bob, map, Point::new(flag_at.x, flag_at.y - 1));
+    world.test_change_map(alice, map, Point::new(base.x - 2, base.y));
+    let start = 20_000;
+    for t in 0..40 {
+        world.tick(start + t * 1000);
+    }
+    assert_eq!(world.guild_store.castle_owner(castle.index), Some(rogues));
+}

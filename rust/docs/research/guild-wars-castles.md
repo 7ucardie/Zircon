@@ -85,7 +85,8 @@ the attackers' region, the lord (AI 1000 profile; 1 damage per hit from
 eligible guilds; poison and regen immune), capture on death with the
 broadcast and `CastleInfo`, ending on the clock, owners' +10 % experience.
 Deviations: the pack has no ObjectiveRegion, so the lord spawns in the
-castle region; no guards, gates or flags (no tables); no drop/gold rate or
+castle region; guards/gates/flags are implemented from their info rows
+(none in this pack; gate block layouts follow `FaceImage` 1-3); no drop/gold rate or
 shop discount for owners; no NPC hiding; days are UTC; `GuildWarInfo` and
 `UserConquest` live in `guilds.json`; the client shows castle state and
 wars as text in the guild window and colours enemy-guild names orange

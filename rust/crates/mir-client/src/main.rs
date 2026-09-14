@@ -344,7 +344,7 @@ impl ApplicationHandler for App {
                         }
                         match &event.logical_key {
                             Key::Named(NamedKey::Backspace) => c.input.backspace = true,
-                            Key::Named(NamedKey::Enter) => c.input.enter = true,
+                            Key::Named(NamedKey::Enter) => c.input.enter = !event.repeat,
                             Key::Named(NamedKey::Tab) => c.input.tab = true,
                             Key::Named(NamedKey::Escape) => c.input.escape = true,
                             Key::Named(NamedKey::Delete) => c.input.delete = true,

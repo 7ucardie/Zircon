@@ -24,6 +24,9 @@ impl World {
         if !m.file.is_walkable(p.x, p.y) {
             return true;
         }
+        if self.gate_blocks_cell(map, p) {
+            return true;
+        }
         m.objects_at(p).iter().any(|id| {
             let o = &self.objects[id];
             o.blocking() && !(grace && o.cell_time > self.now)
