@@ -21,7 +21,7 @@ const PANEL_W: f32 = 480.0;
 
 /// What a line is, which decides its colour and the tabs that show it
 /// (Zircon `MessageType`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Category {
     Local,
     Shout,
@@ -61,6 +61,32 @@ impl Category {
         }
     }
 
+    /// Every category, in the order the options window lists them.
+    pub const ALL: [Category; 8] = [
+        Category::Local,
+        Category::Shout,
+        Category::Global,
+        Category::Group,
+        Category::Guild,
+        Category::Whisper,
+        Category::System,
+        Category::Hint,
+    ];
+
+    /// The name the options window puts beside a checkbox.
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::Local => "Local",
+            Category::Shout => "Shout",
+            Category::Global => "Global",
+            Category::Group => "Group",
+            Category::Guild => "Guild",
+            Category::Whisper => "Whisper",
+            Category::System => "System",
+            Category::Hint => "Hint",
+        }
+    }
+
     /// Zircon gives system lines a light plate behind the text.
     fn back(self) -> Option<[f32; 4]> {
         match self {
@@ -71,46 +97,40 @@ impl Category {
 }
 
 /// A tab and the categories it lets through (Zircon's per-tab checkboxes).
-struct Tab {
-    name: &'static str,
-    cats: &'static [Category],
+///
+/// Zircon lets the player build these in `ChatOptionsDialog`, so they are
+/// owned state rather than a constant table: the options window edits this
+/// list and the panel redraws from it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Tab {
+    pub name: String,
+    pub cats: Vec<Category>,
+    /// Zircon `FadeOutCheckBox`: old lines drop off the unfocused log.
+    pub fade: bool,
+    /// Zircon `HideTabCheckBox`: the tab button is not drawn.
+    pub hidden: bool,
 }
 
-const TABS: [Tab; 6] = [
-    Tab {
-        name: "All",
-        cats: &[
-            Category::Local,
-            Category::Shout,
-            Category::Global,
-            Category::Group,
-            Category::Guild,
-            Category::Whisper,
-            Category::System,
-            Category::Hint,
-        ],
-    },
-    Tab {
-        name: "Local",
-        cats: &[Category::Local, Category::Shout],
-    },
-    Tab {
-        name: "Group",
-        cats: &[Category::Group],
-    },
-    Tab {
-        name: "Guild",
-        cats: &[Category::Guild],
-    },
-    Tab {
-        name: "Whisper",
-        cats: &[Category::Whisper],
-    },
-    Tab {
-        name: "System",
-        cats: &[Category::System, Category::Hint, Category::Global],
-    },
-];
+/// The six tabs a fresh install starts with.
+pub fn default_tabs() -> Vec<Tab> {
+    let tab = |name: &str, cats: Vec<Category>| Tab {
+        name: name.to_string(),
+        cats,
+        fade: true,
+        hidden: false,
+    };
+    vec![
+        tab("All", Category::ALL.to_vec()),
+        tab("Local", vec![Category::Local, Category::Shout]),
+        tab("Group", vec![Category::Group]),
+        tab("Guild", vec![Category::Guild]),
+        tab("Whisper", vec![Category::Whisper]),
+        tab(
+            "System",
+            vec![Category::System, Category::Hint, Category::Global],
+        ),
+    ]
+}
 
 struct Line {
     text: String,
@@ -132,10 +152,12 @@ pub struct ChatPanel {
     /// The bar is open and owns the keyboard.
     pub open: bool,
     pub bar: TextBox,
+    /// The tabs, as the options window left them.
+    pub tabs: Vec<Tab>,
     tab: usize,
     /// Lines scrolled up from the newest.
     scroll: usize,
-    unread: [bool; TABS.len()],
+    unread: Vec<bool>,
     /// Lines sent this session, walked with the arrow keys.
     history: Vec<String>,
     history_pos: Option<usize>,
@@ -156,9 +178,10 @@ impl Default for ChatPanel {
             lines: Vec::new(),
             open: false,
             bar: TextBox::new(Rect::new(0.0, 0.0, 10.0, 22.0), 200),
+            tabs: default_tabs(),
             tab: 0,
             scroll: 0,
-            unread: [false; TABS.len()],
+            unread: vec![false; default_tabs().len()],
             history: Vec::new(),
             history_pos: None,
             last_pm: None,
@@ -171,10 +194,18 @@ impl Default for ChatPanel {
 }
 
 impl ChatPanel {
+    /// Keep the unread flags the same length as the tabs after the options
+    /// window adds or removes one.
+    pub fn sync_tabs(&mut self) {
+        self.unread.resize(self.tabs.len(), false);
+        self.tab = self.tab.min(self.tabs.len().saturating_sub(1));
+        self.scroll = 0;
+    }
+
     pub fn clear(&mut self) {
         self.lines.clear();
         self.scroll = 0;
-        self.unread = [false; TABS.len()];
+        self.unread = vec![false; self.tabs.len()];
         self.open = false;
         self.bar.text.clear();
     }
@@ -200,7 +231,7 @@ impl ChatPanel {
     }
 
     fn add(&mut self, line: Line) {
-        for (i, tab) in TABS.iter().enumerate() {
+        for (i, tab) in self.tabs.iter().enumerate() {
             if i != self.tab && tab.cats.contains(&line.cat) {
                 self.unread[i] = true;
             }
@@ -391,12 +422,20 @@ impl ChatPanel {
 
         let text_w = panel.w - 16.0;
         let rows = ((panel.h - TAB_H - 8.0) / LINE_H) as usize;
+        // The open tab decides which categories show, and whether old
+        // lines fade off the unfocused log.
+        let cats = self
+            .tabs
+            .get(self.tab)
+            .map(|t| t.cats.clone())
+            .unwrap_or_default();
+        let faded = faded && self.tabs.get(self.tab).is_none_or(|t| t.fade);
         // Wrap newest-first so scrolling counts wrapped rows, then flip.
         let mut wrapped: Vec<(String, [u8; 4], Option<[f32; 4]>)> = Vec::new();
         for line in self
             .lines
             .iter()
-            .filter(|l| TABS[self.tab].cats.contains(&l.cat))
+            .filter(|l| cats.contains(&l.cat))
             .filter(|l| !faded || now.saturating_sub(l.time) < FADE_MS)
             .rev()
         {
@@ -438,8 +477,12 @@ impl ChatPanel {
 
     fn draw_tabs(&mut self, c: &mut Ctx, panel: Rect) {
         let mut x = panel.x + 4.0;
-        for (i, tab) in TABS.iter().enumerate() {
-            let w = c.text.width(tab.name, 11) + 12.0;
+        for i in 0..self.tabs.len() {
+            if self.tabs[i].hidden {
+                continue;
+            }
+            let name = self.tabs[i].name.clone();
+            let w = c.text.width(&name, 11) + 12.0;
             let r = Rect::new(x, panel.y + 2.0, w, TAB_H - 2.0);
             let active = i == self.tab;
             let hover = r.contains(c.input.mouse.0, c.input.mouse.1);
@@ -455,7 +498,7 @@ impl ChatPanel {
             } else {
                 [170, 170, 170, 255]
             };
-            c.text.draw(tab.name, 11, r.x + 6.0, r.y + 1.0, colour);
+            c.text.draw(&name, 11, r.x + 6.0, r.y + 1.0, colour);
             if hover && c.input.lmb_pressed {
                 self.tab = i;
                 self.scroll = 0;
@@ -549,7 +592,7 @@ mod tests {
         fn shown(p: &ChatPanel, tab: usize) -> Vec<&str> {
             p.lines
                 .iter()
-                .filter(|l| TABS[tab].cats.contains(&l.cat))
+                .filter(|l| p.tabs[tab].cats.contains(&l.cat))
                 .map(|l| l.text.as_str())
                 .collect()
         }

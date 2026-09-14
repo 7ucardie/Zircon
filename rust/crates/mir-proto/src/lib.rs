@@ -624,6 +624,23 @@ impl MarketSort {
     ];
 }
 
+/// What the fortune checker knows about one item (Zircon
+/// `ClientFortuneInfo` built from `UserFortuneInfo`).
+///
+/// `progress` is the expected number of this item the account should have
+/// received by now, accumulated a fraction at a time on every drop roll;
+/// `drop_count` is how many actually dropped. Zircon shows the gap between
+/// them as "to go", and forces a drop once the expectation runs a whole
+/// item ahead of reality.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FortuneSummary {
+    pub item: i32,
+    pub drop_count: i64,
+    pub progress: f64,
+    /// Unix seconds when the account last spent a checker on this item.
+    pub checked_at: u64,
+}
+
 /// Zircon `MessageType` (chat line colour and routing).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChatKind {
@@ -1875,6 +1892,11 @@ pub enum ClientMessage {
         online_only: bool,
         start: u32,
     },
+    /// Spend one Fortune Checker on this item to read its drop progress
+    /// (Zircon `C.FortuneCheck`).
+    FortuneCheck {
+        item: i32,
+    },
     Ping {
         nonce: u32,
     },
@@ -2282,6 +2304,19 @@ pub enum ServerMessage {
         start: u32,
         total: u32,
         entries: Vec<RankEntry>,
+    },
+    /// Start, refresh or clear a named countdown (Zircon `S.SetTimer`).
+    /// `seconds` of 0 or less expires the timer; `kind` 0 draws digits
+    /// only, 1 and 2 add the running egg timer.
+    SetTimer {
+        key: String,
+        kind: u8,
+        seconds: i32,
+    },
+    /// Drop progress for the items the account has checked
+    /// (Zircon `S.FortuneUpdate`).
+    FortuneUpdate {
+        fortunes: Vec<FortuneSummary>,
     },
     Pong {
         nonce: u32,

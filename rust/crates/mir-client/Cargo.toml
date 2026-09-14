@@ -9,6 +9,8 @@ license.workspace = true
 mir-formats = { path = "../mir-formats" }
 mir-proto = { path = "../mir-proto" }
 anyhow.workspace = true
+serde.workspace = true
+serde_json = "1"
 tracing.workspace = true
 tracing-subscriber.workspace = true
 bytemuck.workspace = true

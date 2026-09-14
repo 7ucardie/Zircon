@@ -348,6 +348,11 @@ impl ItemCatalog {
             .unwrap_or_else(|| format!("Item {index}"))
     }
 
+    /// Every item's index and name, for the fortune window's search.
+    pub fn names(&self) -> impl Iterator<Item = (i32, &str)> {
+        self.items.iter().map(|(i, d)| (*i, d.name.as_str()))
+    }
+
     pub fn len(&self) -> usize {
         self.items.len()
     }

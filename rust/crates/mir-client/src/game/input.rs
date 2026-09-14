@@ -1,6 +1,15 @@
 use super::*;
 
 impl Game {
+    /// True while any text box anywhere owns the keyboard, so world
+    /// shortcuts stay out of the way of typing.
+    fn text_entry_open(&self) -> bool {
+        self.windows.typing()
+            || self.friends_window.typing()
+            || self.fortune.typing()
+            || self.chat_options.typing()
+    }
+
     pub(super) fn hit_test(&mut self, width: i32, height: i32) -> Option<ObjectId> {
         let view = View::new(width, height, self.user());
         let (mx, my) = (self.mouse.0 as i32, self.mouse.1 as i32);
@@ -57,8 +66,10 @@ impl Game {
         conn: Option<&Connection>,
     ) {
         self.chat_keys(now, conn);
-        // A focused window text box owns the keyboard.
-        if self.windows.typing() || self.friends_window.typing() {
+        // A focused window text box owns the keyboard. The fortune search
+        // and the chat-tab rename box live outside `WindowState`, so they
+        // are asked separately.
+        if self.text_entry_open() {
             self.input.digit = None;
             self.input.fkey = None;
             self.input.tab = false;
@@ -67,7 +78,7 @@ impl Game {
         // W inventory, E magic, J quest log, `,` mail, Z belt, P group,
         // G guild, S storage, U companion, N menu, H help, A auto potion,
         // M mount, T trade, Tab pick up, Ctrl+H attack mode, Alt+Q leave.
-        let typing = self.windows.typing() || self.friends_window.typing();
+        let typing = self.text_entry_open();
         // A modifier is held, so the text event carries a control character
         // and `chord` names the physical letter instead.
         if !typing && (self.input.ctrl || self.input.alt) {
@@ -112,6 +123,10 @@ impl Game {
                         self.windows.market.refresh();
                     }
                 }
+                // Zircon opens these two from menus and an NPC, with no
+                // key of their own; K and O were free here.
+                'k' => self.fortune.open = !self.fortune.open,
+                'o' => self.chat_options.open = !self.chat_options.open,
                 // Zircon cycles the minimap with V (shown, dimmed, hidden)
                 // and opens the big map with B; B is storage here, so the
                 // big map takes X.
@@ -162,6 +177,8 @@ impl Game {
             self.windows.ranking.open = false;
             self.friends_window.open = false;
             self.windows.market.open = false;
+            self.fortune.open = false;
+            self.chat_options.open = false;
             if self.trade.is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::TradeClose);

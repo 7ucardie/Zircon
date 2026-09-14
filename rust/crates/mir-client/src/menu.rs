@@ -27,6 +27,9 @@ pub enum Window {
     Ranking,
     Friends,
     Market,
+    /// Owns its open flag on `Game`, so the toggle is relayed as a request.
+    Fortune,
+    ChatOptions,
 }
 
 /// What the player asked for by clicking the HUD or the menu.
@@ -53,7 +56,7 @@ const PANEL_BUTTONS: [(u32, f32, Option<Window>, &str, &str); 8] = [
 
 /// The key list shown by the help window. Kept beside the real bindings in
 /// `game/input.rs`; both follow Zircon's `KeyBindAction` defaults.
-const KEYS: [(&str, &str); 25] = [
+const KEYS: [(&str, &str); 29] = [
     ("Q", "Character"),
     ("W", "Inventory"),
     ("E", "Skills"),
@@ -67,6 +70,10 @@ const KEYS: [(&str, &str); 25] = [
     ("U", "Companion"),
     ("R", "Rankings"),
     ("F", "Friends and blocked"),
+    ("V", "Cycle the minimap"),
+    ("X", "Big map"),
+    ("K", "Fortune checker"),
+    ("O", "Chat options"),
     ("N", "Menu"),
     ("H", "Help"),
     ("A", "Auto potion"),
@@ -140,7 +147,7 @@ enum MenuEntry {
 }
 
 /// Menu rows: action, label, key hint.
-const MENU_ENTRIES: [(MenuEntry, &str, &str); 11] = [
+const MENU_ENTRIES: [(MenuEntry, &str, &str); 13] = [
     (MenuEntry::Help, "Help", "H"),
     (MenuEntry::Toggle(Window::Guild), "Guild", "G"),
     (MenuEntry::Toggle(Window::Storage), "Storage", "S"),
@@ -151,6 +158,8 @@ const MENU_ENTRIES: [(MenuEntry, &str, &str); 11] = [
     (MenuEntry::Currency, "Currency", ""),
     (MenuEntry::AutoPotion, "Auto potion", "A"),
     (MenuEntry::DropFilter, "Drop filter", ""),
+    (MenuEntry::Toggle(Window::Fortune), "Fortune checker", "K"),
+    (MenuEntry::Toggle(Window::ChatOptions), "Chat options", "O"),
     (MenuEntry::Leave, "Leave game", "Alt+Q"),
 ];
 

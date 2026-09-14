@@ -77,6 +77,13 @@ pub struct Game {
     /// `MapInfo.MiniMap` of the current map (0 = none).
     mini_map_index: i32,
     minimap: minimap::MiniMap,
+    /// Server-driven countdowns on the HUD (Zircon `TimerDialog`).
+    timers: timers::Timers,
+    /// Drop-fortune window and the snapshots the server last sent.
+    fortune: crate::fortune::FortuneWindow,
+    fortunes: Vec<mir_proto::FortuneSummary>,
+    /// The chat-tab editor (Zircon `ChatOptionsDialog`).
+    chat_options: crate::chat_options::ChatOptions,
     day_time: f32,
     objects: HashMap<ObjectId, ClientObject>,
     user: Option<ObjectId>,
@@ -243,11 +250,19 @@ mod minimap;
 mod net;
 mod render;
 mod sound;
+mod timers;
 
 impl Game {
     pub fn new(mut assets: Assets, catalog: ItemCatalog) -> Game {
         let audio = crate::audio::Audio::new(assets.root());
         crate::anim::set_fishing_frames(assets.info(lib::M_HUM, 2000).is_some());
+        // Windows that own their open flag read ZIRCON_OPEN themselves.
+        let opened = |name: &str| {
+            std::env::var("ZIRCON_OPEN")
+                .unwrap_or_default()
+                .split(',')
+                .any(|n| n.trim() == name)
+        };
         Game {
             assets,
             audio,
@@ -363,6 +378,18 @@ impl Game {
             map_light: 0,
             mini_map_index: 0,
             minimap: minimap::MiniMap::default(),
+            timers: timers::Timers::default(),
+            fortune: {
+                let mut w = crate::fortune::FortuneWindow::default();
+                w.open = opened("fortune");
+                w
+            },
+            fortunes: Vec::new(),
+            chat_options: {
+                let mut w = crate::chat_options::ChatOptions::default();
+                w.open = opened("chatoptions");
+                w
+            },
             day_time: 1.0,
             objects: HashMap::new(),
             user: None,
@@ -392,7 +419,12 @@ impl Game {
             attack_time: 0,
             animation: 0,
             animation_time: 0,
-            chat: ChatPanel::default(),
+            chat: {
+                let mut c = ChatPanel::default();
+                c.tabs = crate::chat_options::load_tabs();
+                c.sync_tabs();
+                c
+            },
             auto_chat_done: false,
             float_time: 0,
             auto_mount_done: false,

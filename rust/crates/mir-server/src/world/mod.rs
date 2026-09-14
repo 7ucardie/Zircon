@@ -353,6 +353,9 @@ pub struct PlayerData {
     /// Who invited us (Zircon `GroupInvitation`).
     pub group_invite: Option<ObjectId>,
     pub quests: Vec<crate::accounts::StoredQuest>,
+    /// Account drop progress and the fortune snapshots taken from it.
+    pub drops: Vec<fortune::DropProgress>,
+    pub fortunes: Vec<fortune::FortuneRecord>,
     /// Passive skill stats (Zircon `GetPassiveStats` and combat checks).
     pub def_mastery: i32,
     pub phys_immunity: i32,
@@ -789,6 +792,7 @@ mod chat;
 mod combat;
 mod companion;
 pub mod fame;
+pub mod fortune;
 mod gathering;
 mod groups;
 pub mod guilds;
@@ -817,6 +821,7 @@ mod spawn;
 mod spells;
 mod storage;
 mod test_api;
+pub mod timers;
 mod trade;
 mod visibility;
 

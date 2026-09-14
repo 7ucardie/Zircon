@@ -9,9 +9,11 @@
 mod anim;
 mod assets;
 mod audio;
+mod chat_options;
 mod chat_panel;
 mod client;
 mod effects;
+mod fortune;
 mod friends;
 mod game;
 mod gfx;

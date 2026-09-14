@@ -131,6 +131,10 @@ pub struct WindowState {
     pub quest_scroll: f32,
     /// Storage window (B): account storage, usable in safe zones.
     pub storage_open: bool,
+    /// Set when the menu asks to toggle a window `Game` owns; `Game` reads
+    /// the flag and clears it on the next frame.
+    pub toggle_fortune: bool,
+    pub toggle_chat_options: bool,
     trade_gold: Option<TextBox>,
     trade_buttons: Vec<Button>,
     request_buttons: Vec<Button>,
@@ -217,6 +221,8 @@ impl WindowState {
 impl Default for WindowState {
     fn default() -> WindowState {
         WindowState {
+            toggle_fortune: false,
+            toggle_chat_options: false,
             inventory_open: false,
             character_open: false,
             skills_open: false,
@@ -2769,6 +2775,9 @@ impl WindowState {
                             self.market.refresh();
                         }
                     }
+                    // These two live on `Game`; relay the click to it.
+                    menu::Window::Fortune => self.toggle_fortune = true,
+                    menu::Window::ChatOptions => self.toggle_chat_options = true,
                 },
                 MenuAction::Logout => out.push(ClientMessage::Logout),
                 MenuAction::Quit => std::process::exit(0),

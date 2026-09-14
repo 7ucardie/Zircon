@@ -313,12 +313,18 @@ impl World {
                 continue;
             };
             let mut amount = (d.amount / 2 + self.rng.random_range(0..d.amount.max(1))).max(1);
-            if self.rng.random_range(0..d.chance * players.max(1) as i32) != 0 {
+            // Zircon banks the roll's expected yield before rolling, and
+            // lets a failed roll through once the expectation has run a
+            // whole item ahead of what the account has actually seen.
+            let one_in = d.chance * players.max(1) as i32;
+            let owed = self.add_drop_progress(killer, d.item, amount, one_in, d.part_only);
+            if self.rng.random_range(0..one_in) != 0 && !owed {
                 continue;
             }
             if item.index == self.data.gold_item {
                 amount = (amount / players.max(1) as i32).max(1);
             }
+            self.add_drop_count(killer, d.item, amount as i64);
             let mut remaining = amount as u32;
             let stack = item.stack_size.max(1) as u32;
             while remaining > 0 {

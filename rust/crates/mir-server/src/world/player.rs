@@ -139,6 +139,8 @@ impl World {
                 trade_request: None,
                 group_invite: None,
                 quests: rec.quests.clone(),
+                drops: Vec::new(),
+                fortunes: Vec::new(),
                 def_mastery: 0,
                 phys_immunity: 0,
                 magic_immunity: 0,
@@ -295,6 +297,7 @@ impl World {
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });
         self.send_magics(id);
+        self.dev_timer(id);
         Ok(id)
     }
 
