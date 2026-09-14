@@ -43,6 +43,9 @@ pub struct Input {
     pub tab: bool,
     pub escape: bool,
     pub delete: bool,
+    /// Arrow keys (the chat bar walks its history with them).
+    pub up: bool,
+    pub down: bool,
     /// F1..F12 pressed this frame (1..=12).
     pub fkey: Option<u8>,
     /// Belt key pressed this frame: 1..9 -> slot 0..8, 0 -> slot 9.
@@ -62,6 +65,8 @@ impl Input {
         self.tab = false;
         self.escape = false;
         self.delete = false;
+        self.up = false;
+        self.down = false;
         self.fkey = None;
         self.digit = None;
         self.wheel = 0.0;

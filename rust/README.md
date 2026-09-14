@@ -59,9 +59,22 @@ Chat follows Zircon's prefixes: `Enter` opens the chat bar, `Enter` sends
 and `Esc` closes it. Plain text talks to players in view range (with a
 bubble over your head), `/name text` whispers, `!text` shouts to the whole
 map (level 2, once per 10 s), `!@text` shouts to every player (level 33,
-once per 30 s) and `!!text` goes to your group. Lines are coloured by kind
-(white talk, yellow shout, green whispers, cyan group, orange global, red
-system); `ZIRCON_AUTO_CHAT=text` says something two seconds after entry.
+once per 30 s), `!!text` goes to your group and `!~text` to your guild.
+Typing `/`, `!` or `@` with the bar closed opens it with that prefix
+already in place, and `/` on its own reuses the last name you whispered
+(Zircon's `LastPM`); the arrow keys walk back through the lines you have
+sent, and the target of the line being typed is shown beside the bar.
+
+The log above the bar is Zircon's `ChatTab`: it keeps 250 lines, wraps
+them to the panel, scrolls with the wheel, and has tabs (All, Local,
+Group, Guild, Whisper, System) that filter by message kind and light up
+when an unwatched tab has something new. Line colours are Zircon's
+defaults (white talk, yellow shout, lime global, plum group, pink guild,
+cyan whispers, red system on its light plate). Like Zircon's default tab
+it fades out: with the bar closed and the pointer away only the recent
+lines show, without the panel chrome. `ZIRCON_AUTO_CHAT=text` says
+something two seconds after entry and `ZIRCON_DEV_CHAT_LINES=n` fills the
+log with n sample lines of every kind for screenshots.
 
 Groups follow Zircon's `PlayerObject.Social`: `P` opens the group window
 with an "Allow group" toggle (invites are refused while it is off), a name

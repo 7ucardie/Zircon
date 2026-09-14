@@ -302,28 +302,22 @@ impl Game {
                 [255, 230, 160, 255],
             );
         }
-        let mut y = 8.0;
-        for (line, t, color) in &self.chat {
-            let age = now.saturating_sub(*t);
-            if age > 15_000 && !self.chat_open {
-                continue;
-            }
-            text.draw(line, 13, 12.0, y, *color);
-            y += 17.0;
-        }
-        if self.chat_open {
-            let w = (width as f32 - 24.0).min(480.0);
-            self.chat_box.rect = Rect::new(12.0, height as f32 - 176.0, w, 22.0);
-            self.chat_box.focused = true;
+        {
+            let Game {
+                chat,
+                input,
+                assets,
+                ..
+            } = self;
             let mut c = Ctx {
-                input: &self.input,
-                assets: &mut self.assets,
+                input,
+                assets,
                 renderer,
                 gpu,
                 text,
                 now,
             };
-            self.chat_box.update(&mut c);
+            chat.draw(&mut c, width, height, now);
         }
         // Own buffs: Zircon `BuffDialog` icons (CBIcon), top-right, 27 px pitch.
         let buffs = self.buffs.clone();
@@ -364,7 +358,6 @@ impl Game {
                 pages,
                 hints
             );
-            let _ = y;
             text.draw(&dbg, 12, 12.0, height as f32 - 152.0, [200, 200, 200, 255]);
             if let Some(h) = self.hovered.and_then(|id| self.objects.get(&id)) {
                 text.draw(
