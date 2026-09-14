@@ -402,6 +402,7 @@ short for it. The client now follows Zircon's `KeyBindAction` defaults:
 | `M` `T` | mount or dismount, ask to trade |
 | `Ctrl+H` | attack mode |
 | `Alt+Q` | leave the game |
+| `V` `X` | cycle the minimap, open the big map |
 | `Tab` | pick up |
 | `1`-`9` `0` | use a belt slot |
 | `F1`-`F11` | cast a skill |

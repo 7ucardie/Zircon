@@ -17,9 +17,9 @@ const MINI_SIZE: f32 = 200.0;
 const MARGIN: f32 = 10.0;
 /// Room for the buff icons in the top-right corner.
 const MINI_TOP: f32 = 70.0;
-/// Room above the big map, and below it for the bottom HUD: the spell bar,
-/// belt and debug line live on the text layer, which always paints over
-/// sprites, so the window has to keep clear of them rather than cover them.
+/// Room above the big map, and below it for the bottom HUD: the window sits
+/// in the band between them so the health bars, spell bar and belt stay
+/// readable while it is open.
 const BIG_TOP: f32 = 40.0;
 const BIG_BOTTOM: f32 = 190.0;
 
