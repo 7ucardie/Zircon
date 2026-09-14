@@ -290,6 +290,7 @@ impl World {
             items: Vec::new(),
         });
         self.send_gold(id);
+        self.send_currencies(id);
         self.send_companions(id);
         self.companion_line(id, format!("{name} is yours."));
     }

@@ -42,8 +42,8 @@ override the directory with `--data DIR` or `ZIRCON_DATA`.
 Controls in the world: hold left mouse to walk, right mouse to run, click an
 adjacent monster to attack, click an NPC to talk (you walk over), click a
 ground item to walk to it and pick it up, `Tab` picks up what is under you,
-`W` opens the bag, `Q` the character window, `Esc` closes windows and then
-returns to the character list. In the bag, right-click uses or equips an item
+`W` opens the bag, `Q` the character window, `Esc` closes the open windows
+and, with nothing open, asks whether to leave. In the bag, right-click uses or equips an item
 (or sells it while a shop is open); in the character window right-click
 unequips. Helmets and shields show on the character. The belt above the HUD
 (toggle with `Z`) has ten slots on keys `1`-`9` and `0`: pick up a bag item
@@ -87,7 +87,7 @@ divided by the member count, owning what they roll. `!!text` is group
 chat. `ZIRCON_AUTO_GROUP=name` invites that player after entry and
 `ZIRCON_AUTO_GROUP_ACCEPT=1` accepts any invite.
 
-Storage (`B`, or `ZIRCON_OPEN_STORAGE=1`) is the account's 100-slot bank,
+Storage (`S`, or `ZIRCON_OPEN_STORAGE=1`) is the account's 100-slot bank,
 shared by its characters and kept in `accounts.json`: pick up a bag or
 equipment item and click a storage slot to store it, or the reverse to take
 it out. As in Zircon it only works inside a safe zone (`SafeZoneInfo`
@@ -100,7 +100,7 @@ both press Confirm; any change to an offer clears both confirmations, a
 side without enough free bag slots is unlocked to make room, and a step,
 turn, death or disconnect closes the trade.
 
-PvP uses Zircon's attack modes, cycled with `H` (Peaceful, Group, Guild,
+PvP uses Zircon's attack modes, cycled with `Ctrl+H` (Peaceful, Group, Guild,
 War/Red/Brown, All) and shown in the status line: outside safe zones your
 swings and spells that go through the hostility check hit other players
 according to the mode. Hitting an innocent player turns your name brown
@@ -147,7 +147,7 @@ point per hit, and the guild that fells him takes the castle: owners earn
 `ZIRCON_DEV_CONQUEST=1` opens the war for everyone as soon as the server
 starts.
 
-Mail (`M`) works like Zircon's: compose to a character name (offline is
+Mail (`,`) works like Zircon's: compose to a character name (offline is
 fine) with a subject, message, gold and up to five bag items (right-click
 them while composing; items need a safe zone), one mail per ten seconds.
 Mail arrives live or waits in the account's box in `mail.json`; unread
@@ -157,7 +157,7 @@ hold fifty attachments.
 
 Horses come from NPC pages with Zircon's `ChangeHorse` action (the horse
 dealers): owning one adds bag weight and, from the white horse up,
-attack and defence. `R` mounts and dismounts on maps that allow horses;
+attack and defence. `M` mounts and dismounts on maps that allow horses;
 riding runs three cells a step but you cannot attack, cast, toggle
 stances or use items from the saddle, and a push, death or a map that
 forbids horses dismounts you. The horse draws under the rider with the
@@ -202,7 +202,7 @@ falls behind, and picks up your own drops within eight cells into its bag
 `CompanionLevelInfo` (level one carries nothing), it gains experience once
 a minute and levels up, and it loses one hunger a minute outside safe
 zones, refusing to gather when starving until fed with a consumable that
-has the companion hunger stat. `N` opens the companion window with its
+has the companion hunger stat. `U` opens the companion window with its
 level, hunger and bag; Take moves an item into yours.
 
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
@@ -312,11 +312,14 @@ Developer automation (also used for visual checks):
 `ZIRCON_HEADLESS=1` renders to an offscreen texture instead of the window
 (screenshots then work even with the screen locked, where macOS stalls the
 swapchain);
+`ZIRCON_MOUSE=x,y` parks the pointer so a screenshot can show a hover state
+(HUD tooltips);
 `ZIRCON_AUTOLOGIN=email:password` logs in, creating the account if missing;
 `ZIRCON_AUTOSTART=name` enters the world with that character, creating a
 warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
-`ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills`
+`ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills,`
+`companion,menu,help,exit,currency,autopotion,dropfilter`
 opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
 daylight (night screenshots);
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
@@ -355,6 +358,57 @@ the client shows the swing and standing poses while fishing.
 spawn table without opening a port. `--map <file>` forces a start map.
 `ZIRCON_SEED=n` seeds the server's random rolls (the tests use a fixed seed and
 ordered object maps, so a failing roll reproduces).
+
+## HUD menu and system dialogs
+
+The eight icons at the right of the main panel are Zircon's `MainPanel`
+buttons, drawn from the same `GameInter` sprites at the same offsets:
+Character (82), Inventory (87), Skills (92), Quest log (112), Mail (97),
+Belt (107), Group (102) and Menu (117). Each one opens or closes its
+window, lights up under the pointer and shows a hint naming the window and
+its key. Zircon's cash shop button (index 122, `GameStore`) has no window
+here, so it is not drawn.
+
+`N` or the last icon opens the menu (Zircon's `MenuDialog`): Help, Guild,
+Storage, Companion, Currency, Auto potion, Drop filter and Leave game.
+Zircon's Settings and Ranking rows are missing because neither window
+exists yet; Currency, Auto potion and Drop filter are reached from the menu
+here rather than from the places the C# client puts them.
+
+`H` opens the key list (Zircon binds `H` to `HelpWindow`; `F1` is a spell
+key in this client, as it is in Zircon). The list is built from the real
+bindings in `game/input.rs` and scrolls with the wheel if the screen is too
+short for it. The client now follows Zircon's `KeyBindAction` defaults:
+
+| Key | Does |
+|---|---|
+| `Q` `W` `E` | character, inventory, skills |
+| `J` `,` `Z` | quest log, mail, belt |
+| `P` `G` `S` `U` | group, guild, storage, companion |
+| `N` `H` `A` | menu, help, auto potion |
+| `M` `T` | mount or dismount, ask to trade |
+| `Ctrl+H` | attack mode |
+| `Alt+Q` | leave the game |
+| `Tab` | pick up |
+| `1`-`9` `0` | use a belt slot |
+| `F1`-`F11` | cast a skill |
+
+`Alt+Q`, the menu's Leave game row, or `Esc` with nothing open asks the
+question Zircon's `ExitDialog` asks: Character list logs out to the
+character list, Exit game closes the client.
+
+The currency window lists the player's `CurrencyInfo` holdings beside the
+gold in the bag. The server sends `ServerMessage::Currencies` on entry and
+again whenever an amount moves (NPC currency actions, quest rewards, fame
+titles and companion purchases).
+
+Auto potion (`A`) drinks from a belt slot when a pool drops under its
+percentage: health is checked first, then mana, and the drink goes through
+the same path as pressing the belt key, so the server sees an ordinary item
+use and the usual cooldown applies. It is client-side and off by default.
+The drop filter marks ground items whose name contains one of up to five
+words with a gold plate, so wanted drops stand out; it is client-side and
+changes nothing about who may pick the item up.
 
 ## Light and sound
 
@@ -411,7 +465,7 @@ description")`) or cancel (`npc.navigate("")`) the page. Scripts see
 ## Quests
 
 NPC dialogs list the quests an NPC starts (`[Accept]`) or finishes
-(`[Complete]`, or "in progress"); the quest log opens with `L` and shows
+(`[Complete]`, or "in progress"); the quest log opens with `J` and shows
 the progress text with Zircon's name tags filled in, each task's count and
 the class-filtered rewards. Requirements (level, class, other quests
 completed or not), kill and gather tasks (`QuestTaskMonsterDetails` with map

@@ -48,6 +48,7 @@ impl Game {
                 refines,
                 companions,
                 companion_shop,
+                currencies,
                 castles,
                 conquest,
                 ..
@@ -114,6 +115,7 @@ impl Game {
                 refines,
                 companions,
                 companion_shop,
+                currencies,
                 castles,
                 conquest: *conquest,
             };
@@ -202,6 +204,7 @@ impl Game {
             || self.windows.guild_open
             || self.windows.mail_open
             || self.windows.companion_open
+            || self.windows.menu.any_open()
             || self.trade.is_some()
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);
@@ -383,7 +386,7 @@ impl Game {
             let hints = if self.status.len() > 48 {
                 ""
             } else {
-                " | LMB walk, RMB run, click monster/NPC/item, Tab pick up, W bag, Q character, L quests, Z belt, ` hide"
+                " | LMB walk, RMB run, Tab pick up, W bag, Q character, J quests, Z belt, N menu, H keys, ` hide"
             };
             let dbg = format!(
                 "{} | {:.0} fps | {} objects | {} sprites / {} pages{}",

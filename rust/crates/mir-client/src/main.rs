@@ -15,6 +15,7 @@ mod effects;
 mod game;
 mod gfx;
 mod items;
+mod menu;
 mod net;
 mod overlay;
 mod scenes;
@@ -86,6 +87,9 @@ struct App {
     /// `ZIRCON_HEADLESS=1`: never touch the swapchain (works on a locked
     /// screen); frames go to an offscreen texture that screenshots read.
     headless: bool,
+    /// `ZIRCON_MOUSE=x,y`: hold the pointer there so headless screenshots
+    /// can show hover states.
+    forced_mouse: Option<(f32, f32)>,
 }
 
 impl App {
@@ -100,6 +104,11 @@ impl App {
             return;
         };
         let now = self.start.elapsed().as_millis() as u64;
+        // ZIRCON_MOUSE=x,y parks the pointer for headless screenshots of
+        // hover states (HUD tooltips).
+        if let Some(at) = self.forced_mouse {
+            client.input.mouse = at;
+        }
         if self.frames == 0 && self.fps == 0.0 {
             tracing::info!(now, "first frame");
         }
@@ -294,6 +303,12 @@ impl ApplicationHandler for App {
                     }
                 }
             }
+            WindowEvent::ModifiersChanged(m) => {
+                if let Some(c) = self.client.as_mut() {
+                    c.input.ctrl = m.state().control_key();
+                    c.input.alt = m.state().alt_key();
+                }
+            }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     match event.physical_key {
@@ -342,6 +357,15 @@ impl ApplicationHandler for App {
                             };
                             if digit.is_some() {
                                 c.input.digit = digit;
+                            }
+                            // Ctrl/Alt chords: `KeyH` -> 'h'.
+                            if c.input.ctrl || c.input.alt {
+                                let name = format!("{code:?}");
+                                if let Some(ch) =
+                                    name.strip_prefix("Key").and_then(|s| s.chars().next())
+                                {
+                                    c.input.chord = Some(ch.to_ascii_lowercase());
+                                }
                             }
                         }
                         match &event.logical_key {
@@ -415,6 +439,10 @@ fn main() -> anyhow::Result<()> {
         scale: 1.0,
         screenshot: None,
         headless: std::env::var_os("ZIRCON_HEADLESS").is_some(),
+        forced_mouse: std::env::var("ZIRCON_MOUSE").ok().and_then(|v| {
+            let (x, y) = v.split_once(',')?;
+            Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+        }),
         auto_screenshot: std::env::var("ZIRCON_SCREENSHOT").ok().map(|v| {
             let (path, secs) = match v.rsplit_once(':') {
                 Some((p, s)) if s.parse::<f64>().is_ok() => {

@@ -283,12 +283,34 @@ impl World {
         self.send_marriage_info(id);
         self.send_refine_list(id);
         self.send_companions(id);
+        self.send_currencies(id);
         self.companion_spawn(id);
         self.refresh_appearance(id);
         let day_time = self.day_time;
         self.send_to(id, ServerMessage::DayChanged { day_time });
         self.send_magics(id);
         Ok(id)
+    }
+
+    /// Zircon `ClientUserCurrency`: the player's currencies, sent on entry
+    /// and again whenever one changes.
+    pub(crate) fn send_currencies(&mut self, id: ObjectId) {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return;
+        };
+        let mut list: Vec<mir_proto::CurrencySummary> = self
+            .data
+            .currencies
+            .iter()
+            .filter(|c| c.currency_type != 0)
+            .map(|c| mir_proto::CurrencySummary {
+                name: c.name.clone(),
+                abbreviation: c.abbreviation.clone(),
+                amount: p.currencies.get(&c.index).copied().unwrap_or(0),
+            })
+            .collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        self.send_to(id, ServerMessage::Currencies(list));
     }
 
     pub(super) fn send_belt(&mut self, id: ObjectId) {

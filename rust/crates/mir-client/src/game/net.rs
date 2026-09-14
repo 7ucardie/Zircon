@@ -770,6 +770,7 @@ impl Game {
             }
             ServerMessage::RefineRetrieved { index } => self.refines.retain(|r| r.index != index),
             ServerMessage::CompanionShop(offers) => self.companion_shop = offers,
+            ServerMessage::Currencies(list) => self.currencies = list,
             ServerMessage::Companions(list) => self.companions = list,
             ServerMessage::MailList(list) => {
                 let unread = list.iter().filter(|m| !m.opened).count();
@@ -1004,6 +1005,7 @@ impl Game {
         self.refines.clear();
         self.companions.clear();
         self.companion_shop.clear();
+        self.currencies.clear();
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {

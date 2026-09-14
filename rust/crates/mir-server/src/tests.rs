@@ -3857,3 +3857,36 @@ fn castle_guards_gates_and_flags() {
     }
     assert_eq!(world.guild_store.castle_owner(castle.index), Some(rogues));
 }
+
+/// The client is told about currencies on entry and again when one moves,
+/// so Zircon's `CurrencyDialog` has something to show.
+#[test]
+fn currencies_reach_the_client_on_entry_and_on_change() {
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Banker")).unwrap();
+    let entry = drain(&mut world);
+    let list = entry
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::Currencies(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("entry sends the currency list");
+    // Gold lives in the bag, so it is never one of these rows.
+    assert!(!list.is_empty(), "the pack defines non-gold currencies");
+    assert!(list.iter().all(|c| c.amount == 0));
+    world.test_set_currency_by_type(me, world::fame::CURRENCY_FP, 42);
+    let after = drain(&mut world);
+    let list = after
+        .iter()
+        .rev()
+        .find_map(|m| match m {
+            ServerMessage::Currencies(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("a change resends the list");
+    assert_eq!(list.iter().map(|c| c.amount).sum::<i64>(), 42);
+}
