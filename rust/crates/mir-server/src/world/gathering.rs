@@ -162,7 +162,7 @@ impl World {
             return;
         }
         let (map, loc) = (o.map, o.location);
-        let stats = p.bag.equipment_stats(&self.data);
+        let stats = p.bag.equipment_stats(&self.data, p.level, p.class);
         let stat = |k: i32| stats.get(&k).copied().unwrap_or(0);
         let distance = loc.distance(float);
         let Some(drops) = self.fishing_drops(map, float) else {

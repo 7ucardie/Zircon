@@ -408,6 +408,64 @@ pub(crate) fn draw_item_cell(
     }
 }
 
+/// The heading for a set: its name, the pieces worn, and the word "set"
+/// only when the name does not already carry it ("Gale Set" does).
+pub fn set_heading(name: &str, worn: usize, needed: usize) -> String {
+    if name.to_ascii_lowercase().ends_with("set") {
+        format!("{name} ({worn}/{needed})")
+    } else {
+        format!("{name} set ({worn}/{needed})")
+    }
+}
+
+/// How a set stands for the player: its name, which of its pieces are worn,
+/// and the bonus lines with whether each one currently applies.
+pub struct SetView {
+    pub name: String,
+    pub worn: usize,
+    pub needed: usize,
+    /// (label, active) per bonus line.
+    pub lines: Vec<(String, bool)>,
+}
+
+/// Work out a set's state from what is equipped. Mirrors the server rule:
+/// every piece must be worn, and each line still has to clear the level and
+/// name the class.
+pub fn set_view(bag: &Bag, set_index: i32) -> Option<SetView> {
+    let def = bag.catalog.set(set_index)?;
+    let mut worn: Vec<i32> = Vec::new();
+    for it in bag.equipment.iter().flatten() {
+        // A broken item gives no set credit, as on the server.
+        if it.max_durability > 0 && it.durability <= 0 {
+            continue;
+        }
+        if bag.catalog.get(it.info).map(|d| d.set) == Some(set_index) && !worn.contains(&it.info) {
+            worn.push(it.info);
+        }
+    }
+    let complete = !def.items.is_empty() && worn.len() == def.items.len();
+    let class_flag = 1u8 << bag.stats.class;
+    let lines = def
+        .stats
+        .iter()
+        .filter_map(|(stat, amount, class, level)| {
+            let name = stat_name(*stat)?;
+            let ok = complete && i32::from(bag.stats.level) >= *level && class & class_flag != 0;
+            let mut label = format!("{name} +{amount}");
+            if *level > 0 {
+                label.push_str(&format!(" (level {level})"));
+            }
+            Some((label, ok))
+        })
+        .collect();
+    Some(SetView {
+        name: def.name.clone(),
+        worn: worn.len(),
+        needed: def.items.len(),
+        lines,
+    })
+}
+
 fn tooltip(
     c: &mut Ctx,
     def: &ItemDef,
@@ -415,6 +473,7 @@ fn tooltip(
     x: f32,
     y: f32,
     price: Option<u64>,
+    set: Option<&SetView>,
 ) {
     let mut lines: Vec<(String, [u8; 4])> = vec![(def.name.clone(), [255, 255, 255, 255])];
     lines.push((type_name(def.item_type).to_string(), [200, 200, 200, 255]));
@@ -462,6 +521,27 @@ fn tooltip(
         lines.push((format!("Price {p} gold"), [255, 230, 120, 255]));
     } else if def.price > 0 {
         lines.push((format!("Value {} gold", def.price), [200, 200, 200, 255]));
+    }
+    if let Some(set) = set {
+        let done = set.needed > 0 && set.worn == set.needed;
+        lines.push((
+            set_heading(&set.name, set.worn, set.needed),
+            if done {
+                [120, 255, 120, 255]
+            } else {
+                [200, 200, 200, 255]
+            },
+        ));
+        for (label, active) in &set.lines {
+            lines.push((
+                format!("  {label}"),
+                if *active {
+                    [120, 255, 120, 255]
+                } else {
+                    [140, 140, 140, 255]
+                },
+            ));
+        }
     }
     if !def.description.is_empty() {
         lines.push((def.description.clone(), [170, 170, 170, 255]));
@@ -2275,7 +2355,33 @@ impl WindowState {
 
         // ---- Character window (left side) ----
         if self.character_open {
-            let win = Rect::new(10.0, 40.0, 320.0, 420.0);
+            // Sets the player is wearing any piece of, in set order. The
+            // window grows to fit them rather than overrunning its footer.
+            let mut set_views: Vec<SetView> = Vec::new();
+            {
+                let mut seen: Vec<i32> = Vec::new();
+                for it in bag.equipment.iter().flatten() {
+                    let Some(set_index) = bag.catalog.get(it.info).map(|d| d.set) else {
+                        continue;
+                    };
+                    if set_index == 0 || seen.contains(&set_index) {
+                        continue;
+                    }
+                    seen.push(set_index);
+                    if let Some(v) = set_view(bag, set_index) {
+                        set_views.push(v);
+                    }
+                }
+            }
+            let set_rows: usize = set_views.iter().map(|v| 1 + v.lines.len()).sum();
+            // The block sits at y+410, under the stat rows; the footer band
+            // begins at h-45, so the window has to grow past both.
+            let extra = if set_rows == 0 {
+                0.0
+            } else {
+                set_rows as f32 * 15.0 + 36.0
+            };
+            let win = Rect::new(10.0, 40.0, 320.0, 420.0 + extra);
             if win.contains(mouse.0, mouse.1) {
                 over = true;
             }
@@ -2353,11 +2459,41 @@ impl WindowState {
                 c.text.draw(k, 12, x, y, GOLD);
                 c.text.draw(v, 12, x + 60.0, y, [255, 255, 255, 255]);
             }
+            let mut sy = win.y + 410.0;
+            for v in &set_views {
+                let done = v.needed > 0 && v.worn == v.needed;
+                c.text.draw(
+                    &set_heading(&v.name, v.worn, v.needed),
+                    11,
+                    win.x + 20.0,
+                    sy,
+                    if done {
+                        [120, 255, 120, 255]
+                    } else {
+                        [200, 200, 200, 255]
+                    },
+                );
+                sy += 15.0;
+                for (label, active) in &v.lines {
+                    c.text.draw(
+                        label,
+                        11,
+                        win.x + 32.0,
+                        sy,
+                        if *active {
+                            [120, 255, 120, 255]
+                        } else {
+                            [140, 140, 140, 255]
+                        },
+                    );
+                    sy += 15.0;
+                }
+            }
             c.text.draw(
                 "Right-click: unequip",
                 10,
                 win.x + 20.0,
-                win.y + 400.0,
+                win.y + win.h - 20.0,
                 [160, 160, 160, 255],
             );
             if let Some(partner) = bag.partner {
@@ -2802,7 +2938,12 @@ impl WindowState {
                 .and_then(|d| d.goods.iter().find(|g| g.info == info))
                 .map(|g| g.price);
             if let Some(def) = bag.catalog.get(info) {
-                tooltip(c, def, None, x, y, price);
+                let set = if def.set != 0 {
+                    set_view(bag, def.set)
+                } else {
+                    None
+                };
+                tooltip(c, def, None, x, y, price, set.as_ref());
             }
         }
         let _ = EQUIPMENT_SIZE;

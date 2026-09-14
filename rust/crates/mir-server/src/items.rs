@@ -305,13 +305,25 @@ impl Bag {
     }
 
     /// Sum of `ItemInfoStat`s over equipped, unbroken items.
-    pub fn equipment_stats(&self, data: &GameData) -> HashMap<i32, i32> {
+    /// Every stat the equipment grants, set bonuses included. `level` and
+    /// `class` gate the set lines, as Zircon `RefreshStats` does.
+    pub fn equipment_stats(&self, data: &GameData, level: i32, class: Class) -> HashMap<i32, i32> {
         let mut out = HashMap::new();
+        // Distinct `ItemInfo` per set, so two copies of one piece count once
+        // (Zircon guards its list with `if (!items.Contains(item.Info))`).
+        let mut worn: HashMap<i32, Vec<i32>> = HashMap::new();
         for item in self.equipment.iter().flatten() {
+            // A broken item is dead weight: no stats, and no set credit.
             if item.max_durability > 0 && item.durability <= 0 {
                 continue;
             }
             if let Some(def) = data.items.get(&item.info) {
+                if def.set != 0 {
+                    let pieces = worn.entry(def.set).or_default();
+                    if !pieces.contains(&def.index) {
+                        pieces.push(def.index);
+                    }
+                }
                 for (k, v) in &def.stats {
                     *out.entry(*k).or_insert(0) += v;
                 }
@@ -320,6 +332,37 @@ impl Bag {
                 *out.entry(*k).or_insert(0) += v;
             }
         }
+        for (stat, amount) in set_bonuses(data, &worn, level, class) {
+            *out.entry(stat).or_insert(0) += amount;
+        }
+        out
+    }
+
+    /// The sets that are fully worn, as (set index, pieces worn, pieces
+    /// needed). Drives the client's "3/3" readout.
+    pub fn set_progress(&self, data: &GameData) -> Vec<(i32, usize, usize)> {
+        let mut worn: HashMap<i32, Vec<i32>> = HashMap::new();
+        for item in self.equipment.iter().flatten() {
+            if item.max_durability > 0 && item.durability <= 0 {
+                continue;
+            }
+            if let Some(def) = data.items.get(&item.info) {
+                if def.set != 0 {
+                    let pieces = worn.entry(def.set).or_default();
+                    if !pieces.contains(&def.index) {
+                        pieces.push(def.index);
+                    }
+                }
+            }
+        }
+        let mut out: Vec<(i32, usize, usize)> = worn
+            .into_iter()
+            .map(|(set, pieces)| {
+                let needed = data.sets.get(&set).map(|s| s.pieces).unwrap_or(0);
+                (set, pieces.len(), needed)
+            })
+            .collect();
+        out.sort_by_key(|(set, _, _)| *set);
         out
     }
 
@@ -330,6 +373,65 @@ impl Bag {
             .and_then(|i| data.items.get(&i.info))
             .map(|d| d.shape)
     }
+}
+
+/// Zircon `RefreshStats`: a set pays out only when every one of its pieces
+/// is worn, and then each line still has to clear the wearer's level and
+/// name their class.
+pub fn set_bonuses(
+    data: &GameData,
+    worn: &HashMap<i32, Vec<i32>>,
+    level: i32,
+    class: Class,
+) -> Vec<(i32, i32)> {
+    let mut out = Vec::new();
+    for (set, pieces) in worn {
+        let Some(def) = data.sets.get(set) else {
+            continue;
+        };
+        // A set with no pieces recorded would otherwise pay out for free.
+        if def.pieces == 0 || pieces.len() != def.pieces {
+            continue;
+        }
+        for stat in &def.stats {
+            if level < stat.level || stat.class & class.flag() == 0 {
+                continue;
+            }
+            out.push((stat.stat, stat.amount));
+        }
+    }
+    out
+}
+
+/// One weighted pick from the weapon-craft table, as Zircon
+/// `NPCWeaponCraft` rolls it: sum the weights of the rows this class can
+/// take, pick a number under that total, then walk the rows subtracting
+/// weights until it goes negative. `roll` is the caller's random number in
+/// `0..total`, and the returned range is inclusive of `max_value`.
+pub fn weapon_craft_pick(data: &GameData, class: Class, roll: i32) -> Option<(i32, i32, i32)> {
+    let flag = class.flag();
+    let mut value = roll;
+    for stat in data
+        .weapon_craft_stats
+        .iter()
+        .filter(|s| s.class & flag != 0)
+    {
+        value -= stat.weight;
+        if value < 0 {
+            return Some((stat.stat, stat.min_value, stat.max_value));
+        }
+    }
+    None
+}
+
+/// The total weight `weapon_craft_pick` rolls against for a class.
+pub fn weapon_craft_total(data: &GameData, class: Class) -> i32 {
+    let flag = class.flag();
+    data.weapon_craft_stats
+        .iter()
+        .filter(|s| s.class & flag != 0)
+        .map(|s| s.weight)
+        .sum()
 }
 
 pub fn item_weight(data: &GameData, item: &UserItem) -> i32 {

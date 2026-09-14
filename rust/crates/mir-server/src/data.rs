@@ -357,12 +357,50 @@ pub struct ItemDef {
     pub rarity: u8,
     pub description: String,
     pub stats: HashMap<i32, i32>,
+    /// `ItemInfo.Set`: the `SetInfo` this item belongs to, 0 for none.
+    pub set: i32,
 }
 
 impl ItemDef {
     pub fn stat(&self, id: i32) -> i32 {
         self.stats.get(&id).copied().unwrap_or(0)
     }
+}
+
+/// One bonus line of a set (Zircon `SetInfoStat`).
+#[derive(Debug, Clone)]
+pub struct SetStatDef {
+    /// Zircon `Stat` id.
+    pub stat: i32,
+    pub amount: i32,
+    /// `RequiredClass` flags; the wearer's class bit must be set.
+    pub class: u8,
+    /// Character level the bonus starts at.
+    pub level: i32,
+}
+
+/// An equipment set (Zircon `SetInfo`). `pieces` is how many `ItemInfo`
+/// rows name this set, which is the `SetInfo.Items` association counted
+/// from the other end; every one of them must be worn for the bonus.
+#[derive(Debug, Clone)]
+pub struct SetDef {
+    pub index: i32,
+    pub name: String,
+    pub pieces: usize,
+    pub stats: Vec<SetStatDef>,
+}
+
+/// One weighted roll of the weapon-craft table (Zircon
+/// `WeaponCraftStatInfo`): `NPCWeaponCraft` picks a row in proportion to
+/// `weight` among the rows its class admits, then rolls the value.
+#[derive(Debug, Clone)]
+pub struct WeaponCraftStatDef {
+    /// `RequiredClass` flags; the crafter's class bit must be set.
+    pub class: u8,
+    pub stat: i32,
+    pub min_value: i32,
+    pub max_value: i32,
+    pub weight: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -540,6 +578,10 @@ pub struct GameData {
     pub gold_item: i32,
     /// Keyed by `MagicType` value.
     pub magics: HashMap<u16, MagicDef>,
+    /// Equipment sets, keyed by `SetInfo.Index`.
+    pub sets: HashMap<i32, SetDef>,
+    /// The weapon-craft roll table, in table order.
+    pub weapon_craft_stats: Vec<WeaponCraftStatDef>,
 }
 
 impl GameData {
@@ -766,10 +808,68 @@ impl GameData {
                     can_drop: c.bool_or(r, "CanDrop", true),
                     description: c.str_or(r, "Description", "").to_string(),
                     stats: item_stats.remove(&index).unwrap_or_default(),
+                    set: i32_of(c, r, "Set"),
                 };
                 (index, d)
             })
             .collect();
+
+        // A set's piece count is the `SetInfo.Items` association read from
+        // the item side: every `ItemInfo` naming this set is one piece.
+        let mut set_pieces: HashMap<i32, usize> = HashMap::new();
+        for d in items.values() {
+            if d.set != 0 {
+                *set_pieces.entry(d.set).or_insert(0) += 1;
+            }
+        }
+        let mut set_stats: HashMap<i32, Vec<SetStatDef>> = HashMap::new();
+        if let Some(c) = db.collection("SetInfoStat") {
+            for r in &c.records {
+                set_stats
+                    .entry(i32_of(c, r, "Set"))
+                    .or_default()
+                    .push(SetStatDef {
+                        stat: i32_of(c, r, "Stat"),
+                        amount: i32_of(c, r, "Amount"),
+                        class: i32_of(c, r, "Class") as u8,
+                        level: i32_of(c, r, "Level"),
+                    });
+            }
+        }
+        let sets: HashMap<i32, SetDef> = match db.collection("SetInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| {
+                    let index = c.index(r);
+                    let d = SetDef {
+                        index,
+                        name: c.str_or(r, "SetName", "").to_string(),
+                        pieces: set_pieces.get(&index).copied().unwrap_or(0),
+                        stats: set_stats.remove(&index).unwrap_or_default(),
+                    };
+                    (index, d)
+                })
+                .collect(),
+            None => HashMap::new(),
+        };
+
+        let weapon_craft_stats: Vec<WeaponCraftStatDef> = match db.collection("WeaponCraftStatInfo")
+        {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| WeaponCraftStatDef {
+                    class: i32_of(c, r, "RequiredClass") as u8,
+                    stat: i32_of(c, r, "Stat"),
+                    min_value: i32_of(c, r, "MinValue"),
+                    max_value: i32_of(c, r, "MaxValue"),
+                    weight: i32_of(c, r, "Weight"),
+                })
+                .filter(|d| d.weight > 0)
+                .collect(),
+            None => Vec::new(),
+        };
 
         let drops = match db.collection("DropInfo") {
             Some(c) => c
@@ -1239,6 +1339,8 @@ impl GameData {
             movements,
             gold_item,
             magics,
+            sets,
+            weapon_craft_stats,
         })
     }
 

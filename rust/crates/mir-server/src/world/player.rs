@@ -545,7 +545,7 @@ impl World {
         let Some(base) = self.data.base_stat(p.class.mir_class(), p.level).cloned() else {
             return;
         };
-        let mut eq = p.bag.equipment_stats(&self.data);
+        let mut eq = p.bag.equipment_stats(&self.data, p.level, p.class);
         // A held fame title adds its stats like a permanent buff (Zircon
         // ApplyFameBuff).
         for (stat, amount) in self.fame_stats(p.fame) {
