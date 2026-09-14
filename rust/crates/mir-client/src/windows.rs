@@ -188,6 +188,8 @@ pub struct WindowState {
     buy_button: Option<Button>,
     /// HUD menu buttons, help, exit, currency, auto potion, drop filter.
     pub menu: MenuState,
+    /// Ranking board (R).
+    pub ranking: crate::ranking::RankingState,
     close_all_hint: bool,
     auto_button_done: bool,
     magic_tip: Option<(u16, f32, f32)>,
@@ -260,6 +262,7 @@ impl Default for WindowState {
             tooltip: None,
             buy_button: None,
             menu: MenuState::default(),
+            ranking: crate::ranking::RankingState::default(),
             close_all_hint: false,
             auto_button_done: false,
             magic_tip: None,
@@ -302,6 +305,8 @@ pub struct Bag<'a> {
     /// Castles as (index, name, owner) and the one under conquest.
     pub castles: &'a [(i32, String, String)],
     pub conquest: Option<i32>,
+    /// The last ranking page the server sent.
+    pub ranking: &'a crate::ranking::RankingView,
 }
 
 /// An open trade as the client sees it.
@@ -2744,6 +2749,7 @@ impl WindowState {
                     menu::Window::Guild => self.guild_open = !self.guild_open,
                     menu::Window::Storage => self.storage_open = !self.storage_open,
                     menu::Window::Companion => self.companion_open = !self.companion_open,
+                    menu::Window::Ranking => self.ranking.open = !self.ranking.open,
                 },
                 MenuAction::Logout => out.push(ClientMessage::Logout),
                 MenuAction::Quit => std::process::exit(0),
@@ -2753,6 +2759,12 @@ impl WindowState {
         if c.input.lmb_pressed && !over {
             self.carrying = None;
         }
+        // The board is its own window, drawn after the rest so it lands on
+        // top when several are open.
+        over |= self
+            .ranking
+            .draw(c, bag.ranking, bag.player_name, width, height, out);
+
         if let Some((info, x, y)) = self.tooltip {
             // Its own layer, above every window: a tooltip always wins.
             c.layer();

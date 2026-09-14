@@ -51,6 +51,7 @@ impl Game {
                 currencies,
                 castles,
                 conquest,
+                ranking,
                 ..
             } = self;
             let player_name = character
@@ -118,6 +119,7 @@ impl Game {
                 currencies,
                 castles,
                 conquest: *conquest,
+                ranking,
             };
             windows.draw(&mut c, &bag, width, height, &mut out)
         };
@@ -204,6 +206,7 @@ impl Game {
             || self.windows.guild_open
             || self.windows.mail_open
             || self.windows.companion_open
+            || self.windows.ranking.open
             || self.windows.menu.any_open()
             || self.trade.is_some()
             || self.windows.npc.is_some();

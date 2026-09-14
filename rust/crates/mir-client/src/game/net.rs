@@ -771,6 +771,21 @@ impl Game {
             ServerMessage::RefineRetrieved { index } => self.refines.retain(|r| r.index != index),
             ServerMessage::CompanionShop(offers) => self.companion_shop = offers,
             ServerMessage::Currencies(list) => self.currencies = list,
+            ServerMessage::Rankings {
+                class,
+                online_only,
+                start,
+                total,
+                entries,
+            } => {
+                self.ranking = crate::ranking::RankingView {
+                    entries,
+                    total,
+                    start,
+                    class,
+                    online_only,
+                };
+            }
             ServerMessage::Companions(list) => self.companions = list,
             ServerMessage::MailList(list) => {
                 let unread = list.iter().filter(|m| !m.opened).count();

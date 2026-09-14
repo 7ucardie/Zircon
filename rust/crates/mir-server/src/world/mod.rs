@@ -763,6 +763,8 @@ pub struct World {
     /// (castle, day) wars already opened, so a start window fires once.
     conquests_started: HashSet<(i32, u64)>,
     pub mail_store: mail::MailStore,
+    /// Ranking baselines, so the board can show how far a name has moved.
+    ranking: ranking::Ranking,
     /// Characters divorced while offline (drained by the account registry).
     divorced: Vec<u32>,
     next_group: u32,
@@ -798,6 +800,7 @@ mod npc;
 mod player;
 mod pvp;
 mod quests;
+pub mod ranking;
 pub mod refine;
 mod skills;
 mod spawn;
@@ -879,6 +882,7 @@ impl World {
             outgoing: Vec::new(),
             groups: BTreeMap::new(),
             guild_store: guilds::GuildStore::default(),
+            ranking: ranking::Ranking::default(),
             mail_store: mail::MailStore::default(),
             conquest: None,
             conquest_check: 0,

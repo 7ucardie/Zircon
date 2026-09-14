@@ -18,6 +18,7 @@ mod items;
 mod menu;
 mod net;
 mod overlay;
+mod ranking;
 mod scenes;
 mod sound_table;
 mod text;

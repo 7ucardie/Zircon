@@ -105,6 +105,7 @@ impl Game {
                     }
                 }
                 'u' => self.windows.companion_open = !self.windows.companion_open,
+                'r' => self.windows.ranking.open = !self.windows.ranking.open,
                 'n' => self.windows.menu.menu_open = !self.windows.menu.menu_open,
                 'h' => self.windows.menu.help_open = !self.windows.menu.help_open,
                 'a' => self.windows.menu.auto_potion_open = !self.windows.menu.auto_potion_open,
@@ -142,6 +143,7 @@ impl Game {
             self.windows.guild_open = false;
             self.windows.mail_open = false;
             self.windows.companion_open = false;
+            self.windows.ranking.open = false;
             if self.trade.is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::TradeClose);

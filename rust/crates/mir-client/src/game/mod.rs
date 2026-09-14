@@ -130,6 +130,8 @@ pub struct Game {
     /// Castles: (index, name, owner guild), and the one under conquest.
     castles: Vec<(i32, String, String)>,
     conquest: Option<i32>,
+    /// The last ranking page the server sent (Zircon `S.Rankings`).
+    ranking: crate::ranking::RankingView,
     /// Marriage partner, wedding ring item id, and a pending proposal.
     partner: Option<String>,
     wedding_ring: Option<u32>,
@@ -279,6 +281,16 @@ impl Game {
                         "currency" => w.menu.currency_open = true,
                         "autopotion" => w.menu.auto_potion_open = true,
                         "dropfilter" => w.menu.drop_filter_open = true,
+                        "ranking" => {
+                            // ZIRCON_RANK_CLASS / ZIRCON_RANK_ONLINE pick the
+                            // board's filters for headless checks.
+                            w.ranking.open = true;
+                            w.ranking.class = crate::ranking::class_from_name(
+                                &std::env::var("ZIRCON_RANK_CLASS").unwrap_or_default(),
+                            );
+                            w.ranking.online_only =
+                                std::env::var_os("ZIRCON_RANK_ONLINE").is_some();
+                        }
                         _ => {}
                     }
                 }
@@ -296,6 +308,7 @@ impl Game {
             fishing: None,
             mail: Vec::new(),
             castles: Vec::new(),
+            ranking: crate::ranking::RankingView::default(),
             conquest: None,
             partner: None,
             wedding_ring: None,
