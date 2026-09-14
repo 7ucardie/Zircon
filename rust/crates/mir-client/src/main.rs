@@ -201,12 +201,13 @@ impl App {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            // World sprites, world text, then UI sprites and UI text, so
-            // names and bubbles stay under windows.
-            renderer.draw_world(&mut pass);
-            text.render_world(&mut pass);
-            renderer.draw_ui(&mut pass);
-            text.render_ui(&mut pass);
+            // Layer by layer: each layer's sprites, then its text, so a
+            // window's chrome covers everything drawn before it (names,
+            // bubbles, the HUD and earlier windows) text included.
+            for layer in 0..renderer.layers() {
+                renderer.draw_layer(&mut pass, layer);
+                text.render_layer(&mut pass, layer);
+            }
         }
         renderer.end_frame();
         gpu.queue.submit([encoder.finish()]);

@@ -2754,6 +2754,8 @@ impl WindowState {
             self.carrying = None;
         }
         if let Some((info, x, y)) = self.tooltip {
+            // Its own layer, above every window: a tooltip always wins.
+            c.layer();
             let price = self
                 .npc
                 .as_ref()

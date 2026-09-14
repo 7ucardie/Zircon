@@ -91,6 +91,15 @@ pub struct Ctx<'a> {
 }
 
 impl Ctx<'_> {
+    /// Open a new draw layer: sprites and text queued from now on render
+    /// after everything queued so far, text included. Without this, all UI
+    /// text renders in one pass above all UI sprites, so the text of an
+    /// earlier window shows through a later one.
+    pub fn layer(&mut self) {
+        self.renderer.push_layer();
+        self.text.push_layer();
+    }
+
     pub fn sprite(&mut self, library: u16, index: u32) -> Option<SpriteRegion> {
         let key = SpriteKey {
             library,
@@ -189,6 +198,10 @@ impl Ctx<'_> {
     /// bottom borders, corners, optional footer band, close button.
     /// Returns true when the close button was clicked.
     pub fn window(&mut self, r: Rect, title: &str, has_footer: bool) -> bool {
+        // Every window opens its own layer, so its chrome covers the text of
+        // whatever was drawn before it instead of letting that text bleed
+        // through (text is flushed once per layer, after that layer's sprites).
+        self.layer();
         self.fill(r, WINDOW_BG);
         // Top border (0, 10 px) and title band (3, 21 px).
         self.draw_strip(lib::INTERFACE, 0, r.x, r.y, r.w);

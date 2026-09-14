@@ -144,9 +144,10 @@ pub struct SpriteRenderer {
     sprites: HashMap<SpriteKey, Option<SpriteRegion>>,
     vertices: Vec<Vertex>,
     calls: Vec<DrawCall>,
-    /// First draw call of the UI (windows, HUD); world text renders
-    /// between the two halves so names never bleed through windows.
-    ui_call_start: Option<usize>,
+    /// Where each layer after the first starts in `calls`. Layer 0 is the
+    /// world; every `push_layer` opens another one. Text is flushed between
+    /// layers, so a later layer's sprites cover an earlier layer's text.
+    layer_starts: Vec<usize>,
     break_batch: bool,
     vertex_buffer: wgpu::Buffer,
     vertex_capacity: usize,
@@ -494,7 +495,7 @@ impl SpriteRenderer {
             sprites: HashMap::new(),
             vertices: Vec::new(),
             calls: Vec::new(),
-            ui_call_start: None,
+            layer_starts: Vec::new(),
             break_batch: false,
             vertex_buffer,
             vertex_capacity,
@@ -689,10 +690,17 @@ impl SpriteRenderer {
         }
     }
 
-    /// Everything drawn from now on is UI (drawn after the world's text).
-    pub fn mark_ui(&mut self) {
-        self.ui_call_start = Some(self.calls.len());
+    /// Everything drawn from now on belongs to a new layer, drawn after the
+    /// previous layer's text. Windows each open one, so a window's chrome
+    /// covers the text of everything drawn before it.
+    pub fn push_layer(&mut self) {
+        self.layer_starts.push(self.calls.len());
         self.break_batch = true;
+    }
+
+    /// How many layers this frame has (always at least one).
+    pub fn layers(&self) -> usize {
+        self.layer_starts.len() + 1
     }
 
     /// Arbitrary quad (corners in order top-left, top-right, bottom-right, bottom-left).
@@ -788,8 +796,8 @@ impl SpriteRenderer {
     }
 
     /// Submit everything queued since the last flush into `pass`.
-    /// Upload this frame's sprites; then `draw_world` / `draw_ui` record
-    /// the draws and `end_frame` clears the queue.
+    /// Upload this frame's sprites; then `draw_layer` records the draws and
+    /// `end_frame` clears the queue.
     pub fn upload(&mut self, gpu: &Gpu) {
         if self.vertices.is_empty() {
             return;
@@ -843,23 +851,29 @@ impl SpriteRenderer {
         }
     }
 
-    /// Draw the world half (everything before `mark_ui`, or all).
-    pub fn draw_world<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
-        let end = self.ui_call_start.unwrap_or(self.calls.len());
-        self.draw_calls(pass, 0..end);
-    }
-
-    /// Draw the UI half (everything after `mark_ui`).
-    pub fn draw_ui<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
-        if let Some(start) = self.ui_call_start {
-            self.draw_calls(pass, start..self.calls.len());
-        }
+    /// Draw one layer's sprites. Layer 0 is everything before the first
+    /// `push_layer`; layer n is everything between push n and push n + 1.
+    pub fn draw_layer<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>, layer: usize) {
+        let start = if layer == 0 {
+            0
+        } else {
+            match self.layer_starts.get(layer - 1) {
+                Some(s) => *s,
+                None => return,
+            }
+        };
+        let end = self
+            .layer_starts
+            .get(layer)
+            .copied()
+            .unwrap_or(self.calls.len());
+        self.draw_calls(pass, start..end);
     }
 
     pub fn end_frame(&mut self) {
         self.vertices.clear();
         self.calls.clear();
-        self.ui_call_start = None;
+        self.layer_starts.clear();
         self.break_batch = false;
     }
 

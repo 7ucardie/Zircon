@@ -218,6 +218,48 @@ impl Game {
         }
     }
 
+    /// Overlays that windows may cover (Zircon draws them as their own
+    /// dialogs): the target panel, the tracked quests and the tooltip of the
+    /// buff icon under the cursor. Drawn in the world layer, before the HUD
+    /// and the windows, so an open window hides them.
+    pub(super) fn draw_overlays(
+        &mut self,
+        gpu: &Gpu,
+        renderer: &mut SpriteRenderer,
+        text: &mut TextLayer,
+        width: i32,
+        now: u64,
+    ) {
+        let buffs = self.buffs.clone();
+        let target =
+            self.target
+                .and_then(|id| self.objects.get(&id))
+                .map(|o| crate::overlay::TargetInfo {
+                    name: o.display_name(),
+                    hp: o.hp,
+                    max_hp: o.max_hp,
+                    poisoned: o.poisoned,
+                    buffs: o.visible_buffs.clone(),
+                });
+        let tracked = crate::overlay::tracker_lines(&self.quests, &self.catalog);
+        let mouse = self.mouse;
+        {
+            let mut c = Ctx {
+                input: &self.input,
+                assets: &mut self.assets,
+                renderer,
+                gpu,
+                text,
+                now,
+            };
+            if let Some(t) = &target {
+                crate::overlay::draw_target_panel(&mut c, t);
+            }
+            crate::overlay::draw_quest_tracker(&mut c, &tracked, width, mouse);
+            crate::overlay::draw_buff_tooltip(&mut c, &buffs, width, mouse, now);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_hud(
         &mut self,
@@ -349,35 +391,6 @@ impl Game {
                     [255, 255, 255, 230],
                 );
             }
-        }
-        // Overlays: the target panel, the tracked quests and the tooltip of
-        // the buff icon under the cursor.
-        let target =
-            self.target
-                .and_then(|id| self.objects.get(&id))
-                .map(|o| crate::overlay::TargetInfo {
-                    name: o.display_name(),
-                    hp: o.hp,
-                    max_hp: o.max_hp,
-                    poisoned: o.poisoned,
-                    buffs: o.visible_buffs.clone(),
-                });
-        let tracked = crate::overlay::tracker_lines(&self.quests, &self.catalog);
-        let mouse = self.mouse;
-        {
-            let mut c = Ctx {
-                input: &self.input,
-                assets: &mut self.assets,
-                renderer,
-                gpu,
-                text,
-                now,
-            };
-            if let Some(t) = &target {
-                crate::overlay::draw_target_panel(&mut c, t);
-            }
-            crate::overlay::draw_quest_tracker(&mut c, &tracked, width, mouse);
-            crate::overlay::draw_buff_tooltip(&mut c, &buffs, width, mouse, now);
         }
         if self.debug {
             let (pages, sprites) = renderer.stats();
