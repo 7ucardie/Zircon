@@ -83,6 +83,16 @@ impl World {
             self.system(id, format!("{tname} is not allowing group invites."));
             return;
         }
+        // Zircon refuses the invite outright when either side blocks the
+        // other, with the same message as a closed group.
+        let (my_account, their_account) = (
+            self.objects[&id].player().unwrap().account,
+            self.objects[&target].player().unwrap().account,
+        );
+        if self.is_blocking(my_account, their_account) {
+            self.system(id, format!("{tname} is not allowing group invites."));
+            return;
+        }
         let from = self.player_name(id);
         self.objects
             .get_mut(&target)

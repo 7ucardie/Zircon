@@ -33,11 +33,18 @@ impl World {
             if target_name.is_empty() {
                 return;
             }
+            // Zircon answers a blocked whisper with "cannot find player",
+            // so the sender never learns they were blocked.
+            let my_account = self.objects[&id].player().unwrap().account;
             let target = self
                 .players()
                 .find(|o| {
                     o.player()
                         .is_some_and(|p| p.name.eq_ignore_ascii_case(&target_name))
+                })
+                .filter(|o| {
+                    o.player()
+                        .is_some_and(|p| !self.social_store.is_blocking(my_account, p.account))
                 })
                 .map(|o| o.id);
             match target {

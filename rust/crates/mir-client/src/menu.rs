@@ -24,6 +24,7 @@ pub enum Window {
     Guild,
     Storage,
     Companion,
+    Friends,
 }
 
 /// What the player asked for by clicking the HUD or the menu.
@@ -50,7 +51,7 @@ const PANEL_BUTTONS: [(u32, f32, Option<Window>, &str, &str); 8] = [
 
 /// The key list shown by the help window. Kept beside the real bindings in
 /// `game/input.rs`; both follow Zircon's `KeyBindAction` defaults.
-const KEYS: [(&str, &str); 22] = [
+const KEYS: [(&str, &str); 23] = [
     ("Q", "Character"),
     ("W", "Inventory"),
     ("E", "Skills"),
@@ -61,6 +62,7 @@ const KEYS: [(&str, &str); 22] = [
     ("G", "Guild"),
     ("S", "Storage"),
     ("U", "Companion"),
+    ("F", "Friends and blocked"),
     ("N", "Menu"),
     ("H", "Help"),
     ("A", "Auto potion"),
@@ -134,11 +136,12 @@ enum MenuEntry {
 }
 
 /// Menu rows: action, label, key hint.
-const MENU_ENTRIES: [(MenuEntry, &str, &str); 8] = [
+const MENU_ENTRIES: [(MenuEntry, &str, &str); 9] = [
     (MenuEntry::Help, "Help", "H"),
     (MenuEntry::Toggle(Window::Guild), "Guild", "G"),
     (MenuEntry::Toggle(Window::Storage), "Storage", "S"),
     (MenuEntry::Toggle(Window::Companion), "Companion", "U"),
+    (MenuEntry::Toggle(Window::Friends), "Friends", "F"),
     (MenuEntry::Currency, "Currency", ""),
     (MenuEntry::AutoPotion, "Auto potion", "A"),
     (MenuEntry::DropFilter, "Drop filter", ""),

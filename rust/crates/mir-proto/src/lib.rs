@@ -402,6 +402,43 @@ pub mod horse_type {
     pub const RED_UNICORN: u8 = 6;
 }
 
+/// Zircon `OnlineState`: what a player advertises to the friends who
+/// have them on their list.
+pub mod online_state {
+    pub const ONLINE: u8 = 0;
+    pub const BUSY: u8 = 1;
+    pub const AWAY: u8 = 2;
+    pub const OFFLINE: u8 = 3;
+    /// Zircon lists them in declaration order, and the friend list sorts by it.
+    pub const ALL: [u8; 4] = [ONLINE, BUSY, AWAY, OFFLINE];
+
+    pub fn name(state: u8) -> &'static str {
+        match state {
+            ONLINE => "Online",
+            BUSY => "Busy",
+            AWAY => "Away",
+            _ => "Offline",
+        }
+    }
+}
+
+/// One friend as the owner sees them (Zircon `ClientFriendInfo`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FriendSummary {
+    pub index: u32,
+    pub name: String,
+    /// `online_state::*`; a character who is not logged in is `OFFLINE`.
+    pub state: u8,
+}
+
+/// One blocked name (Zircon `ClientBlockInfo`). Zircon blocks the whole
+/// account behind the name, so every character on it is blocked.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BlockSummary {
+    pub index: u32,
+    pub name: String,
+}
+
 /// Zircon `GuildPermission` bits (`LEADER` has every permission).
 pub mod guild_permission {
     pub const NONE: i32 = 0;
@@ -1640,6 +1677,24 @@ pub enum ClientMessage {
     MailOpened {
         index: u32,
     },
+    /// Befriend a character by name (offline is fine).
+    FriendAdd {
+        name: String,
+    },
+    FriendRemove {
+        index: u32,
+    },
+    /// Block the account behind a character name.
+    BlockAdd {
+        name: String,
+    },
+    BlockRemove {
+        index: u32,
+    },
+    /// Advertise a different `online_state` to everyone who friended us.
+    ChangeOnlineState {
+        state: u8,
+    },
     /// Zircon `Mount`: toggle riding the owned horse.
     Mount,
     /// Answer a marriage proposal.
@@ -2064,6 +2119,16 @@ pub enum ServerMessage {
     MailItemDelete {
         index: u32,
         slot: u8,
+    },
+    /// The friend list on entry and after every change.
+    Friends(Vec<FriendSummary>),
+    /// The block list on entry and after every change.
+    Blocks(Vec<BlockSummary>),
+    /// One friend's state changed (Zircon `S.FriendUpdate`).
+    FriendUpdate(FriendSummary),
+    /// The state this player is advertising, echoed after a change.
+    OnlineState {
+        state: u8,
     },
     /// Account storage on entry.
     Storage {

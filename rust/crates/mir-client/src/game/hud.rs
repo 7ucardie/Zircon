@@ -51,6 +51,10 @@ impl Game {
                 currencies,
                 castles,
                 conquest,
+                friends,
+                blocks,
+                online_state,
+                friends_window,
                 ..
             } = self;
             let player_name = character
@@ -119,8 +123,21 @@ impl Game {
                 castles,
                 conquest: *conquest,
             };
-            windows.draw(&mut c, &bag, width, height, &mut out)
+            let over = windows.draw(&mut c, &bag, width, height, &mut out);
+            // Its own window, drawn after the rest so it sits on top.
+            let over_friends =
+                friends_window.draw(&mut c, friends, blocks, *online_state, width, &mut out);
+            over || over_friends
         };
+        if std::mem::take(&mut self.windows.toggle_friends) {
+            self.friends_window.open = !self.friends_window.open;
+        }
+        // Whisper pre-fills the chat bar instead of sending an empty line.
+        if let Some(name) = self.friends_window.whisper_to.take() {
+            self.chat.open = true;
+            self.chat.bar.text = format!("/{name} ");
+            self.chat.bar.focused = true;
+        }
         // Belt links and item uses decided inside the windows go through the
         // same local bookkeeping as the keyboard paths.
         let mut kept = Vec::with_capacity(out.len());
@@ -196,7 +213,8 @@ impl Game {
             }
         }
         let out = kept;
-        self.windows_open_last_frame = self.windows.inventory_open
+        self.windows_open_last_frame = self.friends_window.open
+            || self.windows.inventory_open
             || self.windows.character_open
             || self.windows.skills_open
             || self.windows.group_open

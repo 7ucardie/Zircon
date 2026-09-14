@@ -771,6 +771,17 @@ impl Game {
             ServerMessage::RefineRetrieved { index } => self.refines.retain(|r| r.index != index),
             ServerMessage::CompanionShop(offers) => self.companion_shop = offers,
             ServerMessage::Currencies(list) => self.currencies = list,
+            ServerMessage::Friends(list) => self.friends = list,
+            ServerMessage::Blocks(list) => self.blocks = list,
+            ServerMessage::OnlineState { state } => self.online_state = state,
+            // One friend changed state; Zircon patches the row in place.
+            ServerMessage::FriendUpdate(info) => {
+                match self.friends.iter_mut().find(|f| f.index == info.index) {
+                    Some(f) => *f = info,
+                    None => self.friends.push(info),
+                }
+                self.friends.sort_by_key(|f| (f.state, f.index));
+            }
             ServerMessage::Companions(list) => self.companions = list,
             ServerMessage::MailList(list) => {
                 let unread = list.iter().filter(|m| !m.opened).count();
