@@ -399,14 +399,12 @@ short for it. The client now follows Zircon's `KeyBindAction` defaults:
 | `Q` `W` `E` | character, inventory, skills |
 | `J` `,` `Z` | quest log, mail, belt |
 | `P` `G` `S` `U` | group, guild, storage, companion |
-| `F` | friends and blocked names |
+| `F` `R` `C` | friends and blocked names, rankings, market place |
+| `V` `X` | cycle the minimap, open the big map |
 | `N` `H` `A` | menu, help, auto potion |
-| `R` | rankings |
 | `M` `T` | mount or dismount, ask to trade |
 | `Ctrl+H` | attack mode |
 | `Alt+Q` | leave the game |
-| `V` `X` | cycle the minimap, open the big map |
-| `C` | market place |
 | `Tab` | pick up |
 | `1`-`9` `0` | use a belt slot |
 | `F1`-`F11` | cast a skill |
