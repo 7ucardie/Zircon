@@ -441,6 +441,59 @@ impl Game {
         self.draw_hud(gpu, renderer, text, width, height, now, fps);
         self.draw_windows(gpu, renderer, text, width, height, now);
         self.draw_map_windows(gpu, renderer, text, width, height, now);
+        self.draw_extra_windows(gpu, renderer, text, width, height, now);
+    }
+
+    /// The windows that keep their own state rather than living in
+    /// `WindowState`: the fortune checker, the chat-tab editor and the HUD
+    /// countdown. Each opens its own layer through `Ctx::window`.
+    pub(super) fn draw_extra_windows(
+        &mut self,
+        gpu: &Gpu,
+        renderer: &mut SpriteRenderer,
+        text: &mut TextLayer,
+        width: i32,
+        height: i32,
+        now: u64,
+    ) {
+        // The menu relays its clicks through these one-shot flags.
+        if std::mem::take(&mut self.windows.toggle_fortune) {
+            self.fortune.open = !self.fortune.open;
+        }
+        if std::mem::take(&mut self.windows.toggle_chat_options) {
+            self.chat_options.open = !self.chat_options.open;
+        }
+        let mut out = Vec::new();
+        let over = {
+            let Game {
+                assets,
+                input,
+                catalog,
+                fortune,
+                fortunes,
+                chat_options,
+                chat,
+                timers,
+                ..
+            } = self;
+            let mut c = Ctx {
+                input,
+                assets,
+                renderer,
+                gpu,
+                text,
+                now,
+            };
+            timers.draw(&mut c, width, height, now);
+            let now_secs = crate::fortune::wall_clock();
+            let a = fortune.draw(&mut c, catalog, fortunes, now_secs, width, height, &mut out);
+            let b = chat_options.draw(&mut c, chat, width, height);
+            a || b
+        };
+        self.pending_messages.extend(out);
+        if over {
+            self.windows_open_last_frame = true;
+        }
     }
 
     pub(super) fn draw_object(

@@ -961,6 +961,13 @@ impl Game {
                 }
                 self.say_kind(text, now, kind);
             }
+            // A named countdown started, was refreshed, or (at zero) ended.
+            ServerMessage::SetTimer { key, seconds, .. } => {
+                self.timers.set(key, seconds, now);
+            }
+            ServerMessage::FortuneUpdate { fortunes } => {
+                self.fortunes = fortunes;
+            }
             ServerMessage::Pong { .. } => {}
             // Pre-game messages are handled by the client shell.
             ServerMessage::Connected
@@ -981,6 +988,8 @@ impl Game {
         self.objects.clear();
         self.user = None;
         self.chat.clear();
+        self.timers.clear();
+        self.fortunes.clear();
         self.hovered = None;
         self.windows = WindowState::default();
         self.goal = None;

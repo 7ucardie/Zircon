@@ -344,6 +344,7 @@ fn leave_world(world: &mut World, accounts: &mut Accounts, stage: Stage) {
             accounts.mark_dirty();
         }
         save_storage(world, accounts, account, object);
+        save_fortunes(world, accounts, account, object);
         world.remove_object(object);
     }
 }
@@ -354,6 +355,22 @@ fn save_storage(world: &World, accounts: &mut Accounts, account: u32, object: mi
         if let Some(acc) = accounts.account_mut(account) {
             acc.storage = items;
             acc.storage_size = size;
+            accounts.mark_dirty();
+        }
+    }
+}
+
+/// Write the player's drop progress back to the account record.
+fn save_fortunes(
+    world: &World,
+    accounts: &mut Accounts,
+    account: u32,
+    object: mir_proto::ObjectId,
+) {
+    if let Some((drops, fortunes)) = world.fortunes_of(object) {
+        if let Some(acc) = accounts.account_mut(account) {
+            acc.drops = drops;
+            acc.fortunes = fortunes;
             accounts.mark_dirty();
         }
     }
@@ -575,6 +592,11 @@ fn handle_message(
                         .map(|a| (a.storage.clone(), a.storage_size))
                         .unwrap_or_default();
                     world.set_storage(object, &storage, size);
+                    let (drops, fortunes) = accounts
+                        .account(account)
+                        .map(|a| (a.drops.clone(), a.fortunes.clone()))
+                        .unwrap_or_default();
+                    world.set_fortunes(object, &drops, &fortunes);
                     if let Some(r) = accounts.character_mut(account, id) {
                         r.last_login = now_secs();
                         accounts.mark_dirty();
@@ -814,6 +836,9 @@ fn handle_message(
             world.npc_sell(object, slots)
         }
         (Stage::InGame { object, .. }, ClientMessage::NpcClose) => world.npc_close(object),
+        (Stage::InGame { object, .. }, ClientMessage::FortuneCheck { item }) => {
+            world.fortune_check(object, item)
+        }
         (Stage::InGame { object, .. }, ClientMessage::QuestAccept { quest }) => {
             world.quest_accept(object, quest)
         }

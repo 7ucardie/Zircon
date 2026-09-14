@@ -2285,6 +2285,8 @@ dependencies = [
  "png",
  "pollster 0.4.0",
  "rodio",
+ "serde",
+ "serde_json",
  "tracing",
  "tracing-subscriber",
  "wgpu",

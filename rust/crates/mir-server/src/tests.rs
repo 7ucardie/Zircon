@@ -3890,3 +3890,145 @@ fn currencies_reach_the_client_on_entry_and_on_change() {
         .expect("a change resends the list");
     assert_eq!(list.iter().map(|c| c.amount).sum::<i64>(), 42);
 }
+
+/// The fortune checker is bought with a Fortune Checker item, and reports
+/// the account's drop progress for one item (Zircon `FortuneCheck`).
+#[test]
+fn a_fortune_check_costs_a_checker_and_reports_progress() {
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Lucky")).unwrap();
+    let checker = world
+        .fortune_checker_item()
+        .expect("the pack has a Fortune Checker item");
+    // An item something actually drops, so the check is not refused.
+    let wanted = world
+        .data
+        .drops
+        .iter()
+        .find(|d| d.chance > 0)
+        .map(|d| d.item)
+        .expect("the pack has drops");
+
+    // Without a checker in the bag nothing is spent and nothing is sent.
+    world.fortune_check(me, wanted);
+    let refused = drain(&mut world);
+    assert!(
+        !refused
+            .iter()
+            .any(|m| matches!(m, ServerMessage::FortuneUpdate { .. })),
+        "a check with no checker should not report anything"
+    );
+
+    world.test_give_item(me, checker, 2);
+    drain(&mut world);
+    world.fortune_check(me, wanted);
+    let after = drain(&mut world);
+    let fortunes = after
+        .iter()
+        .find_map(|m| match m {
+            ServerMessage::FortuneUpdate { fortunes } => Some(fortunes.clone()),
+            _ => None,
+        })
+        .expect("a paid check reports the item");
+    assert_eq!(fortunes.len(), 1);
+    assert_eq!(fortunes[0].item, wanted);
+    // One checker was spent, so one is left.
+    let left = world.objects[&me]
+        .player()
+        .map(|p| p.bag.count_of(checker))
+        .unwrap_or(0);
+    assert_eq!(left, 1, "exactly one checker is spent per check");
+}
+
+/// Progress banks the expected yield of every roll, and once it runs a
+/// whole item ahead of what has actually dropped the next roll is forced
+/// through however badly it lands (Zircon's `EnableFortune` pity rule).
+#[test]
+fn drop_progress_accumulates_and_eventually_forces_a_drop() {
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Grinder")).unwrap();
+    let item = 1;
+    // A 1-in-4 roll worth one item: each roll banks a quarter of an item.
+    for _ in 0..3 {
+        assert!(
+            !world.add_drop_progress(Some(me), item, 1, 4, false),
+            "under a whole item of expectation nothing is owed"
+        );
+    }
+    // The fourth roll tips the expectation past one whole item.
+    assert!(
+        world.add_drop_progress(Some(me), item, 1, 4, false),
+        "a full item of expectation forces the drop"
+    );
+    // Paying it out clears the debt.
+    world.add_drop_count(Some(me), item, 1);
+    assert!(
+        !world.add_drop_progress(Some(me), item, 1, 4, false),
+        "the count has caught up, so nothing is owed again"
+    );
+    let progress = world.objects[&me]
+        .player()
+        .and_then(|p| p.drops.iter().find(|d| d.item == item))
+        .map(|d| (d.drop_count, d.progress))
+        .expect("progress was recorded");
+    assert_eq!(progress.0, 1);
+    assert!(
+        (progress.1 - 1.25).abs() < 1e-9,
+        "five quarter rolls banked"
+    );
+}
+
+/// `part_only` rows never drop the item itself, so Zircon does not let
+/// them build the expectation either.
+#[test]
+fn part_only_rolls_bank_no_progress() {
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Parts")).unwrap();
+    for _ in 0..10 {
+        world.add_drop_progress(Some(me), 1, 1, 2, true);
+    }
+    let progress = world.objects[&me]
+        .player()
+        .and_then(|p| p.drops.iter().find(|d| d.item == 1))
+        .map(|d| d.progress)
+        .unwrap_or(0.0);
+    assert_eq!(progress, 0.0, "part rows bank nothing");
+}
+
+/// Drop progress is account state, so it survives leaving and re-entering
+/// the world the way storage does.
+#[test]
+fn fortunes_round_trip_through_the_account() {
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Saver")).unwrap();
+    world.add_drop_progress(Some(me), 7, 1, 2, false);
+    world.add_drop_count(Some(me), 7, 3);
+    let (drops, fortunes) = world.fortunes_of(me).expect("read back");
+    assert_eq!(drops.len(), 1);
+    assert_eq!(drops[0].drop_count, 3);
+    world.remove_object(me);
+
+    // A fresh session loads the saved numbers back.
+    let again = world.add_player(2, 1, &test_character("Saver")).unwrap();
+    world.set_fortunes(again, &drops, &fortunes);
+    let loaded = world.objects[&again]
+        .player()
+        .map(|p| p.drops.clone())
+        .unwrap_or_default();
+    assert_eq!(loaded.len(), 1);
+    assert_eq!(loaded[0].item, 7);
+    assert_eq!(loaded[0].drop_count, 3);
+    assert!((loaded[0].progress - 0.5).abs() < 1e-9);
+}

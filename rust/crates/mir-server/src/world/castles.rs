@@ -189,6 +189,8 @@ impl World {
         if let Some(c) = &self.conquest {
             if self.now >= c.ends_at {
                 self.end_conquest();
+            } else {
+                self.refresh_conquest_timers();
             }
             return;
         }
@@ -263,6 +265,7 @@ impl World {
             lord: None,
         });
         self.ping_castle_players(index);
+        self.refresh_conquest_timers();
         // The lord waits in the objective region.
         let width = self.maps[&castle.map].file.width as i32;
         let spot = self
@@ -337,6 +340,8 @@ impl World {
         }
         self.ping_castle_players(c.castle);
         self.refresh_war_flags();
+        // The war is over: clear the countdown everyone was watching.
+        self.refresh_conquest_timers();
     }
 
     pub(super) fn is_castle_lord(&self, id: ObjectId) -> bool {

@@ -130,6 +130,12 @@ pub struct AccountRecord {
     pub storage: Vec<StoredItem>,
     #[serde(default)]
     pub storage_size: u32,
+    /// Drop progress per item and the fortune snapshots read from it
+    /// (Zircon `Account.UserDrops` / `Account.Fortunes`).
+    #[serde(default)]
+    pub drops: Vec<crate::world::fortune::DropProgress>,
+    #[serde(default)]
+    pub fortunes: Vec<crate::world::fortune::FortuneRecord>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -234,6 +240,8 @@ impl Accounts {
             characters: Vec::new(),
             storage: Vec::new(),
             storage_size: 0,
+            drops: Vec::new(),
+            fortunes: Vec::new(),
         });
         self.by_email
             .insert(email.to_lowercase(), self.store.accounts.len() - 1);

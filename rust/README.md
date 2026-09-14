@@ -332,8 +332,13 @@ swapchain);
 warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
 `ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills,`
-`companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,nominimap`
-opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
+`companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,nominimap,`
+`fortune,chatoptions`
+opens any set of windows; `ZIRCON_DEV_SEARCH=<text>` prefills the fortune
+window's search box so a screenshot has rows; server side
+`ZIRCON_DEV_TIMER=<seconds>` starts a HUD countdown on entry and
+`ZIRCON_DEV_FORTUNES=<n>` pre-checks the first `n` droppable items with
+made-up progress; server side `ZIRCON_DAY_TIME=0.1` pins the
 daylight (night screenshots);
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
 `ZIRCON_AUTOCLASS=wizard|taoist|assassin` picks the auto-created class;
@@ -403,6 +408,7 @@ short for it. The client now follows Zircon's `KeyBindAction` defaults:
 | `Ctrl+H` | attack mode |
 | `Alt+Q` | leave the game |
 | `V` `X` | cycle the minimap, open the big map |
+| `K` `O` | fortune checker, chat options |
 | `Tab` | pick up |
 | `1`-`9` `0` | use a belt slot |
 | `F1`-`F11` | cast a skill |
@@ -423,6 +429,36 @@ use and the usual cooldown applies. It is client-side and off by default.
 The drop filter marks ground items whose name contains one of up to five
 words with a gold plate, so wanted drops stand out; it is client-side and
 changes nothing about who may pick the item up.
+
+The fortune checker (`K`, or the menu) is Zircon's `FortuneCheckerDialog`.
+Every drop roll a player makes banks that roll's expected yield against the
+account, whether or not the roll came in; once the expectation runs a whole
+item ahead of what actually dropped, the next roll is forced through. So a
+long dry streak on a rare item eventually pays out. Search the item
+catalogue by name and spend one Fortune Checker item (`ItemEffect` 54,
+present in this pack) to snapshot an item's numbers: how many have dropped,
+how far the expectation has run ahead as a percentage, and how stale the
+reading is. The progress itself is account state and is saved beside the
+account's storage.
+
+Chat options (`O`, or the menu) is Zircon's `ChatOptionsDialog`. The chat
+tabs are ordinary state rather than a fixed table: add and remove tabs,
+rename them, choose which message types each one shows, and set whether it
+fades when idle or hides its button. Save writes `chat-tabs.json` beside the
+client binary and Reload reads it back; a missing or unreadable file falls
+back to the six defaults. Zircon also lists Observer, Gains and Alert
+message types, which this client has no lines for, so those checkboxes are
+absent rather than present and dead.
+
+The HUD countdown is Zircon's `TimerDialog`: the server names each timer, so
+sending the same key again refreshes it instead of stacking a second, and
+the one expiring soonest is the one drawn, above the right end of the main
+panel. Zircon's only caller is instance expiry; this pack has no instances
+(its `InstanceInfo` table is empty), so the conquest window drives it. Two
+asset gaps: the pack has no egg-timer frames (`GameInter` 6600+ and 961-965
+are all absent), so the digits are drawn alone, and the art at 6590 -- the
+separator index the C# uses -- is a CJK glyph in this pack rather than a
+colon, so that is what shows between the pairs.
 
 ## Light and sound
 
