@@ -301,7 +301,7 @@ windows):
   beside the bar.
 - **Quest tracker** (Zircon `QuestTrackerDialog`) top-right under the buff
   icons: every quest flagged as tracked, with each task's progress; complete
-  tasks turn green. Clicking a quest title in the quest log (`L`) toggles
+  tasks turn green. Clicking a quest title in the quest log (`J`) toggles
   tracking, and the client applies the flag at once because the server stores
   it silently. Its background fades in while the mouse is over it.
 - **Damage numbers** use Zircon's `DamageInfo` tiers: blue when it heals, then
