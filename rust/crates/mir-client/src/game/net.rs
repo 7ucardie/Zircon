@@ -14,7 +14,7 @@ impl Game {
             } => {
                 self.load_map(&map.file, &map.name);
                 self.map_light = map.light;
-                self.entered_at = now;
+                self.chat.entered_at = now;
                 self.audio.stop_all();
                 self.audio.play_music(music_index(map.music));
                 self.objects.clear();
@@ -925,23 +925,11 @@ impl Game {
                 }
             }
             ServerMessage::Say { id, kind, text } => {
-                use mir_proto::ChatKind;
-                // Zircon chat colours (ChatPanel): white talk, yellow shout,
-                // green whispers, cyan group, orange global, red system.
-                let color = match kind {
-                    ChatKind::Normal => [255, 255, 255, 255],
-                    ChatKind::Shout => [255, 255, 0, 255],
-                    ChatKind::WhisperIn | ChatKind::WhisperOut => [0, 255, 0, 255],
-                    ChatKind::Group => [0, 255, 255, 255],
-                    ChatKind::Global => [255, 165, 0, 255],
-                    ChatKind::Guild => [255, 200, 255, 255],
-                    ChatKind::System => [255, 80, 80, 255],
-                };
                 if let Some(o) = id.and_then(|i| self.objects.get_mut(&i)) {
                     let spoken = text.split_once(": ").map(|(_, t)| t).unwrap_or(&text);
                     o.bubble = Some((spoken.to_string(), now));
                 }
-                self.say_colored(text, now, color);
+                self.say_kind(text, now, kind);
             }
             ServerMessage::Pong { .. } => {}
             // Pre-game messages are handled by the client shell.

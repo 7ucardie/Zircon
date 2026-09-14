@@ -18,13 +18,14 @@ use crate::anim::{ClientObject, Queued};
 use crate::assets::{
     armour_library, helmet_library, kr_library, lib, shield_library, weapon_library, Assets,
 };
+use crate::chat_panel::ChatPanel;
 use crate::effects::{self, Anchor, Effect, Projectile};
 use crate::gfx::{Blend, Gpu, SpriteKey, SpriteRegion, SpriteRenderer, Surface};
 use crate::items::{ItemCatalog, ItemDef};
 use crate::net::Connection;
 use crate::sound_table;
 use crate::text::TextLayer;
-use crate::ui::{Ctx, Input, Rect, TextBox};
+use crate::ui::{Ctx, Input};
 use crate::windows::{Bag, NpcDialog, WindowState};
 use mir_formats::monster_table::monster_sprite;
 use mir_proto::Grid;
@@ -86,14 +87,9 @@ pub struct Game {
     animation: u32,
     animation_time: u64,
     /// Chat lines: text, time, colour.
-    chat: Vec<(String, u64, [u8; 4])>,
-    /// Zircon's chat bar: Enter opens it, Enter sends, Escape closes.
-    chat_box: TextBox,
-    chat_open: bool,
+    /// The chat log, its tabs and the chat bar (Zircon `ChatTab`).
+    chat: ChatPanel,
     auto_chat_done: bool,
-    /// Server time of the Welcome (the chat bar ignores Enter for a moment
-    /// after entry so a stray key event cannot open it).
-    entered_at: u64,
     /// When the local fishing float effect must be replayed.
     float_time: u64,
     auto_mount_done: bool,
@@ -346,11 +342,8 @@ impl Game {
             attack_time: 0,
             animation: 0,
             animation_time: 0,
-            chat: Vec::new(),
-            chat_box: TextBox::new(Rect::new(0.0, 0.0, 10.0, 22.0), 200),
-            chat_open: false,
+            chat: ChatPanel::default(),
             auto_chat_done: false,
-            entered_at: 0,
             float_time: 0,
             auto_mount_done: false,
             hovered: None,
@@ -382,51 +375,26 @@ impl Game {
         self.say_colored(text, now, [255, 255, 200, 255]);
     }
 
+    /// A client-side notice in its own colour (Zircon `MessageType.Hint`).
     fn say_colored(&mut self, text: String, now: u64, color: [u8; 4]) {
         tracing::info!("{text}");
-        self.chat.push((text, now, color));
-        if self.chat.len() > 12 {
-            self.chat.remove(0);
-        }
+        self.chat.push_colored(text, now, color);
+    }
+
+    /// A chat line from the server, filed under its kind.
+    fn say_kind(&mut self, text: String, now: u64, kind: mir_proto::ChatKind) {
+        tracing::info!("{text}");
+        self.chat
+            .push(text, now, crate::chat_panel::Category::from_kind(kind));
     }
 
     /// Chat bar keys: Enter opens the box, Enter sends, Escape closes; while
     /// it is open the keyboard belongs to it.
     fn chat_keys(&mut self, now: u64, conn: Option<&Connection>) {
-        if self.chat_open {
-            for c in self.input.text.chars() {
-                if !c.is_control() && self.chat_box.text.chars().count() < self.chat_box.max_len {
-                    self.chat_box.text.push(c);
-                }
-            }
-            if self.input.backspace {
-                self.chat_box.text.pop();
-            }
-            if self.input.enter {
-                let text = std::mem::take(&mut self.chat_box.text);
-                self.chat_open = false;
-                if !text.trim().is_empty() {
-                    if let Some(c) = conn {
-                        c.send(ClientMessage::Chat { text });
-                    }
-                }
-            }
-            if self.input.escape {
-                self.chat_open = false;
-                self.chat_box.text.clear();
-            }
-            self.input.text.clear();
-            self.input.backspace = false;
-            self.input.enter = false;
-            self.input.escape = false;
-            self.input.tab = false;
-            self.input.digit = None;
-            self.input.fkey = None;
-        } else if self.input.enter {
-            self.input.enter = false;
-            if self.user.is_some() && now > self.entered_at + 1000 {
-                self.chat_open = true;
-                self.chat_box.focused = true;
+        let in_world = self.user.is_some();
+        if let Some(text) = self.chat.keys(&mut self.input, now, in_world) {
+            if let Some(c) = conn {
+                c.send(ClientMessage::Chat { text });
             }
         }
     }
@@ -598,7 +566,7 @@ impl Game {
                 if let Some(c) = conn {
                     c.send(ClientMessage::Chat { text });
                 }
-                self.chat_open = true;
+                self.chat.open = true;
             }
         }
         self.handle_input(now, width, height, conn);

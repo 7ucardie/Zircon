@@ -9,6 +9,7 @@
 mod anim;
 mod assets;
 mod audio;
+mod chat_panel;
 mod client;
 mod effects;
 mod game;
@@ -348,6 +349,8 @@ impl ApplicationHandler for App {
                             Key::Named(NamedKey::Tab) => c.input.tab = true,
                             Key::Named(NamedKey::Escape) => c.input.escape = true,
                             Key::Named(NamedKey::Delete) => c.input.delete = true,
+                            Key::Named(NamedKey::ArrowUp) => c.input.up = true,
+                            Key::Named(NamedKey::ArrowDown) => c.input.down = true,
                             Key::Named(NamedKey::Space) => c.input.text.push(' '),
                             _ => {
                                 if let Some(t) = &event.text {
