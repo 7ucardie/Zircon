@@ -341,13 +341,13 @@ impl Game {
                 let name_y = if o.dead { dy + 21 } else { dy - 6 };
                 if let Some((line, t)) = &o.bubble {
                     if now < t + 5000 {
-                        text.draw_centered(
-                            line,
-                            12,
-                            dx as f32 + 24.0,
-                            name_y as f32 - 16.0,
-                            [255, 255, 255, 255],
-                        );
+                        // Zircon `DrawChat`: grey while the speaker is dead.
+                        let color = if o.dead {
+                            [160, 160, 160, 255]
+                        } else {
+                            [255, 255, 255, 255]
+                        };
+                        text.draw_centered(line, 12, dx as f32 + 24.0, name_y as f32 - 16.0, color);
                     }
                 }
                 let my_pet = o.pet_owner().is_some() && o.pet_owner() == self.user_name();
@@ -408,11 +408,9 @@ impl Game {
                     let age = now.saturating_sub(*t) as f32 / 1500.0;
                     let rise = age * 40.0;
                     let alpha = ((1.0 - age) * 255.0) as u8;
-                    let color = if Some(id) == self.user {
-                        [255, 80, 80, alpha]
-                    } else {
-                        [255, 220, 60, alpha]
-                    };
+                    // Zircon `DamageInfo`: red, green, orange then white as
+                    // the hit grows (its values are negative for damage).
+                    let color = crate::overlay::damage_color(-dmg, alpha);
                     text.draw_centered(
                         &format!("-{dmg}"),
                         16,

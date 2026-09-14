@@ -69,6 +69,16 @@ impl Client {
             auto_tried_create: false,
             auto_tried_account: false,
         };
+        // ZIRCON_MOUSE=x,y parks the cursor for headless screenshots, so
+        // hover-only overlays (tooltips) can be captured without a mouse.
+        if let Some((x, y)) = std::env::var("ZIRCON_MOUSE").ok().and_then(|v| {
+            v.split_once(',')
+                .map(|(a, b)| (a.to_string(), b.to_string()))
+        }) {
+            if let (Ok(x), Ok(y)) = (x.trim().parse::<f32>(), y.trim().parse::<f32>()) {
+                c.input.mouse = (x, y);
+            }
+        }
         c.connect();
         c
     }

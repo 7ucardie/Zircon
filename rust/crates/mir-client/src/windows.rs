@@ -506,17 +506,14 @@ impl WindowState {
                 self.quest_scroll = (self.quest_scroll - c.input.wheel * 18.0).max(0.0);
             }
             let closed = c.window(win, "Quests", false);
-            let mut entries: Vec<String> = Vec::new();
-            let mut colors: Vec<[u8; 4]> = Vec::new();
-            let mut push = |text: String, col: [u8; 4]| {
-                entries.push(text);
-                colors.push(col);
-            };
+            // (line, colour, quest this line belongs to when it is a title)
+            let mut rows: Vec<(String, [u8; 4], Option<i32>)> = Vec::new();
             if bag.quests.is_empty() {
-                push(
+                rows.push((
                     "No quests. Talk to NPCs to find some.".into(),
                     [200, 200, 200, 255],
-                );
+                    None,
+                ));
             }
             let mut sorted: Vec<&mir_proto::UserQuestSummary> = bag.quests.iter().collect();
             sorted.sort_by_key(|q| (q.completed, q.quest));
@@ -529,10 +526,16 @@ impl WindowState {
                 } else {
                     [255, 255, 0, 255]
                 };
-                push(
-                    format!("{}{}", def.name, if q.completed { " (done)" } else { "" }),
+                rows.push((
+                    format!(
+                        "{} {}{}",
+                        if q.track { "[x]" } else { "[ ]" },
+                        def.name,
+                        if q.completed { " (done)" } else { "" }
+                    ),
                     title_col,
-                );
+                    Some(q.quest),
+                ));
                 let text = if q.completed {
                     bag.catalog
                         .quest_text(def, &def.completed_text, bag.player_name)
@@ -541,32 +544,11 @@ impl WindowState {
                         .quest_text(def, &def.progress_text, bag.player_name)
                 };
                 for line in wrap_text(c, &text, 340.0, 12) {
-                    push(line, [220, 220, 220, 255]);
+                    rows.push((line, [220, 220, 220, 255], None));
                 }
                 if !q.completed {
-                    for t in &def.tasks {
-                        let have = q
-                            .tasks
-                            .iter()
-                            .find(|(ti, _)| *ti == t.index)
-                            .map(|(_, a)| *a)
-                            .unwrap_or(0);
-                        let what = if !t.description.is_empty() {
-                            t.description.clone()
-                        } else if t.item != 0 {
-                            bag.catalog.name(t.item)
-                        } else {
-                            match t.task {
-                                2 => "Visit the area".to_string(),
-                                _ => "Kills".to_string(),
-                            }
-                        };
-                        let col = if have >= t.amount {
-                            [80, 255, 80, 255]
-                        } else {
-                            [255, 200, 120, 255]
-                        };
-                        push(format!("  {what}: {have}/{}", t.amount), col);
+                    for (line, col) in crate::overlay::quest_task_lines(def, q, bag.catalog) {
+                        rows.push((line, col, None));
                     }
                     let rewards: Vec<String> = def
                         .rewards
@@ -582,25 +564,50 @@ impl WindowState {
                         })
                         .collect();
                     if !rewards.is_empty() {
-                        push(
+                        rows.push((
                             format!("  Reward: {}", rewards.join(", ")),
                             [160, 200, 255, 255],
-                        );
+                            None,
+                        ));
                     }
                 }
-                push(String::new(), [0, 0, 0, 0]);
+                rows.push((String::new(), [0, 0, 0, 0], None));
             }
-            let max_scroll = (entries.len() as f32 * 18.0 - 400.0).max(0.0);
+            let max_scroll = (rows.len() as f32 * 18.0 - 400.0).max(0.0);
             self.quest_scroll = self.quest_scroll.min(max_scroll);
             let top = win.y + 40.0;
-            for (i, (line, col)) in entries.iter().zip(&colors).enumerate() {
+            c.text.draw(
+                "Click a quest to track it.",
+                10,
+                win.x + 20.0,
+                win.y + win.h - 24.0,
+                [160, 160, 160, 255],
+            );
+            for (i, (line, col, quest)) in rows.iter().enumerate() {
                 let y = top + i as f32 * 18.0 - self.quest_scroll;
                 if y < top - 1.0 || y + 18.0 > win.y + win.h - 10.0 {
                     continue;
                 }
-                if !line.is_empty() {
-                    c.text.draw(line, 12, win.x + 20.0, y, *col);
+                if line.is_empty() {
+                    continue;
                 }
+                // Titles toggle tracking (Zircon `ClientUserQuest.Track`).
+                if let Some(id) = quest {
+                    let row = Rect::new(win.x + 16.0, y - 1.0, win.w - 32.0, 18.0);
+                    if row.contains(mouse.0, mouse.1) {
+                        c.fill(row, [0.25, 0.25, 0.35, 0.6]);
+                        if c.input.lmb_pressed {
+                            let track = bag
+                                .quests
+                                .iter()
+                                .find(|q| q.quest == *id)
+                                .map(|q| !q.track)
+                                .unwrap_or(true);
+                            out.push(ClientMessage::QuestTrack { quest: *id, track });
+                        }
+                    }
+                }
+                c.text.draw(line, 12, win.x + 20.0, y, *col);
             }
             if closed {
                 self.quests_open = false;

@@ -163,6 +163,13 @@ impl Game {
                     self.trade_request = None;
                     kept.push(ClientMessage::TradeResponse { accept });
                 }
+                // The server stores the flag silently, so show it at once.
+                ClientMessage::QuestTrack { quest, track } => {
+                    if let Some(q) = self.quests.iter_mut().find(|q| q.quest == quest) {
+                        q.track = track;
+                    }
+                    kept.push(ClientMessage::QuestTrack { quest, track });
+                }
                 ClientMessage::GuildResponse { accept } => {
                     self.guild_invite = None;
                     kept.push(ClientMessage::GuildResponse { accept });
@@ -323,8 +330,8 @@ impl Game {
         let buffs = self.buffs.clone();
         for (i, (kind, until)) in buffs.iter().enumerate() {
             let icon = buff_icon(*kind);
-            let x = width as f32 - 30.0 - (i % 6) as f32 * 27.0;
-            let y = 6.0 + (i / 6) as f32 * 27.0;
+            let slot = crate::overlay::buff_icon_rect(i, width);
+            let (x, y) = (slot.x, slot.y);
             if let Some(r) = Self::sprite(&mut self.assets, renderer, gpu, 21, icon, Surface::Image)
             {
                 renderer.draw(r, x, y, white, Blend::Alpha);
@@ -339,6 +346,35 @@ impl Game {
                     [255, 255, 255, 230],
                 );
             }
+        }
+        // Overlays: the target panel, the tracked quests and the tooltip of
+        // the buff icon under the cursor.
+        let target =
+            self.target
+                .and_then(|id| self.objects.get(&id))
+                .map(|o| crate::overlay::TargetInfo {
+                    name: o.display_name(),
+                    hp: o.hp,
+                    max_hp: o.max_hp,
+                    poisoned: o.poisoned,
+                    buffs: o.visible_buffs.clone(),
+                });
+        let tracked = crate::overlay::tracker_lines(&self.quests, &self.catalog);
+        let mouse = self.mouse;
+        {
+            let mut c = Ctx {
+                input: &self.input,
+                assets: &mut self.assets,
+                renderer,
+                gpu,
+                text,
+                now,
+            };
+            if let Some(t) = &target {
+                crate::overlay::draw_target_panel(&mut c, t);
+            }
+            crate::overlay::draw_quest_tracker(&mut c, &tracked, width, mouse);
+            crate::overlay::draw_buff_tooltip(&mut c, &buffs, width, mouse, now);
         }
         if self.debug {
             let (pages, sprites) = renderer.stats();

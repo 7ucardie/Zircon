@@ -288,7 +288,24 @@ and the original effect sprites:
   `docs/research/skills-remaining.md` for the simplifications.
 
 Buff icons with their remaining time sit top-right. Other skills show in the
-window but cannot be cast yet.
+window but cannot be cast yet. Hovering an icon names the buff and the
+seconds it has left (Zircon `BuffDialog`).
+
+Screen overlays (`crates/mir-client/src/overlay.rs`, drawn outside the
+windows):
+
+- **Target panel** (Zircon `MonsterDialog`) at (250, 50): the name box and a
+  health bar with `hp/max` over it, for the monster or player last pointed
+  at. It follows the cursor to a new target and clears when that target dies
+  or leaves sight. Poison and visible buffs on the target show as small chips
+  beside the bar.
+- **Quest tracker** (Zircon `QuestTrackerDialog`) top-right under the buff
+  icons: every quest flagged as tracked, with each task's progress; complete
+  tasks turn green. Clicking a quest title in the quest log (`L`) toggles
+  tracking, and the client applies the flag at once because the server stores
+  it silently. Its background fades in while the mouse is over it.
+- **Damage numbers** use Zircon's `DamageInfo` tiers: blue when it heals, then
+  red, green, orange and white as the hit grows.
 
 Developer automation (also used for visual checks):
 `ZIRCON_SCREENSHOT=out.png:5` saves a frame after 5 s and exits;
@@ -316,7 +333,15 @@ the named items on entry, `ZIRCON_DEV_HORSE=2` gives a horse (Zircon
 map file and cell; client side `ZIRCON_AUTO_MOUNT=1` mounts after entry,
 `ZIRCON_AUTO_MINE=1` walks to the nearest wall and keeps swinging the
 pickaxe at it, `ZIRCON_AUTO_FISH=1` casts at the nearest water within four
-cells and reels every bite. Mining check: server
+cells and reels every bite, `ZIRCON_AUTO_TARGET=1` latches the nearest
+monster into the target panel (no cursor in headless runs) and
+`ZIRCON_MOUSE=x,y` parks the cursor so hover-only overlays such as the buff
+tooltip can be captured; `ZIRCON_DEV_QUESTS=n` fills the quest log and the
+tracker with the first n catalogue quests, half done, so neither needs an NPC.
+Overlay check: server
+`ZIRCON_DEV_LEVEL=60 ZIRCON_DEV_SKILLS=1`, client
+`ZIRCON_AUTO_TARGET=1 ZIRCON_AUTO_CAST=m111 ZIRCON_MOUSE=1000,16
+ZIRCON_DEV_QUESTS=2`. Mining check: server
 `ZIRCON_DEV_LEVEL=30 ZIRCON_DEV_ITEMS="Pick Axe" ZIRCON_DEV_START=D201:227,28`
 (Deserted Mine Lv 1), client `ZIRCON_AUTO_MINE=1`. Fishing check: server
 `ZIRCON_DEV_FISHING=133` (Healing Potion as the catch), client

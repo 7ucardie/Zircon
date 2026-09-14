@@ -94,6 +94,9 @@ pub struct Game {
     float_time: u64,
     auto_mount_done: bool,
     hovered: Option<ObjectId>,
+    /// Zircon `MonsterDialog.Monster`: what the target panel describes.
+    /// Latched from the last hovered monster or player.
+    target: Option<ObjectId>,
     pub debug: bool,
     pub input: Input,
     pub catalog: ItemCatalog,
@@ -347,6 +350,7 @@ impl Game {
             float_time: 0,
             auto_mount_done: false,
             hovered: None,
+            target: None,
             debug: true,
         }
     }
@@ -416,6 +420,33 @@ impl Game {
         self.sfx_frame(before, now);
         self.advance_effects(now, width, height);
         self.hovered = self.hit_test(width, height);
+        // The target panel keeps the last monster or player pointed at
+        // until it dies or leaves (Zircon clears the box the same way).
+        if let Some(h) = self.hovered.filter(|h| {
+            self.objects
+                .get(h)
+                .is_some_and(|o| o.is_monster() || o.is_player())
+        }) {
+            self.target = Some(h);
+        }
+        if self
+            .target
+            .and_then(|t| self.objects.get(&t))
+            .is_none_or(|o| o.dead)
+        {
+            self.target = None;
+        }
+        // ZIRCON_AUTO_TARGET=1 latches the nearest live monster so the target
+        // panel can be screenshotted without a mouse to hover with.
+        if self.target.is_none() && std::env::var_os("ZIRCON_AUTO_TARGET").is_some() {
+            self.target = self.user().and_then(|u| {
+                self.objects
+                    .values()
+                    .filter(|o| o.is_monster() && !o.dead)
+                    .min_by_key(|o| o.location.distance(u.location))
+                    .map(|o| o.id)
+            });
+        }
         // Developer automation: ZIRCON_AUTO_CAST=<F key> (or m<magic id>) casts
         // at the nearest monster, with the mouse over it for cell casts.
         if let Ok(v) = std::env::var("ZIRCON_AUTO_CAST") {
@@ -433,7 +464,10 @@ impl Game {
                 // Self casts do not need a monster in reach.
                 let self_cast = by_id.map(magic_type::is_self_cast).unwrap_or(false);
                 if nearest.is_some() || self_cast {
-                    if let Some(t) = nearest {
+                    // A parked cursor (ZIRCON_MOUSE) wins: screenshots of
+                    // hover-only overlays must keep the mouse where it was put.
+                    if let Some(t) = nearest.filter(|_| std::env::var_os("ZIRCON_MOUSE").is_none())
+                    {
                         let view = View::new(width, height, self.user());
                         if let Some(o) = self.objects.get(&t) {
                             let (px, py) = view.object_px(o);

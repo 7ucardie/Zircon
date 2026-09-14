@@ -319,7 +319,34 @@ impl Game {
                 }
             }
             ServerMessage::Magics(list) => self.magics = list,
-            ServerMessage::QuestList(list) => self.quests = list,
+            ServerMessage::QuestList(list) => {
+                self.quests = list;
+                // ZIRCON_DEV_QUESTS=<n> tracks the first n quests of the
+                // catalogue so the log and tracker can be seen without an
+                // NPC handing any out.
+                if let Some(n) = std::env::var("ZIRCON_DEV_QUESTS")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                {
+                    for quest in self.catalog.quest_indices().into_iter().take(n) {
+                        if self.quests.iter().any(|q| q.quest == quest) {
+                            continue;
+                        }
+                        let tasks = self
+                            .catalog
+                            .quest(quest)
+                            .map(|d| d.tasks.iter().map(|t| (t.index, t.amount / 2)).collect())
+                            .unwrap_or_default();
+                        self.quests.push(mir_proto::UserQuestSummary {
+                            quest,
+                            track: true,
+                            completed: false,
+                            selected_reward: 0,
+                            tasks,
+                        });
+                    }
+                }
+            }
             ServerMessage::QuestChanged(q) => {
                 let was_done = self
                     .quests

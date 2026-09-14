@@ -149,6 +149,13 @@ impl ItemCatalog {
         }
     }
 
+    /// Quest indices in order (the dev quest switch picks the first few).
+    pub fn quest_indices(&self) -> Vec<i32> {
+        let mut out: Vec<i32> = self.quests.keys().copied().collect();
+        out.sort_unstable();
+        out
+    }
+
     pub fn quest(&self, index: i32) -> Option<&QuestDef> {
         self.quests.get(&index)
     }

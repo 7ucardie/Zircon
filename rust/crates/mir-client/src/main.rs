@@ -16,6 +16,7 @@ mod game;
 mod gfx;
 mod items;
 mod net;
+mod overlay;
 mod scenes;
 mod sound_table;
 mod text;
