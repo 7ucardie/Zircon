@@ -746,6 +746,30 @@ fn handle_message(
         }
         (
             Stage::InGame { object, .. },
+            ClientMessage::RankRequest {
+                class,
+                online_only,
+                start,
+            },
+        ) => {
+            // The roster lives in the account store, not the world, because
+            // offline characters rank too.
+            let rows = accounts
+                .all_characters()
+                .map(|c| mir_server::world::ranking::RankRow {
+                    character: c.id,
+                    name: c.name.clone(),
+                    class: c.class,
+                    level: c.level,
+                    experience: c.experience,
+                    max_experience: mir_server::data::GameData::max_experience(c.level),
+                    rebirth: c.rebirth,
+                })
+                .collect();
+            world.rank_request(object, rows, class, online_only, start)
+        }
+        (
+            Stage::InGame { object, .. },
             ClientMessage::NpcRefine {
                 refine_type,
                 quality,

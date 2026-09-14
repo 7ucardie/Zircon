@@ -395,6 +395,16 @@ impl Accounts {
         })
     }
 
+    /// Every live character on every account, for the ranking board. Zircon
+    /// ranks offline characters too, so this is the whole roster.
+    pub fn all_characters(&self) -> impl Iterator<Item = &CharacterRecord> {
+        self.store
+            .accounts
+            .iter()
+            .flat_map(|a| a.characters.iter())
+            .filter(|c| !c.deleted)
+    }
+
     pub fn character(&self, account: u32, id: u32) -> Option<&CharacterRecord> {
         self.account(account)?
             .characters

@@ -332,7 +332,8 @@ swapchain);
 warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
 `ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills,`
-`companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,nominimap`
+`companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,`
+`nominimap,ranking`
 opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
 daylight (night screenshots);
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
@@ -399,6 +400,7 @@ short for it. The client now follows Zircon's `KeyBindAction` defaults:
 | `J` `,` `Z` | quest log, mail, belt |
 | `P` `G` `S` `U` | group, guild, storage, companion |
 | `N` `H` `A` | menu, help, auto potion |
+| `R` | rankings |
 | `M` `T` | mount or dismount, ask to trade |
 | `Ctrl+H` | attack mode |
 | `Alt+Q` | leave the game |
@@ -415,6 +417,18 @@ The currency window lists the player's `CurrencyInfo` holdings beside the
 gold in the bag. The server sends `ServerMessage::Currencies` on entry and
 again whenever an amount moves (NPC currency actions, quest rewards, fame
 titles and companion purchases).
+
+The ranking board (`R`, Zircon `RankingDialog`) lists every character on the
+server, offline ones included, ordered by level and then experience. Class
+tabs and an "online only" toggle narrow it, the wheel scrolls it, and the
+player's own row carries a red plate. Two rules come straight from Zircon's
+`GetRanks`: the rank number counts everyone the **class** filter admits, so
+hiding offline players leaves the numbers alone, and the "move" column is how
+many places a name has gained since the last daily reset. The server answers
+`ClientMessage::RankRequest` with a page of 21 rows and the filtered total;
+the board re-asks every five seconds while it is open.
+`ZIRCON_RANK_CLASS=wizard` and `ZIRCON_RANK_ONLINE=1` preset its filters for
+headless screenshots.
 
 Auto potion (`A`) drinks from a belt slot when a pool drops under its
 percentage: health is checked first, then mana, and the drink goes through

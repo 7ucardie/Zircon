@@ -516,6 +516,28 @@ pub struct CurrencySummary {
     pub amount: i64,
 }
 
+/// One row of the ranking board (Zircon `RankInfo`).
+///
+/// `rank` counts every character passing the class filter, so it does not
+/// change when "online only" hides rows -- that is Zircon's own rule.
+/// `change` is how many places the character has gained since the last
+/// reset: positive is a climb, negative a fall, zero a hold.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RankEntry {
+    pub rank: u32,
+    /// Character id, so the client can mark the player's own row.
+    pub character: u32,
+    pub name: String,
+    pub class: Class,
+    pub level: i32,
+    pub experience: u64,
+    /// Experience needed for the next level (0 at the cap).
+    pub max_experience: u64,
+    pub online: bool,
+    pub rebirth: i32,
+    pub change: i32,
+}
+
 /// A mail as the client sees it (Zircon `ClientMailInfo`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MailSummary {
@@ -1730,6 +1752,13 @@ pub enum ClientMessage {
         slots: Vec<u8>,
     },
     NpcClose,
+    /// Ask for a page of the ranking board (Zircon `C.RankRequest`).
+    /// `class` None is Zircon's `RequiredClass.All`.
+    RankRequest {
+        class: Option<Class>,
+        online_only: bool,
+        start: u32,
+    },
     Ping {
         nonce: u32,
     },
@@ -2105,6 +2134,15 @@ pub enum ServerMessage {
         id: Option<ObjectId>,
         kind: ChatKind,
         text: String,
+    },
+    /// A page of the ranking board (Zircon `S.Rankings`). `total` counts
+    /// every row the filters admit, so the client can size its scrollbar.
+    Rankings {
+        class: Option<Class>,
+        online_only: bool,
+        start: u32,
+        total: u32,
+        entries: Vec<RankEntry>,
     },
     Pong {
         nonce: u32,
