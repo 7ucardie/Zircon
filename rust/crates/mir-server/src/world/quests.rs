@@ -261,6 +261,7 @@ impl World {
         }
         self.send_changes(id, all_changes);
         self.send_gold(id);
+        self.send_currencies(id);
         if exp_gain > 0 {
             self.gain_experience(id, exp_gain);
         }

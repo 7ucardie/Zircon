@@ -295,22 +295,26 @@ impl Game {
                         if *count > 1 {
                             label = format!("{label} ({count})");
                         }
+                        // Drop filter (Zircon `FilterDropDialog`): a wanted
+                        // item gets a gold plate so it stands out on the floor.
+                        let wanted = crate::menu::highlighted(
+                            &self.windows.menu.drop_filter,
+                            &self.catalog.name(*info),
+                        );
                         let w = text.width(&label, 11) + 6.0;
                         let (lx, ly) = (dx as f32 + 24.0 - w / 2.0, dy as f32 - 4.0);
-                        renderer.fill_rect(
-                            lx,
-                            ly,
-                            w,
-                            15.0,
-                            [0.0, 24.0 / 255.0, 48.0 / 255.0, 0.75],
-                        );
-                        text.draw_centered(
-                            &label,
-                            11,
-                            dx as f32 + 24.0,
-                            ly - 1.0,
-                            [255, 255, 255, 255],
-                        );
+                        let plate = if wanted {
+                            [64.0 / 255.0, 48.0 / 255.0, 0.0, 0.85]
+                        } else {
+                            [0.0, 24.0 / 255.0, 48.0 / 255.0, 0.75]
+                        };
+                        renderer.fill_rect(lx, ly, w, 15.0, plate);
+                        let ink = if wanted {
+                            [255, 220, 120, 255]
+                        } else {
+                            [255, 255, 255, 255]
+                        };
+                        text.draw_centered(&label, 11, dx as f32 + 24.0, ly - 1.0, ink);
                     }
                     continue;
                 }

@@ -620,6 +620,7 @@ impl World {
         if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
             p.currencies.insert(idx, amount);
         }
+        self.send_currencies(id);
     }
 
     /// Test helper: the held fame title index.

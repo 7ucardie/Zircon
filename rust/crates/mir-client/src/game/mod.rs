@@ -140,6 +140,8 @@ pub struct Game {
     companions: Vec<mir_proto::CompanionSummary>,
     /// Offers of the open CompanionManage page.
     companion_shop: Vec<mir_proto::CompanionOffer>,
+    /// Every currency the player holds (Zircon `CurrencyDialog`).
+    currencies: Vec<mir_proto::CurrencySummary>,
     /// Pending guild invite: (who, guild).
     guild_invite: Option<(String, String)>,
     /// Pending invite: who asked.
@@ -272,6 +274,12 @@ impl Game {
                         "character" => w.character_open = true,
                         "skills" => w.skills_open = true,
                         "companion" => w.companion_open = true,
+                        "menu" => w.menu.menu_open = true,
+                        "help" => w.menu.help_open = true,
+                        "exit" => w.menu.exit_open = true,
+                        "currency" => w.menu.currency_open = true,
+                        "autopotion" => w.menu.auto_potion_open = true,
+                        "dropfilter" => w.menu.drop_filter_open = true,
                         _ => {}
                     }
                 }
@@ -296,6 +304,7 @@ impl Game {
             refines: Vec::new(),
             companions: Vec::new(),
             companion_shop: Vec::new(),
+            currencies: Vec::new(),
             guild_invite: None,
             group_invite: None,
             auto_group_done: false,
@@ -429,11 +438,6 @@ impl Game {
                 self.chat_box.focused = true;
             }
         }
-    }
-
-    /// True if a window consumed Escape this frame.
-    pub fn windows_were_open(&self) -> bool {
-        self.windows_open_last_frame
     }
 
     pub fn update(&mut self, now: u64, width: i32, height: i32, conn: Option<&Connection>) {
@@ -602,6 +606,33 @@ impl Game {
             }
         }
         self.handle_input(now, width, height, conn);
+        // Auto potion (Zircon `AutoPotionDialog`): drink from a belt slot when
+        // a pool drops under its percentage. Client-side, same path as a
+        // belt key, so the server sees an ordinary item use.
+        if self.windows.menu.auto_potion.enabled && self.stats.hp > 0 && now >= self.use_item_time {
+            let hp = self.stats.hp * 100 / self.stats.max_hp.max(1);
+            let mp = self.stats.mp * 100 / self.stats.max_mp.max(1);
+            if let Some(slot) =
+                crate::menu::auto_potion_slot(&self.windows.menu.auto_potion, hp, mp)
+            {
+                if let Some(link) = self.belt.get(slot as usize).copied() {
+                    if let Some(inv) = crate::windows::belt_inventory_slot(&self.inventory, &link) {
+                        // Only drinkables, so a belt slot holding something
+                        // else is not used over and over.
+                        let drinkable = self
+                            .inventory
+                            .get(inv as usize)
+                            .cloned()
+                            .flatten()
+                            .and_then(|i| self.catalog.get(i.info).cloned())
+                            .is_some_and(|d| d.item_type == mir_proto::item_type::CONSUMABLE);
+                        if drinkable {
+                            self.try_use_item(inv, now, conn);
+                        }
+                    }
+                }
+            }
+        }
         // Fishing: recast every attack delay, reeling if the player clicked
         // while a fish was on (Zircon FishingDialog auto-cast).
         if let Some(f) = &mut self.fishing {

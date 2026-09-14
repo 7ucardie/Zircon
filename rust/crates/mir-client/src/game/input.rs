@@ -63,36 +63,51 @@ impl Game {
             self.input.fkey = None;
             self.input.tab = false;
         }
-        // Keyboard shortcuts (Zircon defaults: Tab pick up, W bag, Q character).
-        let shortcuts: String = if self.windows.typing() {
-            String::new()
-        } else {
-            self.input.text.clone()
-        };
-        for ch in shortcuts.chars() {
-            match ch.to_ascii_lowercase() {
-                'w' | 'i' => self.windows.inventory_open = !self.windows.inventory_open,
-                'q' | 'c' => self.windows.character_open = !self.windows.character_open,
-                'e' | 's' => self.windows.skills_open = !self.windows.skills_open,
-                'z' => self.windows.belt_open = !self.windows.belt_open,
-                'l' => self.windows.quests_open = !self.windows.quests_open,
-                'p' => self.windows.group_open = !self.windows.group_open,
-                'b' => self.windows.storage_open = !self.windows.storage_open,
-                'g' => self.windows.guild_open = !self.windows.guild_open,
-                'm' => self.windows.mail_open = !self.windows.mail_open,
-                'r' => {
-                    if let Some(c) = conn {
-                        c.send(ClientMessage::Mount);
-                    }
-                }
-                'n' => self.windows.companion_open = !self.windows.companion_open,
-                'h' => {
+        // Keyboard shortcuts, Zircon's `KeyBindAction` defaults: Q character,
+        // W inventory, E magic, J quest log, `,` mail, Z belt, P group,
+        // G guild, S storage, U companion, N menu, H help, A auto potion,
+        // M mount, T trade, Tab pick up, Ctrl+H attack mode, Alt+Q leave.
+        let typing = self.windows.typing();
+        // A modifier is held, so the text event carries a control character
+        // and `chord` names the physical letter instead.
+        if !typing && (self.input.ctrl || self.input.alt) {
+            match (self.input.chord, self.input.ctrl) {
+                (Some('h'), true) => {
                     if let Some(c) = conn {
                         c.send(ClientMessage::AttackMode {
                             mode: (self.attack_mode + 1) % (mir_proto::attack_mode::ALL + 1),
                         });
                     }
                 }
+                (Some('q'), false) => self.windows.menu.exit_open = true,
+                _ => {}
+            }
+        }
+        let shortcuts: String = if typing || self.input.ctrl || self.input.alt {
+            String::new()
+        } else {
+            self.input.text.clone()
+        };
+        for ch in shortcuts.chars() {
+            match ch.to_ascii_lowercase() {
+                'w' => self.windows.inventory_open = !self.windows.inventory_open,
+                'q' => self.windows.character_open = !self.windows.character_open,
+                'e' => self.windows.skills_open = !self.windows.skills_open,
+                'z' => self.windows.belt_open = !self.windows.belt_open,
+                'j' => self.windows.quests_open = !self.windows.quests_open,
+                'p' => self.windows.group_open = !self.windows.group_open,
+                's' => self.windows.storage_open = !self.windows.storage_open,
+                'g' => self.windows.guild_open = !self.windows.guild_open,
+                ',' => self.windows.mail_open = !self.windows.mail_open,
+                'm' => {
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::Mount);
+                    }
+                }
+                'u' => self.windows.companion_open = !self.windows.companion_open,
+                'n' => self.windows.menu.menu_open = !self.windows.menu.menu_open,
+                'h' => self.windows.menu.help_open = !self.windows.menu.help_open,
+                'a' => self.windows.menu.auto_potion_open = !self.windows.menu.auto_potion_open,
                 't' => {
                     if let Some(c) = conn {
                         c.send(ClientMessage::TradeRequest);
@@ -112,7 +127,13 @@ impl Game {
         if let Some(f) = self.input.fkey {
             self.function_key(f, now, width, height, conn);
         }
+        // Escape closes what is open; with a clear screen it asks to leave,
+        // as Zircon's `ExitDialog` does.
+        if self.input.escape && !self.windows_open_last_frame {
+            self.windows.menu.exit_open = true;
+        }
         if self.input.escape && self.windows_open_last_frame {
+            self.windows.menu.close_all();
             self.windows.inventory_open = false;
             self.windows.character_open = false;
             self.windows.skills_open = false;

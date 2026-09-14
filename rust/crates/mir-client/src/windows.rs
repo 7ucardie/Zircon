@@ -11,6 +11,7 @@ use mir_proto::{
 use crate::assets::lib;
 use crate::gfx::Blend;
 use crate::items::{stat_name, type_name, ItemCatalog, ItemDef};
+use crate::menu::{self, MenuAction, MenuState};
 use crate::ui::{Button, Ctx, Rect, TextBox, GOLD};
 use mir_proto::ObjectId;
 
@@ -185,6 +186,8 @@ pub struct WindowState {
     pub carrying: Option<(Grid, u8)>,
     pub tooltip: Option<(i32, f32, f32)>,
     buy_button: Option<Button>,
+    /// HUD menu buttons, help, exit, currency, auto potion, drop filter.
+    pub menu: MenuState,
     close_all_hint: bool,
     auto_button_done: bool,
     magic_tip: Option<(u16, f32, f32)>,
@@ -200,6 +203,7 @@ impl WindowState {
             || self.trade_gold.as_ref().is_some_and(|b| b.focused)
             || (self.mail_open && self.mail_boxes.iter().any(|b| b.focused))
             || (self.npc.is_some() && self.companion_name.as_ref().is_some_and(|b| b.focused))
+            || self.menu.typing()
     }
 }
 
@@ -255,6 +259,7 @@ impl Default for WindowState {
             carrying: None,
             tooltip: None,
             buy_button: None,
+            menu: MenuState::default(),
             close_all_hint: false,
             auto_button_done: false,
             magic_tip: None,
@@ -293,6 +298,7 @@ pub struct Bag<'a> {
     pub refines: &'a [mir_proto::RefineSummary],
     pub companions: &'a [mir_proto::CompanionSummary],
     pub companion_shop: &'a [mir_proto::CompanionOffer],
+    pub currencies: &'a [mir_proto::CurrencySummary],
     /// Castles as (index, name, owner) and the one under conquest.
     pub castles: &'a [(i32, String, String)],
     pub conquest: Option<i32>,
@@ -2715,6 +2721,27 @@ impl WindowState {
             }
         }
 
+        // HUD buttons and the dialogs behind them, on top of everything.
+        let mut actions: Vec<MenuAction> = Vec::new();
+        over |= self.menu.draw(c, bag, width, height, &mut actions);
+        for a in actions {
+            match a {
+                MenuAction::Toggle(w) => match w {
+                    menu::Window::Character => self.character_open = !self.character_open,
+                    menu::Window::Inventory => self.inventory_open = !self.inventory_open,
+                    menu::Window::Skills => self.skills_open = !self.skills_open,
+                    menu::Window::Quests => self.quests_open = !self.quests_open,
+                    menu::Window::Mail => self.mail_open = !self.mail_open,
+                    menu::Window::Belt => self.belt_open = !self.belt_open,
+                    menu::Window::Group => self.group_open = !self.group_open,
+                    menu::Window::Guild => self.guild_open = !self.guild_open,
+                    menu::Window::Storage => self.storage_open = !self.storage_open,
+                    menu::Window::Companion => self.companion_open = !self.companion_open,
+                },
+                MenuAction::Logout => out.push(ClientMessage::Logout),
+                MenuAction::Quit => std::process::exit(0),
+            }
+        }
         // Drop the carried item when clicking outside any window.
         if c.input.lmb_pressed && !over {
             self.carrying = None;

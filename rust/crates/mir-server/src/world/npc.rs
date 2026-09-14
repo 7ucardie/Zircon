@@ -360,9 +360,12 @@ impl World {
                         p.bag.gold = (p.bag.gold as i64 + delta).max(0) as u64;
                     }
                     self.send_gold(id);
-                } else if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
-                    let e = p.currencies.entry(cur.index).or_insert(0);
-                    *e += delta;
+                } else {
+                    if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+                        let e = p.currencies.entry(cur.index).or_insert(0);
+                        *e += delta;
+                    }
+                    self.send_currencies(id);
                 }
             }
             // Data lists and values (Zircon `GameNPCList`).

@@ -42,6 +42,12 @@ pub struct Input {
     pub enter: bool,
     pub tab: bool,
     pub escape: bool,
+    /// Held modifiers (Zircon binds Ctrl+H and Alt+Q).
+    pub ctrl: bool,
+    pub alt: bool,
+    /// Letter pressed while a modifier is held (text input carries control
+    /// characters then, so the physical key is used instead).
+    pub chord: Option<char>,
     pub delete: bool,
     /// F1..F12 pressed this frame (1..=12).
     pub fkey: Option<u8>,
@@ -61,6 +67,7 @@ impl Input {
         self.enter = false;
         self.tab = false;
         self.escape = false;
+        self.chord = None;
         self.delete = false;
         self.fkey = None;
         self.digit = None;

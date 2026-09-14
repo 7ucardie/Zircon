@@ -508,6 +508,14 @@ pub struct CompanionSummary {
     pub max_weight: i32,
 }
 
+/// One of the player's currencies (Zircon `ClientUserCurrency`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CurrencySummary {
+    pub name: String,
+    pub abbreviation: String,
+    pub amount: i64,
+}
+
 /// A mail as the client sees it (Zircon `ClientMailInfo`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MailSummary {
@@ -2044,6 +2052,8 @@ pub enum ServerMessage {
     CompanionShop(Vec<CompanionOffer>),
     /// The player's companions (on entry and after changes).
     Companions(Vec<CompanionSummary>),
+    /// Every currency the player holds; resent when one changes.
+    Currencies(Vec<CurrencySummary>),
     /// The mailbox on entry.
     MailList(Vec<MailSummary>),
     MailNew(MailSummary),

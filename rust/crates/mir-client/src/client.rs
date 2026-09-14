@@ -295,11 +295,9 @@ impl Client {
                 for m in self.game.take_messages() {
                     self.send(m);
                 }
-                if self.input.escape && !self.game.windows_were_open() {
-                    SceneAction::Send(ClientMessage::Logout)
-                } else {
-                    SceneAction::None
-                }
+                // Escape with nothing open opens the exit dialog (see
+                // `menu.rs`); leaving is its Character list button.
+                SceneAction::None
             }
         };
         match action {

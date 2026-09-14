@@ -101,6 +101,7 @@ impl World {
         }
         self.send_changes(id, changes);
         self.send_gold(id);
+        self.send_currencies(id);
         self.refresh_stats(id, false);
         self.send_player_stats(id);
         self.send_to(
