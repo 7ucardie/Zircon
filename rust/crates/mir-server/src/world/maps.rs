@@ -75,6 +75,7 @@ impl World {
                     name: def.description.clone(),
                     light: def.light,
                     music: def.music,
+                    mini_map: def.mini_map,
                 },
                 spawns,
                 objects: Vec::new(),

@@ -14,6 +14,7 @@ impl Game {
             } => {
                 self.load_map(&map.file, &map.name);
                 self.map_light = map.light;
+                self.mini_map_index = map.mini_map;
                 self.entered_at = now;
                 self.audio.stop_all();
                 self.audio.play_music(music_index(map.music));
@@ -634,6 +635,7 @@ impl Game {
             } => {
                 self.load_map(&map.file, &map.name);
                 self.map_light = map.light;
+                self.mini_map_index = map.mini_map;
                 self.audio.play_music(music_index(map.music));
                 let user = self.user;
                 self.objects.retain(|id, _| Some(*id) == user);

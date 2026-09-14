@@ -195,6 +195,7 @@ impl Game {
             || self.windows.guild_open
             || self.windows.mail_open
             || self.windows.companion_open
+            || self.minimap.big_open
             || self.trade.is_some()
             || self.windows.npc.is_some();
         self.pending_messages.extend(out);

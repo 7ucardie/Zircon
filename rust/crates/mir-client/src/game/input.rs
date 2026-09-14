@@ -86,6 +86,11 @@ impl Game {
                     }
                 }
                 'n' => self.windows.companion_open = !self.windows.companion_open,
+                // Zircon cycles the minimap with V (shown, dimmed, hidden)
+                // and opens the big map with B; B is already storage here,
+                // so the big map takes X.
+                'v' => self.minimap.cycle(),
+                'x' => self.minimap.big_open = !self.minimap.big_open,
                 'h' => {
                     if let Some(c) = conn {
                         c.send(ClientMessage::AttackMode {
@@ -118,6 +123,7 @@ impl Game {
             self.windows.skills_open = false;
             self.windows.group_open = false;
             self.windows.storage_open = false;
+            self.minimap.big_open = false;
             self.windows.guild_open = false;
             self.windows.mail_open = false;
             self.windows.companion_open = false;

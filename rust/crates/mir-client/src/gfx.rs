@@ -52,6 +52,27 @@ pub struct SpriteRegion {
     v1: f32,
 }
 
+impl SpriteRegion {
+    /// A sub-rectangle of this sprite, in source pixels. Used to scroll a
+    /// large image (the map images) inside a smaller panel.
+    pub fn sub(self, x: u32, y: u32, w: u32, h: u32) -> SpriteRegion {
+        let (x, y) = (x.min(self.width), y.min(self.height));
+        let w = w.min(self.width - x);
+        let h = h.min(self.height - y);
+        let du = (self.u1 - self.u0) / self.width.max(1) as f32;
+        let dv = (self.v1 - self.v0) / self.height.max(1) as f32;
+        SpriteRegion {
+            page: self.page,
+            width: w,
+            height: h,
+            u0: self.u0 + du * x as f32,
+            v0: self.v0 + dv * y as f32,
+            u1: self.u0 + du * (x + w) as f32,
+            v1: self.v0 + dv * (y + h) as f32,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Vertex {
