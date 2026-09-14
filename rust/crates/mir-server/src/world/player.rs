@@ -285,6 +285,7 @@ impl World {
         self.send_social(id);
         // Zircon announces the arrival to everyone who friended us.
         self.update_online_state(id, true);
+        self.market_login(id);
         self.send_marriage_info(id);
         self.send_refine_list(id);
         self.send_companions(id);

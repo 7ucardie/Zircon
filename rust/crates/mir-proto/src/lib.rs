@@ -231,6 +231,8 @@ pub enum Grid {
 
 pub const INVENTORY_SIZE: usize = 48;
 pub const EQUIPMENT_SIZE: usize = 22;
+/// Zircon sends the marketplace nine rows at a time.
+pub const MARKET_PAGE: usize = 9;
 
 /// Zircon `EquipmentSlot`.
 pub mod slot {
@@ -587,6 +589,39 @@ pub struct MailSummary {
     pub message: String,
     pub gold: u64,
     pub items: Vec<ItemInstance>,
+}
+
+/// A marketplace listing as the client sees it (Zircon
+/// `ClientMarketPlaceInfo`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarketListing {
+    pub index: u32,
+    pub item: ItemInstance,
+    /// Price per unit.
+    pub price: u64,
+    pub seller: String,
+    pub message: String,
+    /// True when this account listed it, so the client offers Cancel.
+    pub is_owner: bool,
+}
+
+/// Zircon `MarketPlaceSort`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MarketSort {
+    Newest,
+    Oldest,
+    HighestPrice,
+    LowestPrice,
+}
+
+impl MarketSort {
+    /// The sorts in the order Zircon lists them, with their labels.
+    pub const ALL: [(MarketSort, &'static str); 4] = [
+        (MarketSort::Newest, "Newest"),
+        (MarketSort::Oldest, "Oldest"),
+        (MarketSort::HighestPrice, "Highest Price"),
+        (MarketSort::LowestPrice, "Lowest Price"),
+    ];
 }
 
 /// Zircon `MessageType` (chat line colour and routing).
@@ -1719,6 +1754,32 @@ pub enum ClientMessage {
     ChangeOnlineState {
         state: u8,
     },
+    /// Search the marketplace. `name` matches the item name, `item_type`
+    /// filters by kind when set, and `page` is a page of `MARKET_PAGE`.
+    MarketSearch {
+        name: String,
+        item_type: Option<u8>,
+        sort: MarketSort,
+        page: u32,
+    },
+    /// List `count` of the bag item in `slot` at `price` each, from a safe
+    /// zone. `message` is the seller's note (Zircon allows 150 characters).
+    MarketConsign {
+        slot: u8,
+        count: u32,
+        price: u64,
+        message: String,
+    },
+    /// Take `count` back off one of your own listings.
+    MarketCancelConsign {
+        index: u32,
+        count: u32,
+    },
+    /// Buy `count` off a listing at its asking price.
+    MarketBuy {
+        index: u32,
+        count: u32,
+    },
     /// Zircon `Mount`: toggle riding the owned horse.
     Mount,
     /// Answer a marriage proposal.
@@ -2160,6 +2221,19 @@ pub enum ServerMessage {
     /// The state this player is advertising, echoed after a change.
     OnlineState {
         state: u8,
+    },
+    /// One page of search results, with the total the search matched.
+    MarketSearchResults {
+        total: u32,
+        page: u32,
+        results: Vec<MarketListing>,
+    },
+    /// Everything this account has listed (on entry and after a change).
+    MarketConsignments(Vec<MarketListing>),
+    /// A listing of ours changed size; `count` 0 means it is gone.
+    MarketConsignChanged {
+        index: u32,
+        count: u32,
     },
     /// Account storage on entry.
     Storage {

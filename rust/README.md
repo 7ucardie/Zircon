@@ -332,8 +332,8 @@ swapchain);
 warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
 `ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills,`
-`companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,`
-`nominimap,ranking,friends,blocked`
+`companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,nominimap,`
+`ranking,friends,blocked,market,marketconsign`
 opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
 daylight (night screenshots);
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
@@ -406,6 +406,7 @@ short for it. The client now follows Zircon's `KeyBindAction` defaults:
 | `Ctrl+H` | attack mode |
 | `Alt+Q` | leave the game |
 | `V` `X` | cycle the minimap, open the big map |
+| `C` | market place |
 | `Tab` | pick up |
 | `1`-`9` `0` | use a belt slot |
 | `F1`-`F11` | cast a skill |
@@ -449,6 +450,46 @@ to everyone holding that name, and leaving flips them to Offline.
 `ZIRCON_DEV_FRIENDS=1` on the server seeds one friend per state and one
 blocked name on a character's first entry, so the window can be
 screenshotted without a second account.
+
+### Market place
+
+`C` opens the market place (Zircon `MarketPlaceDialog`, which binds the same
+key), also reachable from the menu. It has the two tabs of the player auction
+house:
+
+- **Search** browses everything on sale, nine rows a page like Zircon, with a
+  name box, an item-type filter and a sort (newest, oldest, highest price,
+  lowest price). Pick a row, set a count and Buy. Your own rows show the
+  seller in green and cannot be bought, which is Zircon's rule.
+- **Consign** lists an item out of the bag at a price per unit with a note,
+  and takes listings back. It shows what the sale would fetch after tax
+  before you commit.
+
+The rules follow `PlayerObject.Quests`:
+
+| Rule | Value |
+|---|---|
+| Listing fee | none (`Globals.MarketPlaceFee` is 0) |
+| Tax on a sale | 7% (`Globals.MarketPlaceTax`), taken from the seller |
+| Expiry | none; a listing stands until bought or cancelled |
+| Where | consigning needs a safe zone |
+| Limit | level x 3 listings, never fewer than 5 |
+
+The seller is paid by mail, not in gold, with a receipt naming the buyer, the
+sub total, the tax and the net. Goods go straight to the buyer's bag when
+they are in a safe zone with room, and by mail otherwise, so a full bag never
+eats a purchase. Listings live in `market.json` beside `mail.json` and
+`guilds.json`, and a part-bought listing shrinks rather than vanishing.
+
+Zircon's third tab, the game-gold Store (`MarketPlaceStoreBuy`, game gold and
+hunt gold), is a cash shop rather than part of the auction house and is not
+built.
+
+`ZIRCON_DEV_MARKET=<n>` seeds `n` listings on an empty market so the board is
+not blank in a screenshot; every fifth one is put on the first account, so a
+dev login also sees the owner colouring and its own consignments.
+`ZIRCON_OPEN=market` and `ZIRCON_OPEN=marketconsign` open the window on the
+Search and Consign tabs.
 
 Auto potion (`A`) drinks from a belt slot when a pool drops under its
 percentage: health is checked first, then mana, and the drink goes through

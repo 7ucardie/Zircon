@@ -52,7 +52,7 @@ impl MailStore {
         store
     }
 
-    fn save(&self) {
+    pub(super) fn save(&self) {
         if let Some(p) = &self.path {
             if let Ok(json) = serde_json::to_vec_pretty(self) {
                 let _ = std::fs::write(p, json);
@@ -61,7 +61,7 @@ impl MailStore {
     }
 }
 
-fn summary(m: &Mail) -> MailSummary {
+pub(super) fn summary(m: &Mail) -> MailSummary {
     MailSummary {
         index: m.index,
         opened: m.opened,

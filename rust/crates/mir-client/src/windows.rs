@@ -138,6 +138,8 @@ pub struct WindowState {
     /// Mail window (M): mailbox on the left, the selected mail or the
     /// compose form on the right.
     pub mail_open: bool,
+    /// Zircon `MarketPlaceDialog`, opened with C.
+    pub market: crate::market::MarketState,
     /// Refine page draft: type, quality and the chosen cells.
     refine_type: u8,
     refine_quality: u8,
@@ -208,6 +210,7 @@ impl WindowState {
             || (self.mail_open && self.mail_boxes.iter().any(|b| b.focused))
             || (self.npc.is_some() && self.companion_name.as_ref().is_some_and(|b| b.focused))
             || self.menu.typing()
+            || self.market.typing()
     }
 }
 
@@ -224,6 +227,7 @@ impl Default for WindowState {
             request_buttons: Vec::new(),
             marriage_buttons: Vec::new(),
             mail_open: false,
+            market: crate::market::MarketState::default(),
             refine_type: 2,
             refine_quality: 2,
             refine_ores: Vec::new(),
@@ -343,7 +347,7 @@ pub struct PlayerView {
 }
 
 /// Draw the item icon (StoreItems) centred in a cell, plus the count.
-fn draw_item_cell(
+pub(crate) fn draw_item_cell(
     c: &mut Ctx,
     catalog: &ItemCatalog,
     r: Rect,
@@ -2736,6 +2740,10 @@ impl WindowState {
             }
         }
 
+        over |= self
+            .market
+            .draw(c, bag.catalog, bag.inventory, bag.gold, width, out);
+
         // HUD buttons and the dialogs behind them, on top of everything.
         let mut actions: Vec<MenuAction> = Vec::new();
         over |= self.menu.draw(c, bag, width, height, &mut actions);
@@ -2755,6 +2763,12 @@ impl WindowState {
                     menu::Window::Ranking => self.ranking.open = !self.ranking.open,
                     // The friends window lives on Game, so pulse a flag it drains.
                     menu::Window::Friends => self.toggle_friends = true,
+                    menu::Window::Market => {
+                        self.market.open = !self.market.open;
+                        if self.market.open {
+                            self.market.refresh();
+                        }
+                    }
                 },
                 MenuAction::Logout => out.push(ClientMessage::Logout),
                 MenuAction::Quit => std::process::exit(0),

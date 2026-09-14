@@ -225,6 +225,7 @@ impl Game {
             || self.windows.mail_open
             || self.windows.companion_open
             || self.windows.ranking.open
+            || self.windows.market.open
             || self.windows.menu.any_open()
             || self.minimap.big_open
             || self.trade.is_some()

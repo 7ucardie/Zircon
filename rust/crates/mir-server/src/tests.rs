@@ -25,6 +25,8 @@ fn drain(world: &mut World) -> Vec<ServerMessage> {
         .collect()
 }
 
+mod market;
+
 #[test]
 fn warrior_kills_adjacent_monster_and_gains_experience() {
     let Some(mut world) = world() else {

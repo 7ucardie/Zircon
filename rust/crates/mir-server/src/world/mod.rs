@@ -772,6 +772,7 @@ pub struct World {
     /// `ZIRCON_DEV_FRIENDS` only: states for the seeded friends, which have
     /// no real character behind them.
     dev_states: HashMap<u32, u8>,
+    pub market_store: market::MarketStore,
     /// Characters divorced while offline (drained by the account registry).
     divorced: Vec<u32>,
     next_group: u32,
@@ -799,6 +800,7 @@ mod magic_wave5;
 mod magic_wave6;
 mod mail;
 mod maps;
+pub mod market;
 mod marriage;
 mod monster_ai;
 mod mounts;
@@ -894,6 +896,7 @@ impl World {
             mail_store: mail::MailStore::default(),
             social_store: social::SocialStore::default(),
             dev_states: HashMap::new(),
+            market_store: market::MarketStore::default(),
             conquest: None,
             conquest_check: 0,
             dev_conquest_done: false,
@@ -922,6 +925,16 @@ impl World {
         self.guild_store = guilds::GuildStore::load(dir.join("guilds.json"));
         self.mail_store = mail::MailStore::load(dir.join("mail.json"));
         self.social_store = social::SocialStore::load(dir.join("social.json"));
+        self.market_store = market::MarketStore::load(dir.join("market.json"));
+        // ZIRCON_DEV_MARKET=<n> seeds a board of n listings for screenshots.
+        if self.market_store.listings.is_empty() {
+            if let Some(n) = std::env::var("ZIRCON_DEV_MARKET")
+                .ok()
+                .and_then(|v| v.parse::<usize>().ok())
+            {
+                self.dev_seed_market(n);
+            }
+        }
         self.scripts.set_root(dir.join("scripts").join("npc"));
     }
 

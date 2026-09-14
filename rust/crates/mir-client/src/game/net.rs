@@ -811,6 +811,32 @@ impl Game {
                 }
                 self.mail = list;
             }
+            ServerMessage::MarketSearchResults {
+                total,
+                page,
+                results,
+            } => {
+                let m = &mut self.windows.market;
+                m.total = total;
+                m.page = page;
+                m.results = results;
+            }
+            ServerMessage::MarketConsignments(list) => {
+                self.windows.market.consignments = list;
+            }
+            ServerMessage::MarketConsignChanged { index, count } => {
+                let m = &mut self.windows.market;
+                if count == 0 {
+                    m.consignments.retain(|l| l.index != index);
+                    m.results.retain(|l| l.index != index);
+                } else {
+                    for l in m.consignments.iter_mut().chain(m.results.iter_mut()) {
+                        if l.index == index {
+                            l.item.count = count;
+                        }
+                    }
+                }
+            }
             ServerMessage::MailNew(m) => {
                 self.say_colored(
                     format!("New mail from {}: {} (M)", m.sender, m.subject),

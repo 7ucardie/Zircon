@@ -301,6 +301,15 @@ impl Game {
                             w.ranking.online_only =
                                 std::env::var_os("ZIRCON_RANK_ONLINE").is_some();
                         }
+                        "market" => {
+                            w.market.open = true;
+                            w.market.refresh();
+                        }
+                        "marketconsign" => {
+                            w.market.open = true;
+                            w.market.tab = crate::market::Tab::Consign;
+                            w.market.refresh();
+                        }
                         _ => {}
                     }
                 }
