@@ -26,6 +26,7 @@ fn drain(world: &mut World) -> Vec<ServerMessage> {
 }
 
 mod market;
+mod sets;
 
 #[test]
 fn warrior_kills_adjacent_monster_and_gains_experience() {

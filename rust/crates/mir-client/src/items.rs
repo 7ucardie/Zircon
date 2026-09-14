@@ -25,6 +25,19 @@ pub struct ItemDef {
     pub stack_size: i32,
     pub description: String,
     pub stats: Vec<(i32, i32)>,
+    /// `ItemInfo.Set`, 0 when the item belongs to no set.
+    pub set: i32,
+}
+
+/// An equipment set as the client needs it: its name and the stats it
+/// pays out once every piece is worn (Zircon `SetInfo`).
+#[derive(Debug, Clone)]
+pub struct SetDef {
+    pub name: String,
+    /// `ItemInfo` indices that make up the set, so the tooltip can list them.
+    pub items: Vec<i32>,
+    /// (stat, amount, required class flags, required level).
+    pub stats: Vec<(i32, i32, u8, i32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -87,6 +100,7 @@ pub struct ItemCatalog {
     magics: HashMap<u16, MagicDef>,
     quests: HashMap<i32, QuestDef>,
     npc_names: HashMap<i32, String>,
+    sets: HashMap<i32, SetDef>,
 }
 
 pub fn stat_name(id: i32) -> Option<&'static str> {
@@ -108,11 +122,85 @@ pub fn stat_name(id: i32) -> Option<&'static str> {
         16 => "Attack Speed",
         18 => "Strength",
         19 => "Luck",
+        20 => "Fire Attack",
+        21 => "Fire Resist",
+        22 => "Ice Attack",
+        23 => "Ice Resist",
+        24 => "Lightning Attack",
+        25 => "Lightning Resist",
+        26 => "Wind Attack",
+        27 => "Wind Resist",
+        28 => "Holy Attack",
+        29 => "Holy Resist",
+        30 => "Dark Attack",
+        31 => "Dark Resist",
+        32 => "Phantom Attack",
+        33 => "Phantom Resist",
+        34 => "Comfort",
+        35 => "Life Steal",
+        36 => "Experience Rate",
+        37 => "Drop Rate",
+        54 => "Health %",
+        55 => "Critical Chance",
+        67 => "MC %",
         73 => "Bag Weight",
         74 => "Wear Weight",
         75 => "Hand Weight",
+        84 => "DC %",
+        85 => "SC %",
+        87 => "Pet DC %",
+        95 => "Recall Set",
+        106 => "Base Experience Rate",
+        115 => "Critical Damage",
+        118 => "Physical Resist",
+        126 => "Evasion Chance",
+        129 => "Poison Resist",
         _ => return None,
     })
+}
+
+/// `SetInfo` plus `SetInfoStat`. A set's membership is the reverse of
+/// `ItemInfo.Set`, so it is counted from the items rather than stored.
+fn load_sets(db: &MirDb, items: &HashMap<i32, ItemDef>) -> HashMap<i32, SetDef> {
+    let mut stats: HashMap<i32, Vec<(i32, i32, u8, i32)>> = HashMap::new();
+    if let Some(c) = db.collection("SetInfoStat") {
+        for r in &c.records {
+            stats
+                .entry(c.int_or(r, "Set", 0) as i32)
+                .or_default()
+                .push((
+                    c.int_or(r, "Stat", 0) as i32,
+                    c.int_or(r, "Amount", 0) as i32,
+                    c.int_or(r, "Class", 0) as u8,
+                    c.int_or(r, "Level", 0) as i32,
+                ));
+        }
+    }
+    let mut members: HashMap<i32, Vec<i32>> = HashMap::new();
+    for d in items.values() {
+        if d.set != 0 {
+            members.entry(d.set).or_default().push(d.index);
+        }
+    }
+    for list in members.values_mut() {
+        list.sort_unstable();
+    }
+    match db.collection("SetInfo") {
+        Some(c) => c
+            .records
+            .iter()
+            .map(|r| {
+                let index = c.index(r);
+                let d = SetDef {
+                    name: c.str_or(r, "SetName", "").to_string(),
+                    items: members.remove(&index).unwrap_or_default(),
+                    stats: stats.remove(&index).unwrap_or_default(),
+                };
+                (index, d)
+            })
+            .collect(),
+        None => HashMap::new(),
+    }
 }
 
 pub fn type_name(t: u8) -> &'static str {
@@ -146,6 +234,7 @@ impl ItemCatalog {
             magics: HashMap::new(),
             quests: HashMap::new(),
             npc_names: HashMap::new(),
+            sets: HashMap::new(),
         }
     }
 
@@ -229,10 +318,12 @@ impl ItemCatalog {
                     stack_size: c.int_or(r, "StackSize", 1) as i32,
                     description: c.str_or(r, "Description", "").to_string(),
                     stats: stats.remove(&index).unwrap_or_default(),
+                    set: c.int_or(r, "Set", 0) as i32,
                 };
                 (index, d)
             })
             .collect();
+        let sets = load_sets(&db, &items);
         let magics = match db.collection("MagicInfo") {
             Some(c) => c
                 .records
@@ -334,11 +425,16 @@ impl ItemCatalog {
             magics,
             quests,
             npc_names,
+            sets,
         })
     }
 
     pub fn get(&self, index: i32) -> Option<&ItemDef> {
         self.items.get(&index)
+    }
+
+    pub fn set(&self, index: i32) -> Option<&SetDef> {
+        self.sets.get(&index)
     }
 
     pub fn name(&self, index: i32) -> String {

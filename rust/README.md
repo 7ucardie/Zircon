@@ -587,6 +587,34 @@ description")`) or cancel (`npc.navigate("")`) the page. Scripts see
 `take_gold`, `give_item`, `take_item`, `message`; they run sandboxed
 (no io/os) and errors fail the check. See `docs/research/fame-lua.md`.
 
+## Equipment sets
+
+Wearing every piece of a set (Zircon `SetInfo`) grants its bonus stats. A
+set's membership is not stored as a list: it is every `ItemInfo` whose `Set`
+column names it, so the 30 sets in this pack are counted from the item side.
+Each bonus line (`SetInfoStat`) still has to clear two gates of its own, a
+minimum character level and a class mask, which is why a set can be complete
+and some of its lines still dark.
+
+Three details come straight from `PlayerObject.RefreshStats`: a broken item
+(zero durability, on an item that has durability) counts for nothing, so it
+neither adds its own stats nor fills its slot in the set; two copies of the
+same piece count once; and a set pays out only when the pieces worn equal the
+pieces that exist, never partially.
+
+The character window lists every set the player has a piece of, with its
+progress and its lines coloured green when they apply and grey when they do
+not, and the item tooltip shows the same for the set an item belongs to.
+
+`ZIRCON_DEV_ITEMS="Gale Ring;Gale Necklace"` with `ZIRCON_DEV_LEVEL=20` wears
+a complete two-piece set for a screenshot; dropping one of the two shows the
+incomplete state.
+
+The weapon-craft roll table (`WeaponCraftStatInfo`, 110 rows) is loaded and
+its weighted pick is implemented, but the NPC flow that spends it
+(`NPCWeaponCraft`, dialog type 14, with its own six-slot ingredient window)
+is not built. See "Where the rules come from".
+
 ## Quests
 
 NPC dialogs list the quests an NPC starts (`[Accept]`) or finishes
