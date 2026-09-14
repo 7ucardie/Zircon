@@ -97,9 +97,11 @@ pub fn draw_quest_tracker(c: &mut Ctx, lines: &[(String, [u8; 4])], width: i32, 
     let y = 66.0;
     let h = lines.len() as f32 * 15.0 + 8.0;
     let panel = Rect::new(x, y, w, h);
-    // Zircon fades the background in on hover and leaves it clear otherwise.
-    if panel.contains(mouse.0, mouse.1) {
-        c.fill(panel, [0.0, 0.0, 0.0, 0.3]);
+    // A faint plate always, so the lines stay readable over bright ground;
+    // Zircon fades its own in further on hover.
+    let hovered = panel.contains(mouse.0, mouse.1);
+    c.fill(panel, [0.0, 0.0, 0.0, if hovered { 0.5 } else { 0.35 }]);
+    if hovered {
         c.border(panel, BORDER);
     }
     for (i, (line, color)) in lines.iter().enumerate() {
