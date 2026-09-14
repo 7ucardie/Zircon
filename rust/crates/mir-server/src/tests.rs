@@ -3890,3 +3890,85 @@ fn currencies_reach_the_client_on_entry_and_on_change() {
         .expect("a change resends the list");
     assert_eq!(list.iter().map(|c| c.amount).sum::<i64>(), 42);
 }
+
+#[test]
+fn friends_persist_and_blocked_whispers_vanish() {
+    use mir_proto::{online_state, ChatKind};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("zircon-social-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    world.set_store_dir(&dir);
+
+    let mut arec = test_character("Alice");
+    arec.id = 11;
+    let mut brec = test_character("Bob");
+    brec.id = 22;
+    let alice = world.add_player(1, 1, &arec).unwrap();
+    let bob = world.add_player(2, 2, &brec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+
+    // An unknown name is refused, and nothing is stored.
+    world.friend_add(alice, None, "Nobody".into());
+    assert!(world.social_store.friends.is_empty());
+    // You cannot befriend yourself.
+    world.friend_add(alice, Some((1, 11, "Alice".into())), "Alice".into());
+    assert!(world.social_store.friends.is_empty());
+
+    world.friend_add(alice, Some((2, 22, "Bob".into())), "Bob".into());
+    let list = world.friend_list(11);
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].name, "Bob");
+    // Bob is logged in, so he reads as Online.
+    assert_eq!(list[0].state, online_state::ONLINE);
+    let index = list[0].index;
+    // Adding the same character twice is refused.
+    world.friend_add(alice, Some((2, 22, "Bob".into())), "Bob".into());
+    assert_eq!(world.friend_list(11).len(), 1);
+
+    // The store survives a reload from disk.
+    let reloaded = crate::world::social::SocialStore::load(dir.join("social.json"));
+    assert_eq!(reloaded.friends_of(11).count(), 1);
+    assert_eq!(reloaded.friends_of(22).count(), 0);
+
+    // Bob's chosen state reaches Alice's list.
+    world.change_online_state(bob, online_state::BUSY);
+    assert_eq!(world.friend_list(11)[0].state, online_state::BUSY);
+
+    // Blocking is mutual and silent: Alice's whisper answers "could not
+    // find", exactly as Zircon does, and Bob never hears it.
+    world.block_add(bob, Some((1, 11, "Alice".into())), "Alice".into());
+    assert!(world.is_blocking(1, 2));
+    assert!(world.is_blocking(2, 1));
+    drain(&mut world);
+    world.chat(alice, "/Bob are you there".into());
+    let msgs = drain(&mut world);
+    assert!(!msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Say { kind, .. } if *kind == ChatKind::WhisperIn)));
+    assert!(msgs.iter().any(
+        |m| matches!(m, ServerMessage::Say { text, .. } if text.contains("Could not find Bob"))
+    ));
+
+    // Unblocking restores the whisper.
+    let bindex = world.block_list(2)[0].index;
+    world.block_remove(bob, bindex);
+    assert!(!world.is_blocking(1, 2));
+    drain(&mut world);
+    world.chat(alice, "/Bob hello again".into());
+    let msgs = drain(&mut world);
+    assert!(msgs
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Say { kind, .. } if *kind == ChatKind::WhisperIn)));
+
+    // Removing the friend empties the list and the file.
+    world.friend_remove(alice, index);
+    assert!(world.friend_list(11).is_empty());
+    let reloaded = crate::world::social::SocialStore::load(dir.join("social.json"));
+    assert_eq!(reloaded.friends_of(11).count(), 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}

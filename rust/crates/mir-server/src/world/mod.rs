@@ -298,6 +298,8 @@ pub struct PlayerData {
     pub shout_time: u64,
     pub global_shout_time: u64,
     pub allow_group: bool,
+    /// Zircon `OnlineState`: what the friend lists show for this player.
+    pub online_state: u8,
     pub group: Option<u32>,
     /// Zircon `AttackMode` (`attack_mode::*`).
     pub attack_mode: u8,
@@ -765,6 +767,11 @@ pub struct World {
     pub mail_store: mail::MailStore,
     /// Ranking baselines, so the board can show how far a name has moved.
     ranking: ranking::Ranking,
+    /// Friends and blocks (`social.json`).
+    pub social_store: social::SocialStore,
+    /// `ZIRCON_DEV_FRIENDS` only: states for the seeded friends, which have
+    /// no real character behind them.
+    dev_states: HashMap<u32, u8>,
     /// Characters divorced while offline (drained by the account registry).
     divorced: Vec<u32>,
     next_group: u32,
@@ -803,6 +810,7 @@ mod quests;
 pub mod ranking;
 pub mod refine;
 mod skills;
+pub mod social;
 mod spawn;
 mod spells;
 mod storage;
@@ -884,6 +892,8 @@ impl World {
             guild_store: guilds::GuildStore::default(),
             ranking: ranking::Ranking::default(),
             mail_store: mail::MailStore::default(),
+            social_store: social::SocialStore::default(),
+            dev_states: HashMap::new(),
             conquest: None,
             conquest_check: 0,
             dev_conquest_done: false,
@@ -911,6 +921,7 @@ impl World {
         self.npc_store = NpcStore::load(dir.join("npc_lists.json"));
         self.guild_store = guilds::GuildStore::load(dir.join("guilds.json"));
         self.mail_store = mail::MailStore::load(dir.join("mail.json"));
+        self.social_store = social::SocialStore::load(dir.join("social.json"));
         self.scripts.set_root(dir.join("scripts").join("npc"));
     }
 

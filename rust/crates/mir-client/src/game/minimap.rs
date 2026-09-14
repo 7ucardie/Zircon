@@ -232,6 +232,10 @@ impl Game {
     }
 
     /// Both map windows, drawn after the HUD so they sit above the world.
+    /// `want_big` picks which of the two this call draws. The minimap is a
+    /// corner readout, so it goes down with the HUD and a window covers it;
+    /// the big map is a dialog, so it goes over the windows.
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn draw_map_windows(
         &mut self,
         gpu: &Gpu,
@@ -240,6 +244,7 @@ impl Game {
         width: i32,
         height: i32,
         now: u64,
+        want_big: bool,
     ) {
         if self.map.is_none() {
             return;
@@ -249,8 +254,10 @@ impl Game {
         };
         let centre = user.location;
         let index = self.mini_map_index;
-        let show_mini = self.minimap.mode != MiniMode::Hidden && !self.minimap.big_open;
-        if !show_mini && !self.minimap.big_open {
+        let show_mini =
+            !want_big && self.minimap.mode != MiniMode::Hidden && !self.minimap.big_open;
+        let show_big = want_big && self.minimap.big_open;
+        if !show_mini && !show_big {
             return;
         }
         let dots = self.map_dots();
@@ -299,7 +306,7 @@ impl Game {
             );
         }
 
-        if self.minimap.big_open {
+        if show_big {
             let band = (height as f32 - BIG_TOP - BIG_BOTTOM).max(160.0);
             let win_w = (width as f32 - 80.0).min(900.0);
             let win_h = band.min(700.0);

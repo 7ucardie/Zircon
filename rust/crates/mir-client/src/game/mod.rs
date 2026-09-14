@@ -146,6 +146,12 @@ pub struct Game {
     companion_shop: Vec<mir_proto::CompanionOffer>,
     /// Every currency the player holds (Zircon `CurrencyDialog`).
     currencies: Vec<mir_proto::CurrencySummary>,
+    /// Friends, blocked names and the state we advertise (Zircon
+    /// `CommunicationDialog`'s friend and block tabs).
+    friends: Vec<mir_proto::FriendSummary>,
+    blocks: Vec<mir_proto::BlockSummary>,
+    online_state: u8,
+    friends_window: crate::friends::FriendsWindow,
     /// Pending guild invite: (who, guild).
     guild_invite: Option<(String, String)>,
     /// Pending invite: who asked.
@@ -321,6 +327,10 @@ impl Game {
             companions: Vec::new(),
             companion_shop: Vec::new(),
             currencies: Vec::new(),
+            friends: Vec::new(),
+            blocks: Vec::new(),
+            online_state: mir_proto::online_state::ONLINE,
+            friends_window: crate::friends::FriendsWindow::default(),
             guild_invite: None,
             group_invite: None,
             auto_group_done: false,

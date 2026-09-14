@@ -405,6 +405,17 @@ impl Accounts {
             .filter(|c| !c.deleted)
     }
 
+    /// Like `find_character`, but also gives the character id, which the
+    /// friend list keys on (Zircon friends a character, blocks an account).
+    pub fn find_character_full(&self, name: &str) -> Option<(u32, u32, String)> {
+        self.store.accounts.iter().find_map(|a| {
+            a.characters
+                .iter()
+                .find(|c| !c.deleted && c.name.eq_ignore_ascii_case(name))
+                .map(|c| (a.id, c.id, c.name.clone()))
+        })
+    }
+
     pub fn character(&self, account: u32, id: u32) -> Option<&CharacterRecord> {
         self.account(account)?
             .characters

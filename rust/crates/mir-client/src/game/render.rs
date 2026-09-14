@@ -439,8 +439,9 @@ impl Game {
         renderer.push_layer();
         text.push_layer();
         self.draw_hud(gpu, renderer, text, width, height, now, fps);
+        self.draw_map_windows(gpu, renderer, text, width, height, now, false);
         self.draw_windows(gpu, renderer, text, width, height, now);
-        self.draw_map_windows(gpu, renderer, text, width, height, now);
+        self.draw_map_windows(gpu, renderer, text, width, height, now, true);
     }
 
     pub(super) fn draw_object(

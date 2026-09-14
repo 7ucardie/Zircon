@@ -88,6 +88,11 @@ impl World {
             self.trade_system(id, "You cannot trade with the dead.");
             return;
         }
+        // Zircon refuses trades between blocked accounts.
+        if self.is_blocking(p.account, tp.account) {
+            self.trade_system(id, &format!("{tname} is not trading with you."));
+            return;
+        }
         let from = p.name.clone();
         self.objects
             .get_mut(&target)

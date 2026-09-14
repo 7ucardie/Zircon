@@ -190,6 +190,8 @@ pub struct WindowState {
     pub menu: MenuState,
     /// Ranking board (R).
     pub ranking: crate::ranking::RankingState,
+    /// The menu asked to toggle the friends window; `Game` drains it.
+    pub toggle_friends: bool,
     close_all_hint: bool,
     auto_button_done: bool,
     magic_tip: Option<(u16, f32, f32)>,
@@ -263,6 +265,7 @@ impl Default for WindowState {
             buy_button: None,
             menu: MenuState::default(),
             ranking: crate::ranking::RankingState::default(),
+            toggle_friends: false,
             close_all_hint: false,
             auto_button_done: false,
             magic_tip: None,
@@ -2750,6 +2753,8 @@ impl WindowState {
                     menu::Window::Storage => self.storage_open = !self.storage_open,
                     menu::Window::Companion => self.companion_open = !self.companion_open,
                     menu::Window::Ranking => self.ranking.open = !self.ranking.open,
+                    // The friends window lives on Game, so pulse a flag it drains.
+                    menu::Window::Friends => self.toggle_friends = true,
                 },
                 MenuAction::Logout => out.push(ClientMessage::Logout),
                 MenuAction::Quit => std::process::exit(0),

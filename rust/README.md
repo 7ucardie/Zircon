@@ -333,7 +333,7 @@ warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
 `ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills,`
 `companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,`
-`nominimap,ranking`
+`nominimap,ranking,friends,blocked`
 opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
 daylight (night screenshots);
 `ZIRCON_AUTO_NPC=name` walks to that NPC and opens its dialog;
@@ -399,6 +399,7 @@ short for it. The client now follows Zircon's `KeyBindAction` defaults:
 | `Q` `W` `E` | character, inventory, skills |
 | `J` `,` `Z` | quest log, mail, belt |
 | `P` `G` `S` `U` | group, guild, storage, companion |
+| `F` | friends and blocked names |
 | `N` `H` `A` | menu, help, auto potion |
 | `R` | rankings |
 | `M` `T` | mount or dismount, ask to trade |
@@ -429,6 +430,25 @@ many places a name has gained since the last daily reset. The server answers
 the board re-asks every five seconds while it is open.
 `ZIRCON_RANK_CLASS=wizard` and `ZIRCON_RANK_ONLINE=1` preset its filters for
 headless screenshots.
+
+The friends window (`F`, Zircon's `CommunicationDialog` minus its two mail
+tabs, which are our separate mail window) lists friends sorted by online
+state, each with a coloured `(State)` suffix, and blocked names on a second
+tab. A status row picks what the player advertises (Online, Busy, Away,
+Offline) and a filter row narrows the list to one state. Selecting a friend
+offers Whisper, which pre-fills the chat bar, and Invite.
+
+Zircon stores the two differently, and so do we (`social.json` under the
+data dir): a friend belongs to a **character**, a block to an **account**,
+so blocking one name silences every character that person owns. Blocking is
+mutual, as `SEnvir.IsBlocking` is: it stops whispers, group invites and
+trade requests in both directions. A blocked whisper is answered with
+"Could not find <name>", so the sender is never told they were blocked.
+Friends see each other come and go: entering the world pushes a status line
+to everyone holding that name, and leaving flips them to Offline.
+`ZIRCON_DEV_FRIENDS=1` on the server seeds one friend per state and one
+blocked name on a character's first entry, so the window can be
+screenshotted without a second account.
 
 Auto potion (`A`) drinks from a belt slot when a pool drops under its
 percentage: health is checked first, then mana, and the drink goes through

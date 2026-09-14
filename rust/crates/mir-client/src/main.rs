@@ -12,6 +12,7 @@ mod audio;
 mod chat_panel;
 mod client;
 mod effects;
+mod friends;
 mod game;
 mod gfx;
 mod items;

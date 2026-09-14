@@ -344,6 +344,8 @@ fn leave_world(world: &mut World, accounts: &mut Accounts, stage: Stage) {
             accounts.mark_dirty();
         }
         save_storage(world, accounts, account, object);
+        // Friends see Offline before the object goes away.
+        world.go_offline(object);
         world.remove_object(object);
     }
 }
@@ -400,6 +402,7 @@ fn valid(msg: &ClientMessage) -> bool {
                 && message.len() <= 1200
                 && items.len() <= 5
         }
+        ClientMessage::FriendAdd { name } | ClientMessage::BlockAdd { name } => name.len() <= NAME,
         ClientMessage::NpcSell { slots } => slots.len() <= 64,
         _ => true,
     }
@@ -743,6 +746,23 @@ fn handle_message(
         }
         (Stage::InGame { object, .. }, ClientMessage::MailOpened { index }) => {
             world.mail_opened(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::FriendAdd { name }) => {
+            let who = accounts.find_character_full(&name);
+            world.friend_add(object, who, name)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::FriendRemove { index }) => {
+            world.friend_remove(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::BlockAdd { name }) => {
+            let who = accounts.find_character_full(&name);
+            world.block_add(object, who, name)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::BlockRemove { index }) => {
+            world.block_remove(object, index)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::ChangeOnlineState { state }) => {
+            world.change_online_state(object, state)
         }
         (
             Stage::InGame { object, .. },

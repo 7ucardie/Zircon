@@ -58,7 +58,7 @@ impl Game {
     ) {
         self.chat_keys(now, conn);
         // A focused window text box owns the keyboard.
-        if self.windows.typing() {
+        if self.windows.typing() || self.friends_window.typing() {
             self.input.digit = None;
             self.input.fkey = None;
             self.input.tab = false;
@@ -67,7 +67,7 @@ impl Game {
         // W inventory, E magic, J quest log, `,` mail, Z belt, P group,
         // G guild, S storage, U companion, N menu, H help, A auto potion,
         // M mount, T trade, Tab pick up, Ctrl+H attack mode, Alt+Q leave.
-        let typing = self.windows.typing();
+        let typing = self.windows.typing() || self.friends_window.typing();
         // A modifier is held, so the text event carries a control character
         // and `chord` names the physical letter instead.
         if !typing && (self.input.ctrl || self.input.alt) {
@@ -111,6 +111,9 @@ impl Game {
                 'v' => self.minimap.cycle(),
                 'x' => self.minimap.big_open = !self.minimap.big_open,
                 'r' => self.windows.ranking.open = !self.windows.ranking.open,
+                // Zircon's BlockListWindow default; it opens the same
+                // dialog our friends window stands in for.
+                'f' => self.friends_window.open = !self.friends_window.open,
                 'n' => self.windows.menu.menu_open = !self.windows.menu.menu_open,
                 'h' => self.windows.menu.help_open = !self.windows.menu.help_open,
                 'a' => self.windows.menu.auto_potion_open = !self.windows.menu.auto_potion_open,
@@ -150,6 +153,7 @@ impl Game {
             self.windows.mail_open = false;
             self.windows.companion_open = false;
             self.windows.ranking.open = false;
+            self.friends_window.open = false;
             if self.trade.is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::TradeClose);
