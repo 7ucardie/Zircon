@@ -10,6 +10,9 @@ use mir_formats::zl::{ImageInfo, SurfaceKind, ZlLibrary};
 use mir_formats::monster_table::library_path;
 
 pub mod lib {
+    pub const EQUIP: u16 = 6;
+    pub const EQUIP_EFFECT_UI: u16 = 7;
+    pub const PROG_USE: u16 = 13;
     pub const INTERFACE: u16 = 3;
     pub const GAME_INTER: u16 = 4;
     pub const GAME_INTER2: u16 = 5;
@@ -28,149 +31,11 @@ pub mod lib {
     pub const WM_HAIR_A: u16 = 64;
 }
 
-/// Zircon `PlayerObject.ArmourList`: armour shape / 11 -> body library.
-pub fn armour_library(shape: u16, female: bool, assassin: bool) -> Option<u16> {
-    let key = shape / 11;
-    let base = match (assassin, female) {
-        (false, false) => [Some(31), Some(32), Some(33), Some(34), Some(35)],
-        (false, true) => [Some(42), Some(43), Some(44), Some(45), Some(46)],
-        (true, false) => [Some(53), Some(54), Some(55), Some(56), None],
-        (true, true) => [Some(59), Some(60), Some(61), Some(62), None],
-    };
-    match key {
-        0..=4 => base[key as usize],
-        10..=13 if !assassin => Some(if female { 47 } else { 36 } + (key - 10)),
-        20 => Some(match (assassin, female) {
-            (false, false) => 40,
-            (false, true) => 51,
-            (true, false) => 57,
-            (true, true) => 63,
-        }),
-        _ => None,
-    }
-}
+pub use mir_formats::wearable_animation::{
+    armour_library, helmet_library, shield_library, weapon_library,
+};
 
-/// Zircon `PlayerObject.HelmetList`: `(shape - 1) / 10` -> helmet library.
-/// Helmet shapes are 1-based; 0 means no helmet (hair shows).
-pub fn helmet_library(shape: u16, female: bool, assassin: bool) -> Option<u16> {
-    if shape == 0 {
-        return None;
-    }
-    let key = (shape - 1) / 10;
-    match (assassin, female) {
-        (false, false) => match key {
-            0..=4 => Some(139 + key),
-            10..=13 => Some(144 + key - 10),
-            20 => Some(148),
-            _ => None,
-        },
-        (false, true) => match key {
-            0..=4 => Some(149 + key),
-            10..=13 => Some(154 + key - 10),
-            20 => Some(158),
-            _ => None,
-        },
-        (true, false) => match key {
-            0..=3 => Some(159 + key),
-            20 => Some(163),
-            _ => None,
-        },
-        (true, true) => match key {
-            0..=3 => Some(164 + key),
-            20 => Some(168),
-            _ => None,
-        },
-    }
-}
-
-/// Zircon `PlayerObject.ShieldList`: shape / 10 -> shield library. Assassins
-/// share the normal set.
-pub fn shield_library(shape: u16, female: bool) -> Option<u16> {
-    match (female, shape / 10) {
-        (false, 0) => Some(135),
-        (false, 1) => Some(136),
-        (true, 0) => Some(137),
-        (true, 1) => Some(138),
-        _ => None,
-    }
-}
-
-/// Zircon `PlayerObject.WeaponList`: weapon shape / 10 -> weapon library.
-pub fn weapon_library(shape: u16, female: bool) -> Option<u16> {
-    // Upstream fix: keys 9..15 -> M_Weapon10..16, AOH 110..115, ADL 120/121/125.
-    let key = shape / 10;
-    let male = match key {
-        0..=6 => Some(83 + key),
-        9..=15 => Some(90 + (key - 9)),
-        110..=115 => Some(117 + (key - 110)),
-        120 => Some(111),
-        121 => Some(112),
-        125 => Some(113),
-        _ => None,
-    }?;
-    // Female libraries mirror the male ones 14 entries later for the basic
-    // sets and 12 later for the AOH/ADL sets.
-    Some(if female {
-        match male {
-            83..=96 => male + 14,
-            111..=122 => male + 12,
-            other => other,
-        }
-    } else {
-        male
-    })
-}
-
-/// Map-file library byte (`Libraries.KROrder`) -> `LibraryFile` value.
-pub fn kr_library(file: u8) -> Option<u16> {
-    // Base set, in LibraryFile order 254..=267.
-    const BASE: [(&str, u16); 14] = [
-        ("Animationsc", 254),
-        ("Cliffsc", 255),
-        ("Dungeonsc", 256),
-        ("Furnituresc", 257),
-        ("Housesc", 258),
-        ("Innersc", 259),
-        ("Object1c", 260),
-        ("Object2c", 261),
-        ("SmObjectsc", 262),
-        ("SmTilesc", 263),
-        ("Tiles5c", 264),
-        ("Tiles30c", 265),
-        ("Tilesc", 266),
-        ("Wallsc", 267),
-    ];
-    // Themed sets (Forest 268, Sand 280, Snow 292, Wood 304) in this order.
-    const THEMED: [&str; 12] = [
-        "Animationsc",
-        "Cliffsc",
-        "Dungeonsc",
-        "Furnituresc",
-        "Housesc",
-        "Innersc",
-        "SmObjectsc",
-        "SmTilesc",
-        "Tiles5c",
-        "Tiles30c",
-        "Tilesc",
-        "Wallsc",
-    ];
-    let (theme, name) = mir_formats::map::kr_order(file)?;
-    if theme.is_empty() {
-        return BASE.iter().find(|(n, _)| *n == name).map(|(_, v)| *v);
-    }
-    let base = match theme {
-        "Forest" => 268,
-        "Sand" => 280,
-        "Snow" => 292,
-        "Wood" => 304,
-        _ => return None,
-    };
-    THEMED
-        .iter()
-        .position(|n| *n == name)
-        .map(|i| base + i as u16)
-}
+pub use mir_formats::monster_table::kr_library;
 
 pub struct Assets {
     root: PathBuf,

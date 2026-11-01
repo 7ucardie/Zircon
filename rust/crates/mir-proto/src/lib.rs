@@ -7,7 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 19;
+pub const MAX_PLAYER_LEVEL: i32 = 1000;
 pub const DEFAULT_PORT: u16 = 7000;
 pub const MAX_FRAME_LEN: usize = 1 << 20;
 /// Largest frame a client may send (a 4000-character guild notice fits).
@@ -171,10 +172,20 @@ pub enum Appearance {
         /// Equipped weapon `ItemInfo.Shape`, if any.
         weapon: Option<u16>,
         hair: u8,
+        /// Zircon `Character.HairColour`, packed ARGB. 0 leaves the sprite
+        /// at its painted colour.
+        hair_colour: u32,
+        /// Dye on the equipped armour (Zircon `UserItem.Colour`), packed ARGB.
+        armour_colour: u32,
         /// Equipped helmet `ItemInfo.Shape` (1-based; 0 = none, hair shows).
         helmet: u16,
         /// Equipped shield `ItemInfo.Shape`, if any.
         shield: Option<u16>,
+        /// `ItemInfo.ExteriorEffect` from armour, emblem, weapon and shield.
+        armour_effect: u8,
+        emblem_effect: u8,
+        weapon_effect: u8,
+        shield_effect: u8,
         /// Name colour: 0 white, 1 yellow (PK points), 2 brown, 3 red.
         name_color: u8,
         /// Guild name and rank shown under the name ("" when none).
@@ -191,6 +202,10 @@ pub enum Appearance {
         image: u16,
         /// Name of the player this pet fights for.
         owner: Option<String>,
+        /// The corpse has nothing left for this viewer, so it is drawn as
+        /// bones. Zircon decides this per viewer in `GetInfoPacket`: the
+        /// killer still sees flesh while the corpse owes them a drop.
+        skeleton: bool,
     },
     Npc {
         name: String,
@@ -204,6 +219,7 @@ pub enum Appearance {
         /// `ItemInfo.Index`.
         info: i32,
         count: u32,
+        enhanced: bool,
     },
 }
 
@@ -219,6 +235,28 @@ pub struct ItemInstance {
     /// Added stats (Zircon `UserItem.AddedStats`): (stat id, amount).
     #[serde(default)]
     pub added: Vec<(i32, i32)>,
+    /// Enhancement portion of the aggregate added stats (preserved on reroll).
+    pub enhancements: Vec<(i32, i32)>,
+    pub refinable: bool,
+    #[serde(default)]
+    pub level: i32,
+    #[serde(default)]
+    pub accessory_experience: u64,
+    pub non_refinable: bool,
+    #[serde(default)]
+    pub bound: bool,
+    #[serde(default)]
+    pub worthless: bool,
+    #[serde(default)]
+    pub locked: bool,
+
+    /// Unix seconds this item expires at, for the timed goods the store
+    /// sells (Zircon `UserItemFlags.Expirable`). `None` never expires.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    /// Zircon `UserItem.Colour`: the armour dye, packed ARGB. 0 is undyed.
+    #[serde(default)]
+    pub colour: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -230,6 +268,7 @@ pub enum Grid {
 }
 
 pub const INVENTORY_SIZE: usize = 48;
+pub const MAX_INVENTORY_SIZE: usize = 96;
 pub const EQUIPMENT_SIZE: usize = 22;
 /// Zircon sends the marketplace nine rows at a time.
 pub const MARKET_PAGE: usize = 9;
@@ -248,7 +287,9 @@ pub mod slot {
     pub const SHOES: usize = 9;
     pub const POISON: usize = 10;
     pub const AMULET: usize = 11;
+    pub const FLOWER: usize = 12;
     pub const HORSE_ARMOUR: usize = 13;
+    pub const EMBLEM: usize = 14;
     pub const SHIELD: usize = 15;
     pub const HOOK: usize = 17;
     pub const FLOAT: usize = 18;
@@ -277,12 +318,19 @@ pub mod item_type {
     pub const SCROLL: u8 = 15;
     pub const DARK_STONE: u8 = 16;
     pub const HORSE_ARMOUR: u8 = 18;
+    pub const FLOWER: u8 = 19;
+    pub const COMPANION_FOOD: u8 = 20;
+    pub const COMPANION_BAG: u8 = 21;
     pub const SHIELD: u8 = 27;
     pub const HOOK: u8 = 29;
     pub const FLOAT: u8 = 30;
     pub const BAIT: u8 = 31;
     pub const FINDER: u8 = 32;
     pub const REEL: u8 = 33;
+    /// Zircon `ItemType.System`: the gender/hair/dye/name change items and
+    /// the fortune checker.
+    pub const SYSTEM: u8 = 24;
+    pub const EMBLEM: u8 = 26;
     pub const CURRENCY: u8 = 34;
 
     /// Equipment slots an item type may occupy (Zircon `Functions.CorrectSlot`).
@@ -299,7 +347,9 @@ pub mod item_type {
             POISON => &[super::slot::POISON],
             AMULET | DARK_STONE => &[super::slot::AMULET],
             SHIELD => &[super::slot::SHIELD],
+            EMBLEM => &[super::slot::EMBLEM],
             HORSE_ARMOUR => &[super::slot::HORSE_ARMOUR],
+            FLOWER => &[super::slot::FLOWER],
             HOOK => &[super::slot::HOOK],
             FLOAT => &[super::slot::FLOAT],
             BAIT => &[super::slot::BAIT],
@@ -391,6 +441,15 @@ pub mod attack_mode {
     pub const GUILD: u8 = 2;
     pub const WAR_RED_BROWN: u8 = 3;
     pub const ALL: u8 = 4;
+}
+
+/// Zircon `PetMode`.
+pub mod pet_mode {
+    pub const BOTH: u8 = 0;
+    pub const MOVE: u8 = 1;
+    pub const ATTACK: u8 = 2;
+    pub const PVP: u8 = 3;
+    pub const NONE: u8 = 4;
 }
 
 /// Zircon `HorseType`.
@@ -492,6 +551,16 @@ pub mod refine_type {
     pub const HOLY: u8 = 8;
     pub const DARK: u8 = 9;
     pub const PHANTOM: u8 = 10;
+    pub const HEALTH: u8 = 12;
+    pub const MANA: u8 = 13;
+    pub const AC: u8 = 14;
+    pub const MR: u8 = 15;
+    pub const ACCURACY: u8 = 16;
+    pub const AGILITY: u8 = 17;
+    pub const DC_PERCENT: u8 = 18;
+    pub const SP_PERCENT: u8 = 19;
+    pub const HEALTH_PERCENT: u8 = 20;
+    pub const MANA_PERCENT: u8 = 21;
 }
 
 /// Zircon `RefineQuality` (wait: 1 min, 30 min, 1 h, 6 h, 1 day).
@@ -545,6 +614,14 @@ pub struct CompanionSummary {
     pub bag_size: u32,
     pub bag_weight: i32,
     pub max_weight: i32,
+    /// Food stack equipped in Zircon `CompanionSlot.Food`.
+    pub food: Option<ItemInstance>,
+    /// Equipped bag increases companion capacity.
+    pub bag: Option<ItemInstance>,
+    /// Earned (level, stat type, amount) rolls from `CompanionSkillInfo`.
+    pub bonuses: Vec<(i32, i32, i32)>,
+    /// Session-only reroll confirmation flags for levels 3/5/7/10/11/13/15.
+    pub reroll_enabled: u8,
 }
 
 /// One of the player's currencies (Zircon `ClientUserCurrency`).
@@ -577,6 +654,24 @@ pub struct RankEntry {
     pub change: i32,
 }
 
+/// Public character details shown by Zircon's ranking inspection panel.
+/// Only equipped items leave the server; inventory and storage stay private.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RankInspection {
+    pub character: u32,
+    pub name: String,
+    pub class: Class,
+    pub gender: Gender,
+    pub level: i32,
+    pub hair: u8,
+    pub hair_colour: u32,
+    pub partner: String,
+    pub fame: i32,
+    pub guild_name: String,
+    pub guild_rank: String,
+    pub equipment: Vec<(u8, ItemInstance)>,
+}
+
 /// A mail as the client sees it (Zircon `ClientMailInfo`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MailSummary {
@@ -603,6 +698,44 @@ pub struct MarketListing {
     pub message: String,
     /// True when this account listed it, so the client offers Cancel.
     pub is_owner: bool,
+}
+
+/// One row of the in-game store (Zircon `StoreInfo` as the Store tab shows
+/// it). The client is told both prices so it can label the row the way
+/// Zircon does, and the tag list so it can build the filter drop-down.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct StoreEntry {
+    pub index: u32,
+    /// `ItemInfo.Index` of what is on sale.
+    pub item: i32,
+    /// How many of it one purchase yields at most (its stack size).
+    pub stack_size: u32,
+    /// Game-gold price per unit.
+    pub price: u64,
+    /// Hunt-gold price per unit. 0 means hunt gold costs `price` too,
+    /// which is Zircon's rule, not an absence of a hunt-gold option.
+    pub hunt_gold_price: u64,
+    pub filters: Vec<String>,
+    pub available: bool,
+    /// Lifetime in seconds; 0 never expires.
+    pub duration: u32,
+}
+
+/// Zircon `MarketPlaceStoreSort`. Zircon's fourth entry, Favourite, is a
+/// `TODO` in its own client and sorts nothing, so it is left out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StoreSort {
+    Alphabetical,
+    HighestPrice,
+    LowestPrice,
+}
+
+impl StoreSort {
+    pub const ALL: [(StoreSort, &'static str); 3] = [
+        (StoreSort::Alphabetical, "A-Z"),
+        (StoreSort::HighestPrice, "Highest Price"),
+        (StoreSort::LowestPrice, "Lowest Price"),
+    ];
 }
 
 /// Zircon `MarketPlaceSort`.
@@ -683,6 +816,8 @@ pub enum Action {
     FishingReel,
     /// Zircon `MirAction.Mining` (the weapon swing).
     Mining,
+    /// Zircon `MirAnimation.Harvest`: the butchering swing over a corpse.
+    Harvest,
 }
 
 /// Zircon `FishingState`.
@@ -903,6 +1038,13 @@ pub mod magic_type {
     pub const SAMA_GUARDIAN_ICE: u16 = 506;
     pub const SAMA_GUARDIAN_LIGHTNING: u16 = 507;
     pub const SAMA_GUARDIAN_WIND: u16 = 508;
+    pub const SAMA_PHOENIX_FIRE: u16 = 509;
+    pub const SAMA_BLACK_ICE: u16 = 510;
+    pub const SAMA_BLUE_LIGHTNING: u16 = 511;
+    pub const SAMA_WHITE_WIND: u16 = 512;
+    pub const SAMA_PROPHET_FIRE: u16 = 513;
+    pub const SAMA_PROPHET_LIGHTNING: u16 = 514;
+    pub const SAMA_PROPHET_WIND: u16 = 515;
     pub const PINK_FIRE_BALL: u16 = 530;
     pub const GREEN_SLUDGE_BALL: u16 = 540;
     pub const MONSTER_SPLASH: u16 = 550;
@@ -921,6 +1063,7 @@ pub mod magic_type {
         matches!(
             m,
             SWORDSMANSHIP
+                | DRAGON_BLOOD
                 | POTION_MASTERY
                 | SLAYING
                 | SPIRIT_SWORD
@@ -966,6 +1109,8 @@ pub mod magic_type {
                 | INFECTION
                 | BURNING
                 | SHOCKED
+                | MAGIC_COMBUSTION
+                | CHAIN_OF_FIRE
         )
     }
     /// Wave-four directional swings: the mouse picks the facing.
@@ -1004,7 +1149,7 @@ pub mod magic_type {
     }
     /// Moon charges that arm themselves while swinging.
     pub fn is_auto_charge(m: u16) -> bool {
-        matches!(m, CALAMITY_OF_FULL_MOON | WANING_MOON)
+        matches!(m, CALAMITY_OF_FULL_MOON | WANING_MOON | DRAGON_BLOOD)
     }
     /// Spells with the projectile cast animation (Zircon `Combat1`).
     pub fn is_projectile_cast(m: u16) -> bool {
@@ -1119,7 +1264,6 @@ pub mod magic_type {
             m,
             TELEPORTATION
                 | FROST_BITE
-                | DRAGON_BLOOD
                 | TAECHEON_SWORD
                 | FIRE_SWORD
                 | THUNDER_STRIKE
@@ -1166,6 +1310,52 @@ pub mod magic_type {
                 | SUMMON_PUPPET
         )
     }
+    /// Beneficial spells that can be cast during a walk or run.
+    pub fn is_mobile_support_cast(m: u16) -> bool {
+        matches!(
+            m,
+            HEAL | EMPOWERED_HEALING
+                | MASS_HEAL
+                | RESURRECTION
+                | PURIFICATION
+                | DEMONIC_RECOVERY
+                | MAGIC_SHIELD
+                | SUPERIOR_MAGIC_SHIELD
+                | MAGIC_RESISTANCE
+                | RESILIENCE
+                | DEFIANCE
+                | MIGHT
+                | ENDURANCE
+                | REFLECT_DAMAGE
+                | INVINCIBILITY
+                | EVASION
+                | RAGING_WIND
+                | CONCENTRATION
+                | THE_NEW_BEGINNING
+                | DARK_CONVERSION
+                | INVISIBILITY
+                | MASS_INVISIBILITY
+                | TRANSPARENCY
+                | CELESTIAL_LIGHT
+                | STRENGTH_OF_FAITH
+                | CLOAK
+                | RENOUNCE
+                | SOUL_RESONANCE
+                | SPIRITUALISM
+                | DRAGON_REPULSE
+                | ELEMENTAL_SWORDS
+                | ELEMENTAL_SUPERIORITY
+                | BLOOD_LUST
+                | SUMMON_SKELETON
+                | SUMMON_SHINSU
+                | SUMMON_JIN_SKELETON
+                | SUMMON_DEMONIC_CREATURE
+                | SUMMON_DEAD
+                | SUMMON_PUPPET
+                | ELEMENTAL_PUPPET
+                | MIRROR_IMAGE
+        )
+    }
     /// Spells that only use the facing direction.
     pub fn is_line(m: u16) -> bool {
         matches!(
@@ -1197,7 +1387,6 @@ pub mod magic_type {
                 | SOUL_RESONANCE
                 | CORPSE_EXPLODER
                 | SUMMON_DEAD
-                | DRAGON_BLOOD
                 | CHAIN
                 | ICE_BOLT
                 | REPULSION
@@ -1410,6 +1599,42 @@ pub mod effect {
     pub const HUNDRED_FIST: u8 = 14;
     pub const ELEMENTAL_SWORD: u8 = 15;
     pub const BURNING_FIRE: u8 = 16;
+    pub const LEVEL_UP: u8 = 17;
+}
+
+/// Authored ZirconRust looks for high-tier armour whose installed ItemInfo has
+/// no ExteriorEffect. Values are original C# ExteriorEffect IDs; database
+/// assignments always take precedence.
+pub mod equipment_visual {
+    pub fn armour_effect(item: i32, database_effect: u8) -> u8 {
+        if database_effect != 0 {
+            return database_effect;
+        }
+        match item {
+            907 | 908 | 1002 | 1003 => 1,            // Argent/Blessed: white aura.
+            350 | 351 | 909 | 910 => 3,              // Wyvern/Sacred: blue aura.
+            911 | 912 => 11,                         // Phoenix: flame wings.
+            913 | 914 => 12,                         // Azure: blue wings.
+            917 | 918 | 921 | 922 | 936 | 937 => 13, // Demonic/Abyss: red wings.
+            919 | 920 | 1106 | 1107 => 2,            // Embers/Comet: flame aura.
+            _ => 0,
+        }
+    }
+
+    /// Odyn glows follow the weapon sprite silhouette instead of borrowing
+    /// the original blade-shaped Chaotic/Janitor overlays.
+    pub fn weapon_effect(item: i32, database_effect: u8) -> u8 {
+        if database_effect != 0 {
+            return database_effect;
+        }
+        match item {
+            1069 => 240, // Son
+            1070 => 241, // Mythical
+            1072 => 242, // Elemental
+            1079 => 243, // Sin
+            _ => 0,
+        }
+    }
 }
 
 /// A buff as the client sees it.
@@ -1429,6 +1654,8 @@ pub struct ObjectState {
     pub hp: i32,
     pub max_hp: i32,
     pub dead: bool,
+    /// Ordinary room door with server-owned open/close state.
+    pub room_door: bool,
     /// Light radius (Zircon `Stat.Light`; NPCs 10, fire fields 15).
     pub light: u8,
 }
@@ -1448,7 +1675,7 @@ pub struct MapDescriptor {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlayerStats {
-    pub level: u8,
+    pub level: i32,
     pub hp: i32,
     pub max_hp: i32,
     pub mp: i32,
@@ -1459,12 +1686,48 @@ pub struct PlayerStats {
     pub max_dc: i32,
     pub min_ac: i32,
     pub max_ac: i32,
+    #[serde(default)]
+    pub min_mr: i32,
+    #[serde(default)]
+    pub max_mr: i32,
+    #[serde(default)]
+    pub min_mc: i32,
+    #[serde(default)]
+    pub max_mc: i32,
+    #[serde(default)]
+    pub min_sc: i32,
+    #[serde(default)]
+    pub max_sc: i32,
     pub accuracy: i32,
     pub agility: i32,
     pub attack_speed: i32,
     /// Held fame title (Zircon `Stat.Fame` = `FameInfo` index, 0 = none) and its name.
     pub fame: i32,
     pub fame_title: String,
+    /// Focus points (Zircon `CurrentFP` and `Stat.Focus`), the third pool
+    /// beside health and mana. `max_fp` is 0 until a discipline is taken.
+    #[serde(default)]
+    pub fp: i32,
+    #[serde(default)]
+    pub max_fp: i32,
+    /// Discipline level (Zircon `UserDiscipline.Level`, 0 = none) and the
+    /// experience banked towards the next one.
+    #[serde(default)]
+    pub discipline: i32,
+    #[serde(default)]
+    pub discipline_experience: i64,
+}
+
+/// What the client needs to show the next discipline level on the character
+/// window (Zircon `DisciplineInfo`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisciplineNext {
+    /// 0 when the player is already at the highest level the data defines.
+    pub level: i32,
+    pub required_level: i32,
+    pub required_experience: i64,
+    pub required_gold: u64,
+    pub focus_points: i32,
 }
 
 /// Summary of a character on the select screen.
@@ -1475,7 +1738,7 @@ pub struct CharacterSummary {
     pub class: Class,
     pub gender: Gender,
     pub hair: u8,
-    pub level: u8,
+    pub level: i32,
     /// Unix seconds of the last login, 0 if never played.
     pub last_login: u64,
     /// Name of the map the character is on ("" for a new character).
@@ -1506,6 +1769,8 @@ pub mod rules {
     pub const MOVE_TIME: u64 = 600;
     pub const TURN_TIME: u64 = 300;
     pub const ATTACK_TIME: u64 = 600;
+    /// Zircon `Globals.HarvestTime`: one butchering swing.
+    pub const HARVEST_TIME: u64 = 600;
     pub const ATTACK_DELAY: u64 = 1500;
     pub const ASPEED_RATE: u64 = 47;
 
@@ -1549,6 +1814,9 @@ pub mod rules {
     pub fn valid_email(s: &str) -> bool {
         let n = s.chars().count();
         (EMAIL_MIN..=EMAIL_MAX).contains(&n)
+            && s.split_once('@').is_some_and(|(name, host)| {
+                !name.is_empty() && !host.is_empty() && !host.contains('@')
+            })
             && s.chars()
                 .all(|c| c.is_ascii_alphanumeric() || "@._-+".contains(c))
     }
@@ -1565,6 +1833,20 @@ pub mod rules {
                 .map(|c| c.is_ascii_alphabetic())
                 .unwrap_or(false)
             && s.chars().all(|c| c.is_ascii_alphanumeric())
+    }
+}
+
+#[cfg(test)]
+mod account_email_tests {
+    use super::rules;
+
+    #[test]
+    fn email_requires_one_at_with_text_on_both_sides() {
+        assert!(rules::valid_email("user@example.com"));
+        assert!(rules::valid_email("user+tag@example.com"));
+        for invalid in ["username", "@example.com", "user@", "user@@example.com"] {
+            assert!(!rules::valid_email(invalid), "accepted {invalid}");
+        }
     }
 }
 
@@ -1617,6 +1899,9 @@ pub enum ClientMessage {
         direction: Direction,
         run: bool,
     },
+    RoomDoorToggle {
+        id: ObjectId,
+    },
     Attack {
         direction: Direction,
         /// Melee-augment skill in effect (Slaying, Thrusting, Half Moon...).
@@ -1646,9 +1931,19 @@ pub enum ClientMessage {
         to: Grid,
         to_slot: u8,
     },
+    /// Buy one additional inventory or account-storage tab with Game Gold.
+    BuyTab {
+        storage: bool,
+    },
     /// Use a consumable or equip an item from the inventory.
     ItemUse {
         slot: u8,
+    },
+    /// Wear the look of an owned item in the selected equipment slot.
+    /// `None` returns to the equipped look; stats never change.
+    Wardrobe {
+        slot: u8,
+        item: Option<i32>,
     },
     /// Link (or clear, with both `None`) a belt slot.
     BeltLink {
@@ -1657,6 +1952,11 @@ pub enum ClientMessage {
         item: Option<u32>,
     },
     /// Drop an inventory item on the ground.
+    ItemLock {
+        grid: Grid,
+        slot: u8,
+        locked: bool,
+    },
     ItemDrop {
         slot: u8,
         count: u32,
@@ -1687,6 +1987,10 @@ pub enum ClientMessage {
     AttackMode {
         mode: u8,
     },
+    /// Zircon `ChangePetMode` (`pet_mode::*`).
+    PetMode {
+        mode: u8,
+    },
     /// Zircon `FishingCast`: `state` is `fishing_state::*`; the client
     /// recasts every attack delay while fishing, `caught` when it reeled on
     /// a nibble.
@@ -1698,6 +2002,10 @@ pub enum ClientMessage {
     },
     /// Swing a pickaxe at the cell in front.
     Mining {
+        direction: Direction,
+    },
+    /// Zircon `C.Harvest`: swing at the corpses in front, in pick-up range.
+    Harvest {
         direction: Direction,
     },
     /// Found a guild: 7.5M gold plus 1M per member slot.
@@ -1753,6 +2061,29 @@ pub enum ClientMessage {
     MailOpened {
         index: u32,
     },
+    /// Zircon `C.HairChange`: restyle, spending a Hair Change item.
+    /// `colour` is packed ARGB and must be opaque unless `hair` is 0.
+    HairChange {
+        hair: u8,
+        colour: u32,
+    },
+    /// Zircon `C.GenderChange`: swap gender and restyle in one go, spending
+    /// a Gender Change item. Refused while armour is worn.
+    GenderChange {
+        gender: Gender,
+        hair: u8,
+        colour: u32,
+    },
+    /// Zircon `C.ArmourDye`: dye the worn armour, spending an Armour Dye item.
+    ArmourDye {
+        colour: u32,
+    },
+    /// Zircon `C.NameChange`: rename, spending a Name Change item.
+    NameChange {
+        name: String,
+    },
+    /// Zircon `C.IncreaseDiscipline`: buy the next discipline level.
+    IncreaseDiscipline,
     /// Befriend a character by name (offline is fine).
     FriendAdd {
         name: String,
@@ -1797,6 +2128,13 @@ pub enum ClientMessage {
         index: u32,
         count: u32,
     },
+    /// Buy `count` of a store row (Zircon `C.MarketPlaceStoreBuy`).
+    /// `hunt_gold` spends hunt gold instead of game gold.
+    MarketStoreBuy {
+        index: u32,
+        count: u32,
+        hunt_gold: bool,
+    },
     /// Zircon `Mount`: toggle riding the owned horse.
     Mount,
     /// Answer a marriage proposal.
@@ -1809,6 +2147,12 @@ pub enum ClientMessage {
     },
     /// Teleport to the partner (needs the wedding ring on).
     MarriageTeleport,
+    /// Inventory slots and item identities; six optional colour ingredients.
+    NpcWeaponCraft {
+        base: (u8, u32),
+        materials: [Option<(u8, u32)>; 6],
+        class: Class,
+    },
     /// Refine the equipped weapon at a Refine page: ores (<=5 black iron
     /// ore cells), items (<=3 common jewellery), specials (<=1).
     NpcRefine {
@@ -1821,6 +2165,25 @@ pub enum ClientMessage {
     /// Collect a finished refine at a RefineRetrieve page.
     NpcRefineRetrieve {
         index: u32,
+    },
+    /// Zircon accessory pages 11, 12, 13, and 15. Item identities prevent
+    /// stale clicks from consuming a different item in the same slot.
+    NpcAccessoryLevel {
+        target: (Grid, u8, u32),
+        materials: Vec<(Grid, u8, u32)>,
+    },
+    NpcAccessoryUpgrade {
+        target: (Grid, u8, u32),
+        refine_type: u8,
+    },
+    NpcAccessoryReset {
+        target: (Grid, u8, u32),
+    },
+    NpcAccessoryRefine {
+        target: (Grid, u8, u32),
+        ore: (Grid, u8, u32),
+        materials: Vec<(Grid, u8, u32)>,
+        refine_type: u8,
     },
     /// Unlock a companion look with its unlock item.
     CompanionUnlock {
@@ -1842,6 +2205,16 @@ pub enum ClientMessage {
     CompanionBagTake {
         index: u32,
         slot: u8,
+    },
+    /// Equip a Companion Food stack from inventory; swaps previous food back.
+    CompanionFoodEquip {
+        slot: u8,
+    },
+    /// Return the equipped food stack to inventory.
+    CompanionFoodTake,
+    /// Toggle the safety gate for rerolling one companion skill milestone.
+    CompanionSkillToggle {
+        level: i32,
     },
     /// Take an attachment (slot 255 = the gold).
     MailGetItem {
@@ -1880,9 +2253,14 @@ pub enum ClientMessage {
         info: i32,
         count: u32,
     },
-    /// Sell inventory slots to the open shop.
+    /// Sell counts from inventory slots to the open shop.
     NpcSell {
-        slots: Vec<u8>,
+        items: Vec<(u8, u32)>,
+    },
+    /// Repair selected inventory or equipment items at an open repair page.
+    NpcRepair {
+        items: Vec<(Grid, u8, u32)>,
+        special: bool,
     },
     NpcClose,
     /// Ask for a page of the ranking board (Zircon `C.RankRequest`).
@@ -1892,6 +2270,14 @@ pub enum ClientMessage {
         online_only: bool,
         start: u32,
     },
+    /// Find an exact character name on the all-class board.
+    RankSearch {
+        name: String,
+    },
+    /// View public appearance and equipped items for a ranked character.
+    RankInspect {
+        character: u32,
+    },
     /// Spend one Fortune Checker on this item to read its drop progress
     /// (Zircon `C.FortuneCheck`).
     FortuneCheck {
@@ -1899,6 +2285,16 @@ pub enum ClientMessage {
     },
     Ping {
         nonce: u32,
+    },
+    /// Equip a companion bag from player inventory.
+    CompanionBagEquip {
+        slot: u8,
+    },
+    /// Return the equipped companion bag to player inventory.
+    CompanionBagUnequip,
+    /// Pick up the clicked ground item when several share a cell.
+    PickUpItem {
+        id: ObjectId,
     },
 }
 
@@ -1924,6 +2320,7 @@ pub enum ServerMessage {
         location: Point,
         direction: Direction,
         stats: PlayerStats,
+        light: u8,
     },
     Rejected {
         reason: String,
@@ -1991,10 +2388,10 @@ pub enum ServerMessage {
         magic: u16,
         on: bool,
     },
-    /// Poison applied/cleared on an object (client tint only).
+    /// Active poison flags, including paralysis, on an object.
     ObjectPoisoned {
         id: ObjectId,
-        poisoned: bool,
+        kinds: u16,
     },
     ObjectStruck {
         id: ObjectId,
@@ -2062,6 +2459,7 @@ pub enum ServerMessage {
     StatsChanged(PlayerStats),
     /// Full inventory sync on entering the world.
     Inventory {
+        size: u8,
         inventory: Vec<(u8, ItemInstance)>,
         equipment: Vec<(u8, ItemInstance)>,
         gold: u64,
@@ -2082,11 +2480,29 @@ pub enum ServerMessage {
         id: ObjectId,
         appearance: Appearance,
     },
+    /// Current cosmetic choice for one equipment slot.
+    Wardrobe {
+        slot: u8,
+        item: Option<i32>,
+    },
+    /// An object's light radius changed, usually when a torch is equipped.
+    ObjectLight {
+        id: ObjectId,
+        light: u8,
+    },
+    /// The next discipline level the player may buy, and what it costs
+    /// (Zircon reads `DisciplineInfo` on the client; we send it instead).
+    /// Sent on entry and after every discipline change.
+    DisciplineInfo(DisciplineNext),
     /// The player was moved to another map; forget every object.
     MapChanged {
         map: MapDescriptor,
         location: Point,
         direction: Direction,
+    },
+    /// Cells where storage and other safe-zone rules apply on the current map.
+    SafeZones {
+        cells: Vec<Point>,
     },
     NpcResponse {
         npc: ObjectId,
@@ -2094,6 +2510,8 @@ pub enum ServerMessage {
         say: String,
         /// Zircon `NPCDialogType` (1 = BuySell).
         dialog_type: i32,
+        /// Currency name for shop prices and payment.
+        currency: String,
         goods: Vec<Good>,
         /// Item types this shop buys.
         sell_types: Vec<u8>,
@@ -2108,6 +2526,11 @@ pub enum ServerMessage {
     /// The whole quest log on entering the world.
     QuestList(Vec<UserQuestSummary>),
     QuestChanged(UserQuestSummary),
+    /// Per-viewer marker above an NPC: 0 none, 1 available, 2 in progress, 3 ready.
+    NpcQuestMarker {
+        id: ObjectId,
+        marker: u8,
+    },
     QuestCancelled {
         quest: i32,
     },
@@ -2134,6 +2557,9 @@ pub enum ServerMessage {
     AttackMode {
         mode: u8,
     },
+    PetMode {
+        mode: u8,
+    },
     /// Someone is fishing (Zircon `ObjectFishing`): `found` means a nibble.
     ObjectFishing {
         id: ObjectId,
@@ -2155,6 +2581,16 @@ pub enum ServerMessage {
         id: ObjectId,
         direction: Direction,
         effect: bool,
+    },
+    /// Someone swung at a corpse (Zircon `S.ObjectHarvest`).
+    ObjectHarvest {
+        id: ObjectId,
+        direction: Direction,
+    },
+    /// This corpse has nothing left for you, so draw it as bones
+    /// (Zircon `S.ObjectHarvested`).
+    ObjectHarvested {
+        id: ObjectId,
     },
     /// The player's guild (None when not in one); resent after changes.
     GuildInfo(Option<GuildSummary>),
@@ -2257,10 +2693,19 @@ pub enum ServerMessage {
         index: u32,
         count: u32,
     },
+    /// The whole store, sent on entry. It is 92 rows in this pack and never
+    /// changes at run time, so the client filters and sorts it locally
+    /// rather than asking the server per search, as Zircon's own client does.
+    StoreStock(Vec<StoreEntry>),
     /// Account storage on entry.
     Storage {
         size: u32,
         items: Vec<(u8, ItemInstance)>,
+    },
+    /// Prices for the next tab, in Game Gold (zero means sold out).
+    TabPrices {
+        inventory: u32,
+        storage: u32,
     },
     TradeRequest {
         from: String,
@@ -2305,6 +2750,11 @@ pub enum ServerMessage {
         total: u32,
         entries: Vec<RankEntry>,
     },
+    RankSearchResult {
+        entry: Option<RankEntry>,
+        start: u32,
+    },
+    RankInspection(Option<RankInspection>),
     /// Start, refresh or clear a named countdown (Zircon `S.SetTimer`).
     /// `seconds` of 0 or less expires the timer; `kind` 0 draws digits
     /// only, 1 and 2 add the running egg timer.
@@ -2397,6 +2847,24 @@ mod tests {
     }
 
     #[test]
+    fn character_level_1000_roundtrip() {
+        let msg = ServerMessage::LoginResult(LoginResult::Success {
+            characters: vec![CharacterSummary {
+                id: 1,
+                name: "Hero".into(),
+                class: Class::Warrior,
+                gender: Gender::Male,
+                hair: 0,
+                level: MAX_PLAYER_LEVEL,
+                last_login: 0,
+                location: String::new(),
+            }],
+        });
+        let mut buf = encode(&msg).unwrap();
+        assert_eq!(decode_frame::<ServerMessage>(&mut buf).unwrap(), Some(msg));
+    }
+
+    #[test]
     fn direction_from_points() {
         let o = Point::new(5, 5);
         assert_eq!(Direction::from_points(o, Point::new(5, 4)), Direction::Up);
@@ -2482,6 +2950,26 @@ pub fn parse_dialog(say: &str) -> Vec<DialogPart> {
                     }
                 }
             }
+            '{' => {
+                let mut inner = String::new();
+                let mut closed = false;
+                for d in chars.by_ref() {
+                    if d == '}' {
+                        closed = true;
+                        break;
+                    }
+                    inner.push(d);
+                }
+                if let (true, Some((label, _color))) = (closed, inner.rsplit_once(':')) {
+                    text.push_str(label);
+                } else {
+                    text.push('{');
+                    text.push_str(&inner);
+                    if closed {
+                        text.push('}');
+                    }
+                }
+            }
             other => text.push(other),
         }
     }
@@ -2515,6 +3003,14 @@ mod dialog_tests {
                 },
                 DialogPart::Text(" bye [x]".into()),
             ]
+        );
+    }
+
+    #[test]
+    fn colored_npc_value_is_readable_without_markup() {
+        assert_eq!(
+            parse_dialog("{100:LawnGreen} points required"),
+            vec![DialogPart::Text("100 points required".into())]
         );
     }
 }

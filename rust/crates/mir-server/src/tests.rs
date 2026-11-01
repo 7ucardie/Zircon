@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use mir_proto::{Appearance, Direction, ObjectId, Point, ServerMessage};
+use mir_proto::{Appearance, Direction, Grid, ObjectId, Point, ServerMessage};
 
 use crate::accounts::test_character;
 use crate::data::GameData;
@@ -15,6 +15,195 @@ fn world() -> Option<World> {
     Some(World::new(data, assets.join("Map"), None).with_seed(0x5A1C0))
 }
 
+#[test]
+fn leveling_emits_original_magic_ex_effect() {
+    let Some(mut world) = world() else { return };
+    let mut character = test_character("LevelGlowTester");
+    character.next_item_id = 1;
+    let id = world.add_player(1, 1, &character).unwrap();
+    world.outgoing.clear();
+    world.gain_experience_test(id, GameData::max_experience(1));
+    world.tick(1);
+    assert_eq!(world.objects[&id].player().unwrap().level, 2);
+    assert!(world.outgoing.iter().any(|message| matches!(
+        message,
+        Outgoing::To(1, ServerMessage::ObjectEffect { id: target, effect: mir_proto::effect::LEVEL_UP, .. }) if *target == id
+    )));
+}
+
+#[test]
+fn npc_repair_charges_gold_and_applies_normal_or_special_durability() {
+    let Some(mut world) = world() else { return };
+    let (page, info) = world
+        .data
+        .npc_pages
+        .values()
+        .filter(|page| page.dialog_type == 2)
+        .find_map(|page| {
+            world
+                .data
+                .items
+                .values()
+                .find(|item| {
+                    page.types.contains(&item.item_type)
+                        && item.item_type != mir_proto::item_type::WEAPON
+                        && item.can_repair
+                        && item.durability >= 1500
+                        && item.price > 0
+                        && item.sell_rate > 0.0
+                        && item.sell_rate < 1.0
+                })
+                .map(|item| (page.index, item.index))
+        })
+        .expect("repair page with a repairable non-weapon");
+    let me = world
+        .add_player(1, 1, &test_character("RepairTester"))
+        .unwrap();
+    world.test_give_item(me, info, 1);
+    let slot = world.test_slot_of(me, info).unwrap();
+    let item_id = {
+        let item = world
+            .objects
+            .get_mut(&me)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .bag
+            .inventory[slot as usize]
+            .as_mut()
+            .unwrap();
+        item.durability -= 1500;
+        item.id
+    };
+    world.test_open_page(me, page);
+    let before = world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+        .as_ref()
+        .unwrap()
+        .clone();
+    let price = crate::items::repair_cost(&world.data.items[&info], &before, false);
+    assert!(price > 0);
+    world.test_set_gold(me, price - 1);
+    world.npc_repair(me, vec![(Grid::Inventory, slot, item_id)], false);
+    assert_eq!(
+        world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+            .as_ref()
+            .unwrap()
+            .durability,
+        before.durability
+    );
+    world.test_set_gold(me, price + 100);
+    world.npc_repair(me, vec![(Grid::Inventory, slot, item_id)], false);
+    let normal = world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+        .as_ref()
+        .unwrap();
+    assert_eq!(normal.max_durability, before.max_durability - 1500 / 15);
+    assert_eq!(normal.durability, normal.max_durability);
+    assert_eq!(world.objects[&me].player().unwrap().bag.gold, 100);
+
+    let normal_max = normal.max_durability;
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .bag
+        .inventory[slot as usize]
+        .as_mut()
+        .unwrap()
+        .durability -= 1500;
+    let worn = world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+        .as_ref()
+        .unwrap()
+        .clone();
+    let special_price = crate::items::repair_cost(&world.data.items[&info], &worn, true);
+    world.test_set_gold(me, special_price + 100);
+    world.npc_repair(me, vec![(Grid::Inventory, slot, item_id)], true);
+    let special = world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+        .as_ref()
+        .unwrap();
+    assert_eq!(special.max_durability, normal_max);
+    assert_eq!(special.durability, normal_max);
+    assert!(special.special_repair_until > 0);
+    assert_eq!(world.objects[&me].player().unwrap().bag.gold, 100);
+}
+
+#[test]
+fn primary_attack_grows_with_every_level_for_each_class() {
+    let Some(mut world) = world() else { return };
+    for (index, class) in mir_proto::Class::ALL.into_iter().enumerate() {
+        let mut rec = test_character(class.name());
+        rec.class = class;
+        rec.next_item_id = 1; // No starter equipment bonuses.
+        let id = world.add_player(index as u64 + 1, 1, &rec).unwrap();
+        let primary = |world: &World| {
+            let s = &world.objects[&id].stats;
+            match class {
+                mir_proto::Class::Warrior | mir_proto::Class::Assassin => s.max_dc,
+                mir_proto::Class::Wizard => s.max_mc,
+                mir_proto::Class::Taoist => s.max_sc,
+            }
+        };
+        let mut previous = primary(&world);
+        for level in 1..90 {
+            world.gain_experience_test(id, GameData::max_experience(level));
+            let next = primary(&world);
+            assert_eq!(world.objects[&id].player().unwrap().level, level + 1);
+            assert!(
+                next > previous,
+                "{class:?} level {level} to {}: {previous} to {next}",
+                level + 1
+            );
+            previous = next;
+        }
+    }
+}
+
+#[test]
+fn character_levels_through_255_and_stops_at_1000() {
+    let Some(mut world) = world() else { return };
+    let id = world
+        .add_player(1, 1, &test_character("level_cap"))
+        .unwrap();
+    let class = world.objects[&id].player().unwrap().class.mir_class();
+    let hp_at_90 = world.data.player_base_stat(class, 90).unwrap().health;
+    let hp_at_1000 = world.data.player_base_stat(class, 1000).unwrap().health;
+    assert!(hp_at_1000 > hp_at_90);
+    assert!(GameData::max_experience(255) > GameData::max_experience(100));
+
+    world
+        .objects
+        .get_mut(&id)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .level = 255;
+    world.gain_experience_test(id, GameData::max_experience(255));
+    assert_eq!(world.objects[&id].player().unwrap().level, 256);
+
+    world
+        .objects
+        .get_mut(&id)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .level = 999;
+    world
+        .objects
+        .get_mut(&id)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .experience = 0;
+    world.gain_experience_test(id, GameData::max_experience(999));
+    assert_eq!(world.objects[&id].player().unwrap().level, 1000);
+    assert_eq!(world.objects[&id].player().unwrap().experience, 0);
+    assert_eq!(GameData::max_experience(1000), 0);
+    world.gain_experience_test(id, 1_000_000);
+    assert_eq!(world.objects[&id].player().unwrap().level, 1000);
+    assert_eq!(world.objects[&id].player().unwrap().experience, 0);
+}
+
 fn drain(world: &mut World) -> Vec<ServerMessage> {
     world
         .outgoing
@@ -25,8 +214,634 @@ fn drain(world: &mut World) -> Vec<ServerMessage> {
         .collect()
 }
 
+mod accessory_refine;
+mod gm_options;
 mod market;
+mod poison_merge;
+mod poison_target;
+mod poison_tick;
 mod sets;
+mod special_drops;
+mod store;
+mod unfinished_features;
+mod weapon_craft;
+
+#[test]
+fn life_pills_bundle_to_999() {
+    let Some(mut world) = world() else { return };
+    let me = world
+        .add_player(1, 1, &test_character("PillTester"))
+        .unwrap();
+    let pill = world
+        .data
+        .items
+        .values()
+        .find(|item| item.name == "Life Pill")
+        .unwrap()
+        .index;
+    world.test_give_item(me, pill, 1200);
+    let mut counts: Vec<_> = world.objects[&me]
+        .player()
+        .unwrap()
+        .bag
+        .inventory
+        .iter()
+        .flatten()
+        .filter(|item| item.info == pill)
+        .map(|item| item.count)
+        .collect();
+    counts.sort_unstable();
+    assert_eq!(counts, [201, 999]);
+}
+
+#[test]
+fn equipped_weapon_exposes_database_exterior_effect() {
+    let Some(mut world) = world() else { return };
+    let me = world
+        .add_player(1, 1, &test_character("EffectTester"))
+        .unwrap();
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .level = 255;
+    world.test_give_item(me, 1162, 1); // Chaotic Heaven Blade
+    let slot = world.test_slot_of(me, 1162).unwrap();
+    world.item_use(me, slot);
+    assert_eq!(world.test_equipped(me, mir_proto::slot::WEAPON), Some(1162));
+    assert!(matches!(
+        &world.objects[&me].appearance,
+        Appearance::Player {
+            weapon_effect: 110,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn chaotic_and_janitor_weapons_equip_for_their_required_classes() {
+    let Some(mut world) = world() else { return };
+    for (conn, class, item, shape, effect) in [
+        (10, mir_proto::Class::Wizard, 1162, 44, 110),
+        (11, mir_proto::Class::Wizard, 1163, 67, 111),
+        (12, mir_proto::Class::Assassin, 1164, 1114, 112),
+        (13, mir_proto::Class::Assassin, 1165, 1263, 110),
+    ] {
+        let mut character = test_character(&format!("Weapon{item}"));
+        character.class = class;
+        character.level = 70;
+        character.next_item_id = 1;
+        let player = world.add_player(conn, conn as u32, &character).unwrap();
+        world.test_give_item(player, item, 1);
+        world.item_use(player, world.test_slot_of(player, item).unwrap());
+        assert_eq!(
+            world.test_equipped(player, mir_proto::slot::WEAPON),
+            Some(item)
+        );
+        assert!(matches!(world.objects[&player].appearance,
+            Appearance::Player { weapon: Some(actual), weapon_effect, .. }
+                if actual == shape && weapon_effect == effect));
+    }
+    let mut wizard = test_character("WrongClass");
+    wizard.class = mir_proto::Class::Wizard;
+    wizard.level = 70;
+    wizard.next_item_id = 1;
+    let player = world.add_player(14, 14, &wizard).unwrap();
+    world.test_give_item(player, 1164, 1);
+    world.item_use(player, world.test_slot_of(player, 1164).unwrap());
+    assert_eq!(world.test_equipped(player, mir_proto::slot::WEAPON), None);
+    assert!(world.outgoing.iter().any(|message| matches!(message,
+        Outgoing::To(14, ServerMessage::Chat { text }) if text == "Your class cannot use this item"
+    )));
+}
+
+#[test]
+fn royal_and_blue_dragon_horse_armour_equip_and_keep_their_shapes() {
+    let Some(mut world) = world() else { return };
+    let mut character = test_character("HorseArmour");
+    character.level = 70;
+    character.next_item_id = 1;
+    let player = world.add_player(1, 1, &character).unwrap();
+    {
+        let rider = world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap();
+        rider.mounted = true;
+        rider.horse = 1;
+    }
+    for (item, shape) in [(1166, 6), (1167, 7)] {
+        world.test_give_item(player, item, 1);
+        world.item_use(player, world.test_slot_of(player, item).unwrap());
+        assert_eq!(
+            world.test_equipped(player, mir_proto::slot::HORSE_ARMOUR),
+            Some(item)
+        );
+        assert!(matches!(world.objects[&player].appearance,
+            Appearance::Player { horse_shape, horse: 1, .. } if horse_shape == shape));
+    }
+}
+
+#[test]
+fn benediction_oil_changes_weapon_luck_and_preserves_oil_on_invalid_use() {
+    let Some(mut world) = world() else { return };
+    assert_eq!(world.data.items[&296].shape, 4);
+    let mut character = test_character("BenedictionTester");
+    character.next_item_id = 1; // No starter weapon.
+    let me = world.add_player(1, 1, &character).unwrap();
+    world.test_give_item(me, 296, 1);
+    let oil_slot = world.test_slot_of(me, 296).unwrap();
+    world.item_use(me, oil_slot);
+    assert_eq!(
+        world.objects[&me].player().unwrap().bag.inventory[oil_slot as usize]
+            .as_ref()
+            .unwrap()
+            .count,
+        1
+    );
+
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .level = 255;
+    world.test_give_item(me, 1162, 1);
+    let weapon_slot = world.test_slot_of(me, 1162).unwrap();
+    world.item_use(me, weapon_slot);
+    let before_luck = world.objects[&me].stats.luck;
+    world.outgoing.clear();
+    world.item_use(me, oil_slot);
+    let p = world.objects[&me].player().unwrap();
+    let weapon = p.bag.equipment[mir_proto::slot::WEAPON].as_ref().unwrap();
+    let change = weapon
+        .added
+        .iter()
+        .find(|s| {
+            s.stat == mir_formats::mirdb::stat::LUCK
+                && s.source == crate::items::StatSource::Enhancement
+        })
+        .unwrap()
+        .amount;
+    assert!(change == 1 || change == -1);
+    assert_eq!(world.objects[&me].stats.luck, before_luck + change);
+    assert!(p.bag.inventory[oil_slot as usize].is_none());
+    assert!(world.outgoing.iter().any(|event| matches!(event,
+        Outgoing::To(1, ServerMessage::ItemChanged {
+            grid: Grid::Equipment,
+            slot: 0,
+            item: Some(item),
+        }) if item.enhancements.contains(&(mir_formats::mirdb::stat::LUCK, change))
+    )));
+
+    let weapon = world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .bag
+        .equipment[mir_proto::slot::WEAPON]
+        .as_mut()
+        .unwrap();
+    weapon.add_stat(
+        mir_formats::mirdb::stat::LUCK,
+        7 - change,
+        crate::items::StatSource::Enhancement,
+    );
+    world.test_give_item(me, 296, 1);
+    let capped_oil_slot = world.test_slot_of(me, 296).unwrap();
+    world.item_use(me, capped_oil_slot);
+    assert_eq!(
+        world.objects[&me].player().unwrap().bag.inventory[capped_oil_slot as usize]
+            .as_ref()
+            .unwrap()
+            .count,
+        1
+    );
+}
+
+#[test]
+fn wardrobe_requires_owned_armour_changes_only_appearance_and_survives_snapshot() {
+    let Some(mut world) = world() else { return };
+    let def = world
+        .data
+        .items
+        .values()
+        .find(|def| def.item_type == mir_proto::item_type::ARMOUR && def.shape > 0 && def.can_drop)
+        .expect("armour with a body sprite")
+        .clone();
+    // Installed defaults have no armour ExteriorEffect; authored armour may.
+    world
+        .data
+        .items
+        .get_mut(&def.index)
+        .unwrap()
+        .exterior_effect = 42;
+    let mut saved = test_character("WardrobeTester");
+    let me = world.add_player(1, 1, &saved).unwrap();
+    let viewer = world
+        .add_player(2, 2, &test_character("WardrobeViewer"))
+        .unwrap();
+    let base = (world.objects[&me].stats.max_dc, world.objects[&me].max_hp);
+    world.set_wardrobe(me, Some(def.index));
+    assert_eq!(world.objects[&me].player().unwrap().wardrobe_item, None);
+    world.test_give_item(me, def.index, 1);
+    let slot = world.test_slot_of(me, def.index).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    world.set_wardrobe(me, Some(def.index));
+    world.tick(1);
+    assert!(world.outgoing.iter().any(|out| matches!(
+        out,
+        Outgoing::To(2, ServerMessage::ObjectAppearance { id, appearance: Appearance::Player { armour, .. } })
+            if *id == me && *armour == def.shape as u16
+    )), "visible player did not receive the new look");
+    assert!(drain(&mut world).iter().any(|msg| matches!(
+        msg,
+        ServerMessage::ObjectAppearance { id, appearance: Appearance::Player { armour, .. } }
+            if *id == me && *armour == def.shape as u16
+    )));
+    assert!(matches!(
+        &world.objects[&me].appearance,
+        Appearance::Player { armour, armour_effect, .. }
+            if *armour == def.shape as u16 && *armour_effect == 42
+    ));
+    assert_eq!(
+        (world.objects[&me].stats.max_dc, world.objects[&me].max_hp),
+        base
+    );
+    world.snapshot(me, &mut saved);
+    assert_eq!(saved.wardrobe_item, Some(def.index));
+    world.item_drop(me, slot, 1);
+    assert_eq!(
+        world.objects[&me].player().unwrap().wardrobe_item,
+        Some(def.index)
+    );
+    world.snapshot(me, &mut saved);
+    assert!(saved.items.iter().all(|item| item.item.info != def.index));
+    let reloaded = world.add_player(3, 3, &saved).unwrap();
+    assert_ne!(reloaded, viewer);
+    assert_eq!(
+        world.objects[&reloaded].player().unwrap().wardrobe_item,
+        Some(def.index)
+    );
+    assert!(matches!(
+        world.objects[&reloaded].appearance,
+        Appearance::Player { armour, .. } if armour == def.shape as u16
+    ));
+    world.set_wardrobe(me, None);
+    assert_eq!(world.objects[&me].player().unwrap().wardrobe_item, None);
+}
+
+#[test]
+fn wardrobe_helmet_weapon_and_shoes_require_owned_items_and_survive_relog() {
+    let Some(mut world) = world() else { return };
+    let find = |kind| {
+        world
+            .data
+            .items
+            .values()
+            .find(|def| def.item_type == kind && def.shape > 0)
+            .unwrap()
+            .index
+    };
+    let helmet = find(mir_proto::item_type::HELMET);
+    let weapon = world
+        .data
+        .items
+        .values()
+        .find(|def| {
+            def.item_type == mir_proto::item_type::WEAPON
+                && def.shape > 0
+                && def.exterior_effect > 0
+        })
+        .unwrap()
+        .index;
+    let shoes = world
+        .data
+        .items
+        .values()
+        .find(|def| def.item_type == mir_proto::item_type::SHOES)
+        .unwrap()
+        .index;
+    let mut saved = test_character("WardrobeSlots");
+    let me = world.add_player(1, 1, &saved).unwrap();
+    let base = world.objects[&me].stats.max_dc;
+    world.set_wardrobe_slot(me, mir_proto::slot::HELMET, Some(helmet));
+    assert_eq!(world.objects[&me].player().unwrap().wardrobe_helmet, None);
+    world.test_give_item(me, helmet, 1);
+    world.test_give_item(me, weapon, 1);
+    world.test_give_item(me, shoes, 1);
+    let shoe_slot = world.test_slot_of(me, shoes).unwrap() as usize;
+    {
+        let bag = &mut world
+            .objects
+            .get_mut(&me)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .bag;
+        bag.storage[0] = bag.inventory[shoe_slot].take();
+    }
+    world.set_wardrobe_slot(me, mir_proto::slot::HELMET, Some(weapon));
+    assert_eq!(world.objects[&me].player().unwrap().wardrobe_helmet, None);
+    world.set_wardrobe_slot(me, mir_proto::slot::HELMET, Some(helmet));
+    world.set_wardrobe_slot(me, mir_proto::slot::WEAPON, Some(weapon));
+    world.set_wardrobe_slot(me, mir_proto::slot::SHOES, Some(shoes));
+    let p = world.objects[&me].player().unwrap();
+    assert_eq!(
+        (p.wardrobe_helmet, p.wardrobe_weapon, p.wardrobe_shoes),
+        (Some(helmet), Some(weapon), Some(shoes))
+    );
+    assert_eq!(world.objects[&me].stats.max_dc, base);
+    assert!(matches!(&world.objects[&me].appearance,
+        Appearance::Player { helmet: h, weapon: Some(w), weapon_effect, .. }
+            if *h == world.data.items[&helmet].shape as u16
+                && *w == world.data.items[&weapon].shape as u16
+                && *weapon_effect == world.data.items[&weapon].exterior_effect));
+    world.snapshot(me, &mut saved);
+    let restored = world.add_player(2, 2, &saved).unwrap();
+    let p = world.objects[&restored].player().unwrap();
+    assert_eq!(
+        (p.wardrobe_helmet, p.wardrobe_weapon, p.wardrobe_shoes),
+        (Some(helmet), Some(weapon), Some(shoes))
+    );
+}
+
+#[test]
+fn wyvern_armour_has_authored_blue_glow_without_lighting_commoner_outfit() {
+    let Some(mut world) = world() else { return };
+    let mut character = test_character("ArmourGlow");
+    character.gender = mir_proto::Gender::Female;
+    character.level = 70;
+    character.next_item_id = 1;
+    let me = world.add_player(1, 1, &character).unwrap();
+    assert_eq!(world.data.items[&351].exterior_effect, 0);
+    assert_eq!(mir_proto::equipment_visual::armour_effect(128, 0), 0);
+    world.test_give_item(me, 128, 1);
+    let commoner = world.test_slot_of(me, 128).unwrap();
+    world.item_use(me, commoner);
+    assert!(matches!(
+        world.objects[&me].appearance,
+        Appearance::Player {
+            armour_effect: 0,
+            ..
+        }
+    ));
+    world.test_give_item(me, 351, 1);
+    let wyvern = world.test_slot_of(me, 351).unwrap();
+    world.item_use(me, wyvern);
+    assert_eq!(world.test_equipped(me, mir_proto::slot::ARMOUR), Some(351));
+    assert!(matches!(
+        world.objects[&me].appearance,
+        Appearance::Player {
+            armour_effect: 3,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn owned_odyn_looks_get_weapon_shaped_glow_and_preserve_stats() {
+    let Some(mut world) = world() else { return };
+    let me = world.add_player(1, 1, &test_character("OdynGlow")).unwrap();
+    let base = world.objects[&me].stats.max_dc;
+    assert_eq!(mir_proto::equipment_visual::weapon_effect(1069, 111), 111);
+    assert_eq!(mir_proto::equipment_visual::weapon_effect(100, 0), 0);
+    for (item, effect) in [(1069, 240), (1070, 241), (1072, 242), (1079, 243)] {
+        assert_eq!(world.data.items[&item].exterior_effect, 0);
+        world.test_give_item(me, item, 1);
+        world.set_wardrobe_slot(me, mir_proto::slot::WEAPON, Some(item));
+        assert!(matches!(world.objects[&me].appearance,
+            Appearance::Player { weapon: Some(136), weapon_effect, .. } if weapon_effect == effect));
+    }
+    assert_eq!(world.objects[&me].stats.max_dc, base);
+}
+
+#[test]
+fn mounted_player_can_equip_mark_but_cannot_drink_potion() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Rider")).unwrap();
+    let player = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+    player.level = 15;
+    player.mounted = true;
+    world.test_give_item(me, 709, 1); // Mark Of Destruction [T]
+    let slot = world.test_slot_of(me, 709).unwrap();
+    world.item_use(me, slot);
+    assert_eq!(world.test_equipped(me, mir_proto::slot::TORCH), Some(709));
+
+    world.test_give_item(me, 793, 1); // Thorned Rose
+    let slot = world.test_slot_of(me, 793).unwrap();
+    world.item_use(me, slot);
+    assert_eq!(world.test_equipped(me, mir_proto::slot::FLOWER), Some(793));
+
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|item| item.name == "Healing Potion")
+        .unwrap()
+        .index;
+    world.test_give_item(me, potion, 1);
+    let slot = world.test_slot_of(me, potion).unwrap();
+    world.item_use(me, slot);
+    assert!(drain(&mut world).iter().any(|message| matches!(message,
+        ServerMessage::Chat { text } if text == "You cannot use items while riding"
+    )));
+    assert!(world.test_slot_of(me, potion).is_some());
+}
+
+#[test]
+fn town_scroll_chooses_the_nearest_exit_from_phantom_forest() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    world.ensure_map(12).unwrap();
+    for town in [1, 6] {
+        let movement = world
+            .data
+            .movements
+            .iter()
+            .find(|movement| {
+                world.data.regions[&movement.source_region].map == 12
+                    && world.data.regions[&movement.destination_region].map == town
+            })
+            .unwrap();
+        let width = world.maps[&12].file.width as i32;
+        let (x, y) = world.data.regions[&movement.source_region].movement_points(width)[0];
+        let zone = world
+            .test_nearest_town_region(12, Point::new(x, y))
+            .unwrap();
+        assert_eq!(world.data.regions[&zone].map, town);
+    }
+}
+
+#[test]
+fn startup_rates_control_drop_specials_and_experience() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Rates")).unwrap();
+    world.test_give_item(me, 126, 1); // starting weapon
+    let slot = world.test_slot_of(me, 126).unwrap();
+    let plain = world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+        .clone()
+        .unwrap();
+    let mut item = plain.clone();
+    for _ in 0..100 {
+        world.test_roll_drop_bonus(&mut item);
+    }
+    assert!(item.added.is_empty());
+
+    world.drop_specials = true;
+    let mut found_mc = false;
+    for _ in 0..1000 {
+        let mut item = plain.clone();
+        world.test_roll_drop_bonus(&mut item);
+        found_mc |= item.bonus(mir_formats::mirdb::stat::MAX_MC) == 1;
+    }
+    assert!(found_mc, "enabled drops can gain +1 MC");
+
+    world.experience_multiplier = 2.0;
+    world.gain_experience_test(me, 10);
+    assert_eq!(world.test_experience(me), 20);
+}
+
+#[test]
+fn xp_rates_rebirth_fraction_and_reward_weapon_experience() {
+    let Some(mut world) = world() else { return };
+    let me = world.add_player(1, 1, &test_character("XpRules")).unwrap();
+    world.data.items.get_mut(&968).unwrap().stats.extend([
+        (mir_formats::mirdb::stat::EXPERIENCE_RATE, 50),
+        (mir_formats::mirdb::stat::BASE_EXPERIENCE_RATE, 100),
+    ]);
+    world.test_give_item(me, 968, 1);
+    let slot = world.test_slot_of(me, 968).unwrap();
+    {
+        let p = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+        p.bag.equipment[0] = p.bag.inventory[slot as usize].take();
+        p.bag.equipment[0].as_mut().unwrap().level = 1;
+        p.rebirth = 1;
+    }
+    world.experience_multiplier = 2.0;
+    world.gain_reward_experience_test(me, 20);
+    let p = world.objects[&me].player().unwrap();
+    assert_eq!(p.experience, 60); // 20 * 1.5 * 2 * 2 * 0.5
+    assert_eq!(
+        p.bag.equipment[0]
+            .as_ref()
+            .unwrap()
+            .weapon_experience_tenths,
+        60
+    );
+
+    // Old saves and repeated small awards retain fractional C# decimal XP.
+    let mut record = test_character("XpRules");
+    let p = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+    p.bag.equipment[0] = None;
+    p.experience = 0;
+    p.experience_fraction = 0.0;
+    world.experience_multiplier = 1.0;
+    world.gain_reward_experience_test(me, 1);
+    assert_eq!(world.test_experience(me), 0);
+    world.snapshot(me, &mut record);
+    assert_eq!(record.experience_fraction, 0.5);
+    world.gain_reward_experience_test(me, 1);
+    assert_eq!(world.test_experience(me), 1);
+    assert_eq!(
+        world.objects[&me].player().unwrap().experience_fraction,
+        0.0
+    );
+
+    let guildie = world.add_player(2, 2, &test_character("GuildXp")).unwrap();
+    world
+        .objects
+        .get_mut(&guildie)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .bag
+        .gold = 10_000_000;
+    world.guild_create(guildie, "XpGuild".into(), 1);
+    world.gain_reward_experience_test(guildie, 10);
+    assert_eq!(world.test_experience(guildie), 13); // C# guild buff: +30% at <=15 members.
+
+    let mut pet_record = test_character("PetXp");
+    pet_record.id = 3;
+    let pet_owner = world.add_player(3, 3, &pet_record).unwrap();
+    let p = world
+        .objects
+        .get_mut(&pet_owner)
+        .unwrap()
+        .player_mut()
+        .unwrap();
+    p.companions.push(world::StoredCompanion {
+        index: 1,
+        info: 1,
+        name: "Pet".into(),
+        level: 3,
+        experience: 0,
+        hunger: 10,
+        items: Vec::new(),
+        food: None,
+        bag: None,
+        bonuses: vec![(3, mir_formats::mirdb::stat::EXPERIENCE_RATE, 50)],
+    });
+    p.active_companion = Some(1);
+    world.gain_reward_experience_test(pet_owner, 2);
+    assert_eq!(world.test_experience(pet_owner), 3);
+    world
+        .objects
+        .get_mut(&pet_owner)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .companions[0]
+        .hunger = 0;
+    world.gain_reward_experience_test(pet_owner, 2);
+    assert_eq!(world.test_experience(pet_owner), 5);
+
+    let mut legacy = serde_json::to_value(test_character("LegacyXp")).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("experience_fraction");
+    let loaded: crate::accounts::CharacterRecord = serde_json::from_value(legacy).unwrap();
+    assert_eq!(loaded.experience_fraction, 0.0);
+}
+
+#[test]
+fn mana_potion_restores_mp() {
+    let Some(mut world) = world() else {
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Mana")).unwrap();
+    for info in [143, 152] {
+        let expected = if info == 143 { 40 } else { 320 };
+        assert_eq!(
+            world.data.items[&info].stat(mir_formats::mirdb::stat::MANA),
+            expected
+        );
+        let player = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+        player.mp = 0;
+        player.use_item_time = 0;
+        world.test_give_item(me, info, 1);
+        let slot = world.test_slot_of(me, info).unwrap();
+        world.item_use(me, slot);
+        assert!(world.objects[&me].player().unwrap().mp > 0);
+        assert!(drain(&mut world).iter().any(|message| matches!(message,
+            ServerMessage::StatsChanged(stats) if stats.mp > 0
+        )));
+    }
+}
 
 #[test]
 fn warrior_kills_adjacent_monster_and_gains_experience() {
@@ -170,7 +985,7 @@ fn dead_player_returns_to_town_on_request() {
 }
 
 #[test]
-fn chicken_drops_meat_that_can_be_picked_up_and_sold() {
+fn chicken_must_be_harvested_before_its_meat_can_be_sold() {
     let Some(mut world) = world() else {
         return;
     };
@@ -204,34 +1019,40 @@ fn chicken_drops_meat_that_can_be_picked_up_and_sold() {
             break;
         }
     }
-    // Chicken Meat (179) has Chance 1 => always drops.
-    let meat = world
+    // Chicken Meat is guaranteed, but stays on the body until three swings.
+    assert!(!world
         .objects
         .values()
-        .find(|o| matches!(&o.appearance, Appearance::Item { info: 179, .. }))
-        .map(|o| (o.id, o.location))
-        .expect("meat on the ground");
-    world.teleport(me, meat.1);
-    world.pick_up(me);
-    let (_, bag) = world.test_bag(me);
-    assert!(
-        bag.iter().any(|(info, _)| *info == 179),
-        "meat should be in the bag: {bag:?}"
-    );
-    assert!(!world.objects.contains_key(&meat.0));
+        .any(|o| matches!(o.appearance, Appearance::Item { info: 179, .. })));
+    for swing in 0..3 {
+        now += 600;
+        world.tick(now);
+        world.harvest(me, dir);
+        if swing < 2 {
+            assert!(!world.test_bag(me).1.iter().any(|(info, _)| *info == 179));
+        }
+    }
+    assert!(world.test_bag(me).1.iter().any(|(info, _)| *info == 179));
+    assert!(world.objects[&victim]
+        .monster()
+        .unwrap()
+        .harvest_drops
+        .is_empty());
 
     // Sell it to the meat shop page (4) which buys ItemType 12.
     world.test_set_gold(me, 0);
     world.test_open_page(me, 4);
-    let slot = world.objects[&me]
+    let slots = world.objects[&me]
         .player()
         .unwrap()
         .bag
         .inventory
         .iter()
-        .position(|s| s.as_ref().map(|i| i.info == 179).unwrap_or(false))
-        .unwrap() as u8;
-    world.npc_sell(me, vec![slot]);
+        .enumerate()
+        .filter_map(|(i, cell)| cell.as_ref().filter(|it| it.info == 179).map(|_| i as u8))
+        .map(|slot| (slot, 1))
+        .collect();
+    world.npc_sell(me, slots);
     let (gold, bag) = world.test_bag(me);
     assert!(gold > 0, "selling should pay gold");
     assert!(!bag.iter().any(|(info, _)| *info == 179));
@@ -893,6 +1714,480 @@ fn taoist_summons_a_skeleton_that_follows_and_fights() {
 }
 
 #[test]
+fn taoist_celestial_light_and_shinsu_use_talisman_charges() {
+    use mir_proto::{buff_type, slot};
+    let Some(mut world) = world() else { return };
+    let mut rec = test_character("Tao");
+    rec.class = mir_proto::Class::Taoist;
+    rec.level = 100;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let light = learn(&mut world, me, "Celestial Light");
+    let summon = learn(&mut world, me, "Summon Shinsu");
+    // Lazero's equipped Talisman Of Darkness is also shape 0 and valid.
+    let amulet = 221;
+    assert_eq!(world.data.items[&amulet].shape, 0);
+    world.test_give_item(me, amulet, 25);
+    let slot = world.test_slot_of(me, amulet).unwrap();
+    world.item_use(me, slot);
+    world.tick(3000);
+    let loc = world.objects[&me].location;
+    world.cast(me, light, Direction::Down, None, loc);
+    world.tick(4600);
+    assert!(world.objects[&me].has_buff(buff_type::CELESTIAL_LIGHT));
+    let charges = world.objects[&me].player().unwrap().bag.equipment[slot::AMULET]
+        .as_ref()
+        .unwrap()
+        .count;
+    assert_eq!(charges, 5);
+
+    world.tick(10_000);
+    world.test_refill_mp(me);
+    world.cast(me, summon, Direction::Down, None, loc);
+    world.tick(10_600);
+    let pet = world
+        .objects
+        .values()
+        .find(|o| matches!(&o.kind, world::Kind::Monster(m) if m.owner == Some(me)));
+    assert!(pet.is_some(), "Shinsu should spawn from five charges");
+    let pet_id = pet.unwrap().id;
+    drain(&mut world);
+    world.tick(11_800);
+    assert!(
+        drain(&mut world)
+            .iter()
+            .any(|m| { matches!(m, ServerMessage::ObjectShow(state) if state.id == pet_id) }),
+        "summoned Shinsu should appear to its owner"
+    );
+    assert!(world.objects[&me].player().unwrap().bag.equipment[slot::AMULET].is_none());
+}
+
+#[test]
+fn taoist_summon_explains_missing_talisman_charges() {
+    let Some(mut world) = world() else { return };
+    let mut rec = test_character("Tao");
+    rec.class = mir_proto::Class::Taoist;
+    rec.level = 100;
+    let me = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let summon = learn(&mut world, me, "Summon Shinsu");
+    world.tick(3000);
+    drain(&mut world);
+    let loc = world.objects[&me].location;
+    world.cast(me, summon, Direction::Down, None, loc);
+    assert!(drain(&mut world).iter().any(|m| {
+        matches!(m, ServerMessage::Chat { text } if text.contains("needs 5 Talisman charges") && text.contains("Amulet slot"))
+    }));
+}
+
+#[test]
+fn taoist_summon_families_follow_and_engage_only_after_owner_fights() {
+    let Some(mut world) = world() else { return };
+    let mut rec = test_character("Tao");
+    rec.class = mir_proto::Class::Taoist;
+    rec.level = 100;
+    let owner = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    let map = world.objects[&owner].map;
+    let start = world
+        .test_quiet_cell(map, world.objects[&owner].location)
+        .unwrap();
+    world.test_clear_monsters(map);
+    world.teleport(owner, start);
+    let dir = Direction::ALL
+        .iter()
+        .copied()
+        .find(|d| {
+            (1..=5).all(|n| {
+                let p = start.step(*d, n);
+                world.maps[&map].file.is_walkable(p.x, p.y)
+                    && world.maps[&map].objects_at(p).is_empty()
+            })
+        })
+        .expect("an open path for owner and pet");
+    let chicken_def = world
+        .data
+        .monsters
+        .values()
+        .find(|d| d.name == "Chicken")
+        .unwrap()
+        .index;
+
+    for flag in [1, 2, 3, 4, 9] {
+        world.set_pet_mode(owner, mir_proto::pet_mode::BOTH);
+        let def = world
+            .data
+            .monsters
+            .values()
+            .find(|d| d.flag == flag)
+            .unwrap()
+            .index;
+        let pet = world.test_spawn_monster(def, map, start.step(dir, 1), Some(owner));
+        let chicken = world.test_spawn_monster(chicken_def, map, start.step(dir, 2), None);
+        world.test_set_hp(chicken, 10_000);
+        let mut now = world.now;
+        for _ in 0..12 {
+            now += 500;
+            world.tick(now);
+        }
+        assert_eq!(
+            world.test_monster_target(pet),
+            None,
+            "flag {flag} picked a fight"
+        );
+
+        world.teleport(owner, start.step(dir, 5));
+        let before = world.objects[&pet]
+            .location
+            .distance(world.objects[&owner].location);
+        for _ in 0..12 {
+            now += 500;
+            world.tick(now);
+        }
+        let after = world.objects[&pet]
+            .location
+            .distance(world.objects[&owner].location);
+        assert!(
+            after < before,
+            "flag {flag} did not follow: {before} -> {after}"
+        );
+        assert_eq!(
+            world.test_monster_target(pet),
+            None,
+            "flag {flag} picked a fight while following"
+        );
+
+        world.test_damage(chicken, owner, 1);
+        assert_eq!(
+            world.test_monster_target(pet),
+            Some(chicken),
+            "flag {flag} ignored the owner's attack"
+        );
+        world
+            .objects
+            .get_mut(&pet)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .target = None;
+        world.test_damage(owner, chicken, 1);
+        assert_eq!(
+            world.test_monster_target(pet),
+            Some(chicken),
+            "flag {flag} ignored an attack on its owner"
+        );
+
+        world
+            .objects
+            .get_mut(&pet)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .target = None;
+        world.set_pet_mode(owner, mir_proto::pet_mode::ATTACK);
+        let held = world.objects[&pet].location;
+        world.teleport(owner, start);
+        now += 2500;
+        world.tick(now);
+        assert_eq!(
+            world.objects[&pet].location, held,
+            "flag {flag} moved in Attack mode"
+        );
+        world.test_damage(chicken, owner, 1);
+        assert_eq!(
+            world.test_monster_target(pet),
+            Some(chicken),
+            "flag {flag} ignored Attack mode"
+        );
+
+        for mode in [
+            mir_proto::pet_mode::MOVE,
+            mir_proto::pet_mode::PVP,
+            mir_proto::pet_mode::NONE,
+        ] {
+            world.set_pet_mode(owner, mode);
+            world
+                .objects
+                .get_mut(&pet)
+                .unwrap()
+                .monster_mut()
+                .unwrap()
+                .target = None;
+            world.test_damage(chicken, owner, 1);
+            assert_eq!(
+                world.test_monster_target(pet),
+                None,
+                "flag {flag} attacked a monster in mode {mode}"
+            );
+        }
+        world.set_pet_mode(owner, mir_proto::pet_mode::MOVE);
+        let before = world.objects[&pet].location.distance(start);
+        for _ in 0..8 {
+            now += 500;
+            world.tick(now);
+        }
+        assert!(
+            world.objects[&pet].location.distance(start) < before,
+            "flag {flag} did not follow in Move mode"
+        );
+
+        world.set_pet_mode(owner, mir_proto::pet_mode::BOTH);
+        world.test_damage(chicken, owner, 1);
+        assert_eq!(world.test_monster_target(pet), Some(chicken));
+        world.remove_object(chicken);
+        now += 500;
+        world.tick(now);
+        assert_eq!(
+            world.test_monster_target(pet),
+            None,
+            "flag {flag} kept a lost target"
+        );
+        if flag == 3 {
+            let enemy = world.add_player(2, 2, &test_character("Enemy")).unwrap();
+            world.teleport(enemy, start.step(dir, 2));
+            world.set_attack_mode(owner, mir_proto::attack_mode::ALL);
+            world.set_pet_mode(owner, mir_proto::pet_mode::PVP);
+            world.test_damage(owner, enemy, 1);
+            assert_eq!(
+                world.test_monster_target(pet),
+                Some(enemy),
+                "PvP Shinsu ignored an attack on its owner"
+            );
+            world.remove_object(enemy);
+            let next_map = world.data.map_by_file("0").unwrap().index;
+            assert_ne!(next_map, map, "transition test needs a different map");
+            let (next, _) = world.test_wall_spot(next_map).unwrap();
+            world.test_clear_monsters(next_map);
+            world.set_pet_mode(owner, mir_proto::pet_mode::MOVE);
+            world.test_change_map(owner, next_map, next);
+            now += 500;
+            world.tick(now);
+            assert!(
+                world.objects.contains_key(&pet),
+                "Shinsu was removed during map transition"
+            );
+            assert_eq!(
+                world.objects[&pet].map, next_map,
+                "Shinsu did not follow across maps"
+            );
+            world.test_change_map(owner, map, start);
+        }
+        world.remove_object(pet);
+        world.teleport(owner, start);
+    }
+}
+
+#[test]
+fn taoist_shinsu_summons_on_d504_with_blocked_behind_cell() {
+    use mir_proto::slot;
+    let Some(mut world) = world() else { return };
+    let mut rec = test_character("Tao");
+    rec.class = mir_proto::Class::Taoist;
+    rec.level = 100;
+    let owner = world.add_player(1, 1, &rec).unwrap();
+    world.tick(0);
+    let summon = learn(&mut world, owner, "Summon Shinsu");
+    world.test_give_item(owner, 221, 5);
+    let bag_slot = world.test_slot_of(owner, 221).unwrap();
+    world.item_use(owner, bag_slot);
+    let map = world.data.map_by_file("D504").unwrap().index;
+    let (loc, blocked) = world
+        .test_wall_spot(map)
+        .expect("D504 has a walkable wall edge");
+    world.test_clear_monsters(map);
+    world.test_change_map(owner, map, loc);
+    world.tick(3000);
+    drain(&mut world);
+    let behind = loc.step(blocked, 1);
+    assert!(!world.maps[&map].file.is_walkable(behind.x, behind.y));
+    world.cast(owner, summon, blocked.rotate(4), None, loc);
+    world.tick(3600);
+    let pet = world.objects.values().find(|o| {
+        matches!(&o.kind, world::Kind::Monster(m) if m.owner == Some(owner) && world.data.monsters[&m.def].flag == 3)
+    }).expect("Shinsu spawns at the caster when the behind cell is blocked").id;
+    assert_eq!(world.objects[&pet].map, map);
+    let pet_loc = world.objects[&pet].location;
+    assert_ne!(pet_loc, behind);
+    assert_ne!(pet_loc, loc, "an adjacent free cell is available on D504");
+    assert!(world.maps[&map].file.is_walkable(pet_loc.x, pet_loc.y));
+    assert!(pet_loc.distance(loc) <= 2);
+    drain(&mut world);
+    world.tick(4800);
+    assert!(
+        drain(&mut world)
+            .iter()
+            .any(|m| { matches!(m, ServerMessage::ObjectShow(state) if state.id == pet) }),
+        "the D504 Shinsu becomes visible"
+    );
+    assert!(world.objects[&owner].player().unwrap().bag.equipment[slot::AMULET].is_none());
+}
+
+#[test]
+fn pet_modes_gate_damage_and_pvp_safety() {
+    use mir_proto::{attack_mode, pet_mode};
+
+    let Some(mut world) = world() else {
+        return;
+    };
+    let owner = world.add_player(1, 1, &test_character("PetOwner")).unwrap();
+    let other = world
+        .add_player(2, 2, &test_character("PetTarget"))
+        .unwrap();
+    world.tick(0);
+    let map = world.objects[&owner].map;
+    let chickens: Vec<_> = world
+        .objects
+        .values()
+        .filter(|o| o.map == map && !o.dead)
+        .filter(|o| matches!(&o.appearance, Appearance::Monster { name, .. } if name == "Chicken"))
+        .map(|o| o.id)
+        .take(2)
+        .collect();
+    assert_eq!(chickens.len(), 2);
+    let (pet, wild) = (chickens[0], chickens[1]);
+    world
+        .objects
+        .get_mut(&pet)
+        .unwrap()
+        .monster_mut()
+        .unwrap()
+        .owner = Some(owner);
+    world
+        .objects
+        .get_mut(&pet)
+        .unwrap()
+        .monster_mut()
+        .unwrap()
+        .tame_until = u64::MAX;
+    world
+        .objects
+        .get_mut(&owner)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .pets
+        .push(pet);
+    world.test_set_hp(wild, 1000);
+
+    for (mode, should_hurt) in [
+        (pet_mode::BOTH, true),
+        (pet_mode::MOVE, false),
+        (pet_mode::ATTACK, true),
+        (pet_mode::PVP, false),
+        (pet_mode::NONE, false),
+    ] {
+        world
+            .objects
+            .get_mut(&owner)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .pet_mode = mode;
+        assert_eq!(
+            world.test_damage(wild, pet, 5) > 0,
+            should_hurt,
+            "mode {mode}"
+        );
+    }
+
+    let start = world.objects[&owner].location;
+    world.teleport(pet, start);
+    world.set_pet_mode(owner, pet_mode::PVP);
+    let mut saved = test_character("PetOwner");
+    world.snapshot(owner, &mut saved);
+    assert_eq!(saved.pet_mode, pet_mode::PVP);
+    world.set_attack_mode(owner, attack_mode::ALL);
+    assert_eq!(world.test_damage(other, pet, 5), 0, "pet in safe zone");
+    let outside = world.test_cell_outside_safe_zone(map, start).unwrap();
+    world.teleport(pet, outside);
+    world.teleport(other, outside);
+    world.test_set_hp(other, 1000);
+    world.set_attack_mode(owner, attack_mode::PEACE);
+    assert_eq!(world.test_damage(other, pet, 5), 0, "owner at peace");
+    world.set_attack_mode(owner, attack_mode::ALL);
+    for (mode, should_hurt) in [
+        (pet_mode::BOTH, true),
+        (pet_mode::MOVE, false),
+        (pet_mode::ATTACK, true),
+        (pet_mode::PVP, true),
+        (pet_mode::NONE, false),
+    ] {
+        world
+            .objects
+            .get_mut(&owner)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .pet_mode = mode;
+        assert_eq!(
+            world.test_damage(other, pet, 5) > 0,
+            should_hurt,
+            "mode {mode} player damage"
+        );
+    }
+
+    // Both and Attack can fight an enemy pet under the same owner rules.
+    world.teleport(wild, outside);
+    world
+        .objects
+        .get_mut(&wild)
+        .unwrap()
+        .monster_mut()
+        .unwrap()
+        .owner = Some(other);
+    for mode in [pet_mode::BOTH, pet_mode::ATTACK] {
+        world
+            .objects
+            .get_mut(&owner)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .pet_mode = mode;
+        assert!(world.test_damage(wild, pet, 5) > 0, "mode {mode} enemy pet");
+    }
+    world
+        .objects
+        .get_mut(&owner)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .pet_mode = pet_mode::PVP;
+    assert_eq!(world.test_damage(wild, pet, 5), 0, "PvP ignores pets");
+
+    // Recall follows the same movement permission as ordinary pet steps.
+    for mode in [pet_mode::ATTACK, pet_mode::NONE] {
+        world
+            .objects
+            .get_mut(&owner)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .pet_mode = mode;
+        world.objects.get_mut(&owner).unwrap().visible.remove(&pet);
+        world.tick(world.now + 1000);
+        assert_eq!(world.objects[&pet].location, outside, "mode {mode} moved");
+    }
+    for mode in [pet_mode::MOVE, pet_mode::PVP, pet_mode::BOTH] {
+        world.teleport(pet, outside);
+        world
+            .objects
+            .get_mut(&owner)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .pet_mode = mode;
+        world.objects.get_mut(&owner).unwrap().visible.remove(&pet);
+        world.tick(world.now + 1000);
+        assert!(
+            world.objects[&pet].location.distance(start) <= 1,
+            "mode {mode} did not recall"
+        );
+    }
+}
+
+#[test]
 fn taoist_traps_and_buffs() {
     let Some(mut world) = world() else {
         return;
@@ -1167,6 +2462,79 @@ fn passive_animals_do_not_aggro_but_hunters_do() {
 }
 
 #[test]
+fn monsters_start_aggro_one_cell_inside_view_range() {
+    let Some(mut world) = world() else { return };
+    let mut record = test_character("Hunter");
+    record.gm = true;
+    let me = world.add_player(1, 1, &record).unwrap();
+    world.tick(0);
+    let map = world.objects[&me].map;
+    let loc = world.objects[&me].location;
+    world.test_clear_monsters(map);
+    let wolf = world
+        .data
+        .monsters
+        .values()
+        .find(|m| m.name == "Wolf")
+        .unwrap();
+    let (wolf_id, range) = (wolf.index, wolf.view_range);
+    assert!(range > 1);
+    let at_distance = |distance| {
+        (0..world.maps[&map].file.height as i32)
+            .flat_map(|y| (0..world.maps[&map].file.width as i32).map(move |x| Point::new(x, y)))
+            .find(|p| p.distance(loc) == distance && world.maps[&map].file.is_walkable(p.x, p.y))
+            .unwrap()
+    };
+    let edge = at_distance(range);
+    let inside = at_distance(range - 1);
+    world.chat(me, format!("@monster {wolf_id}"));
+    let mob = world
+        .objects
+        .values()
+        .find(|o| o.is_monster() && o.monster_def() == wolf_id)
+        .unwrap()
+        .id;
+    world.teleport(mob, edge);
+    world.tick(3000);
+    assert_eq!(world.test_monster_target(mob), None);
+    world.teleport(mob, inside);
+    world.tick(6000);
+    assert_eq!(world.test_monster_target(mob), Some(me));
+}
+
+#[test]
+fn magic_shield_cast_during_run_keeps_movement_timer() {
+    let Some(mut world) = world() else { return };
+    let mut record = test_character("Runner");
+    record.class = mir_proto::Class::Wizard;
+    record.level = 50;
+    let me = world.add_player(1, 1, &record).unwrap();
+    world.tick(0);
+    let magic = learn(&mut world, me, "Magic Shield");
+    let map = world.objects[&me].map;
+    let loc = world.objects[&me].location;
+    let direction = Direction::ALL
+        .iter()
+        .copied()
+        .find(|d| {
+            (1..=2).all(|step| {
+                let p = loc.step(*d, step);
+                world.maps[&map].file.is_walkable(p.x, p.y)
+                    && world.maps[&map].objects_at(p).is_empty()
+            })
+        })
+        .unwrap();
+    world.player_move(me, direction, true);
+    let move_deadline = world.objects[&me].action_time;
+    world.tick(100);
+    let location = world.objects[&me].location;
+    world.cast(me, magic, direction, None, location);
+    assert_eq!(world.objects[&me].action_time, move_deadline);
+    world.tick(1300);
+    assert!(world.objects[&me].has_buff(mir_proto::buff_type::MAGIC_SHIELD));
+}
+
+#[test]
 fn move_is_validated_against_walls_and_objects() {
     let Some(mut world) = world() else {
         return;
@@ -1336,6 +2704,10 @@ fn quest_accept_progress_and_complete() {
         "quest log sent on entry"
     );
     let npc = world.test_open_npc(me, def.start_npc);
+    world.tick(100);
+    assert!(drain(&mut world).iter().any(|message| matches!(message,
+        ServerMessage::NpcQuestMarker { id, marker: 1 } if *id == npc
+    )));
     let offered = world.test_npc_quests(me, npc);
     assert!(
         offered.iter().any(|q| q.quest == 9 && q.state == 0),
@@ -1346,9 +2718,13 @@ fn quest_accept_progress_and_complete() {
         .test_quests(me)
         .iter()
         .any(|q| q.quest == 9 && !q.completed));
-    assert!(
-        matches!(drain(&mut world).last(), Some(ServerMessage::QuestChanged(q)) if q.quest == 9)
-    );
+    let messages = drain(&mut world);
+    assert!(messages.iter().any(|message| matches!(message,
+        ServerMessage::QuestChanged(q) if q.quest == 9
+    )));
+    assert!(messages.iter().any(|message| matches!(message,
+        ServerMessage::NpcQuestMarker { id, .. } if *id == npc
+    )));
     // Not offered twice.
     assert!(!world
         .test_npc_quests(me, npc)
@@ -1660,6 +3036,348 @@ fn chat_routes_local_shout_and_whisper() {
     // Group chat without a group is silently dropped.
     world.chat(bob, "!!team".into());
     assert!(said(&mut world).is_empty());
+}
+
+#[test]
+fn gm_commands_require_character_grant() {
+    let Some(mut world) = world() else { return };
+    let normal = world.add_player(1, 1, &test_character("Normal")).unwrap();
+    let mut record = test_character("Master");
+    record.gm = true;
+    let gm = world.add_player(2, 2, &record).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let monster = *world.data.monsters.keys().next().unwrap();
+    let before = world.objects.len();
+    world.chat(normal, format!("@spawn {monster}"));
+    assert_eq!(world.objects.len(), before);
+    assert!(world.outgoing.iter().any(|event| matches!(event,
+        Outgoing::To(1, ServerMessage::Say { text, .. }) if text == "GM access required."
+    )));
+    world.chat(gm, format!("@spawn {monster}"));
+    assert_eq!(world.objects.len(), before + 1);
+    world.chat(gm, "@level 7".into());
+    assert_eq!(world.objects[&gm].player().unwrap().level, 7);
+    world.chat(gm, "@level 70".into());
+    assert_eq!(world.objects[&gm].player().unwrap().level, 70);
+    world.chat(gm, "@level 40".into());
+    world.gain_experience_test(gm, GameData::max_experience(40));
+    assert_eq!(world.objects[&gm].player().unwrap().level, 41);
+    world.chat(gm, "@make 126".into());
+    assert!(world.objects[&gm]
+        .player()
+        .unwrap()
+        .bag
+        .inventory
+        .iter()
+        .flatten()
+        .any(|item| item.info == 126));
+    let gold = world.objects[&gm].player().unwrap().bag.gold;
+    world.chat(gm, "@make gold 100000".into());
+    assert_eq!(world.objects[&gm].player().unwrap().bag.gold, gold + 100000);
+    world.chat(gm, "@giveskills".into());
+    assert!(!world.objects[&gm].player().unwrap().magics.is_empty());
+    let dc = world.objects[&gm].stats.max_dc;
+    world.chat(gm, "@sethermitstat MaxDC 5".into());
+    assert_eq!(world.objects[&gm].stats.max_dc, dc + 5);
+    assert!(world.objects[&gm].player().unwrap().bag.equipment[mir_proto::slot::WEAPON].is_some());
+    world.chat(gm, "@addstat Weapon MaxDC 4".into());
+    assert_eq!(world.objects[&gm].stats.max_dc, dc + 9);
+    world.chat(gm, "@gamemaster".into());
+    world.chat(gm, "@superman".into());
+    world.chat(gm, "@observer".into());
+    let p = world.objects[&gm].player().unwrap();
+    assert!(p.gm_mode && p.superman && p.observer);
+    assert!(!world.objects[&normal].visible.contains(&gm));
+    world.chat(gm, "@gamemaster".into());
+    world.chat(gm, "@observer".into());
+    assert_eq!(world.test_damage(gm, normal, 100), 0);
+    let mut saved = record;
+    world.snapshot(gm, &mut saved);
+    assert_eq!(saved.hermit_stats, vec![(9, 5)]);
+    let changed_item = world
+        .data
+        .items
+        .values()
+        .find(|item| {
+            item.item_type == 25
+                || (item.required_type == 0 && (40..=56).contains(&item.required_amount))
+        })
+        .unwrap()
+        .index;
+    world.market_store.listings.push(world::market::Listing {
+        index: 1,
+        account: 1,
+        seller: "Normal".into(),
+        item: crate::items::UserItem::fresh(&world.data, changed_item, 1).unwrap(),
+        price: 1,
+        message: String::new(),
+        created: 0,
+    });
+    world.chat(gm, "@reboot".into());
+    assert!(world.market_store.listings.is_empty());
+    assert_eq!(world.mail_store.boxes[&1][0].items[0].info, changed_item);
+}
+
+#[test]
+fn gm_makespecial_guarantees_equipment_bonuses_without_drop_toggle() {
+    let Some(mut world) = world() else { return };
+    let mut record = test_character("SpecialMaker");
+    record.gm = true;
+    let gm = world.add_player(1, 1, &record).unwrap();
+    assert!(!world.drop_specials);
+    world.chat(gm, "@make 126".into());
+    world.chat(gm, "@makespecial 126 2".into());
+    let swords: Vec<_> = world.objects[&gm]
+        .player()
+        .unwrap()
+        .bag
+        .inventory
+        .iter()
+        .flatten()
+        .filter(|item| item.info == 126)
+        .collect();
+    assert_eq!(swords.len(), 3);
+    assert_eq!(
+        swords.iter().filter(|item| item.added.is_empty()).count(),
+        1
+    );
+    assert_eq!(
+        swords.iter().filter(|item| !item.added.is_empty()).count(),
+        2
+    );
+}
+
+#[test]
+fn special_item_sale_and_repair_prices_follow_original_stats() {
+    let Some(world) = world() else { return };
+    let mut def = world.data.items[&126].clone();
+    def.price = 1000;
+    def.durability = 5000;
+    def.sell_rate = 1.0;
+    def.stats.retain(|stat, _| !(56..=59).contains(stat));
+    let mut item = crate::items::UserItem::fresh(&world.data, 126, 1).unwrap();
+    item.durability = 5000;
+    item.max_durability = 5000;
+    assert_eq!(crate::items::sell_price(&def, &item), 1000);
+    item.add_stat(
+        mir_formats::mirdb::stat::MAX_MC,
+        3,
+        crate::items::StatSource::Added,
+    );
+    assert_eq!(crate::items::sell_price(&def, &item), 1300);
+    item.durability = 2500;
+    assert_eq!(crate::items::sell_price(&def, &item), 1137);
+    assert_eq!(crate::items::repair_cost(&def, &item, false), 163);
+    assert_eq!(crate::items::repair_cost(&def, &item, true), 326);
+    item.durability = 5000;
+    def.stats.insert(59, 1);
+    assert_eq!(crate::items::sell_price(&def, &item), 1560);
+}
+
+#[test]
+fn gm_moblocation_finds_saved_spawn_by_id_and_name() {
+    let Some(mut world) = world() else { return };
+    let normal = world.add_player(1, 1, &test_character("Normal")).unwrap();
+    let mut record = test_character("Master");
+    record.gm = true;
+    let gm = world.add_player(2, 2, &record).unwrap();
+    let map = world.objects[&gm].map;
+    let spawn = world.maps[&map].spawns.first().unwrap();
+    let monster_id = spawn.def.monster;
+    let monster_name = world.data.monsters[&monster_id].name.clone();
+    let map_name = world.data.maps[&map].description.clone();
+    drain(&mut world);
+
+    world.chat(normal, format!("@moblocation {monster_id}"));
+    assert!(drain(&mut world).iter().any(|message| matches!(
+        message, ServerMessage::Say { text, .. } if text == "GM access required."
+    )));
+
+    world.chat(gm, format!("@moblocation {monster_id}"));
+    let messages = drain(&mut world);
+    assert!(messages.iter().any(|message| matches!(
+        message, ServerMessage::Say { text, .. } if text.contains(&map_name) && text.contains("@move")
+    )));
+
+    world.chat(gm, format!("@moblocation {monster_name}"));
+    assert!(drain(&mut world).iter().any(|message| matches!(
+        message, ServerMessage::Say { text, .. } if text.contains(&format!("ID {monster_id}"))
+    )));
+    world.chat(gm, "@moblocation missing monster".into());
+    assert!(drain(&mut world).iter().any(|message| matches!(
+        message, ServerMessage::Say { text, .. } if text == "Unknown monster: missing monster"
+    )));
+}
+
+#[test]
+fn oma_hero_location_reports_live_monsters_and_spawn_area() {
+    let Some(mut world) = world() else { return };
+    world.ensure_map(1).unwrap();
+    let flea_cave = world.data.map_by_file("D303").unwrap().index;
+    world.ensure_map(flea_cave).unwrap();
+    assert!(
+        world.objects.values().any(|object| object.map == flea_cave
+            && !object.dead
+            && object.monster().is_some_and(|m| m.def == 49)),
+        "Terror Spike must spawn somewhere in Flea Cave Lv 3"
+    );
+    let live: Vec<_> = world
+        .objects
+        .values()
+        .filter(|object| {
+            object.map == 1 && !object.dead && object.monster().is_some_and(|m| m.def == 23)
+        })
+        .map(|object| object.location)
+        .collect();
+    assert_eq!(live.len(), 2);
+    let mut record = test_character("Tracker");
+    record.gm = true;
+    let gm = world.add_player(2, 2, &record).unwrap();
+    drain(&mut world);
+    world.chat(gm, "@moblocation Oma Hero".into());
+    let messages = drain(&mut world);
+    assert!(messages.iter().any(|message| matches!(
+        message, ServerMessage::Say { text, .. }
+            if live.iter().any(|point| text.contains(&format!("{}, {}", point.x, point.y)))
+    )));
+    assert!(messages.iter().any(|message| matches!(
+        message, ServerMessage::Say { text, .. } if text.contains("spawn cells")
+    )));
+}
+
+#[test]
+fn gm_move_avoids_portal_at_banya_spawn_hint() {
+    let Some(mut world) = world() else { return };
+    let mut record = test_character("Traveler");
+    record.gm = true;
+    let gm = world.add_player(2, 2, &record).unwrap();
+    drain(&mut world);
+    world.chat(gm, "@move 2 225 13".into());
+    world.tick(world.now + 1000);
+    assert_eq!(
+        world.objects[&gm].map, 6,
+        "GM move must stay in Banya Village"
+    );
+    assert_ne!(world.objects[&gm].location, Point::new(225, 13));
+}
+
+#[test]
+fn candles_change_player_light_by_brightness() {
+    let Some(mut world) = world() else { return };
+    let me = world
+        .add_player(1, 1, &test_character("LightTester"))
+        .unwrap();
+    if world.objects[&me].player().unwrap().bag.equipment[mir_proto::slot::TORCH].is_some() {
+        let empty = world.objects[&me]
+            .player()
+            .unwrap()
+            .bag
+            .inventory
+            .iter()
+            .position(Option::is_none)
+            .unwrap() as u8;
+        world.item_move(
+            me,
+            Grid::Equipment,
+            mir_proto::slot::TORCH as u8,
+            Grid::Inventory,
+            empty,
+        );
+    }
+    world.tick(0);
+    drain(&mut world);
+    assert_eq!(world.objects[&me].light, 0);
+    let mut previous = 0;
+    for item in [132, 157] {
+        world.test_give_item(me, item, 1);
+        let slot = world.test_slot_of(me, item).unwrap();
+        world.item_move(
+            me,
+            Grid::Inventory,
+            slot,
+            Grid::Equipment,
+            mir_proto::slot::TORCH as u8,
+        );
+        assert!(
+            world.objects[&me].light > previous,
+            "{} should increase light; stats: {:?}",
+            world.data.items[&item].name,
+            world.data.items[&item].stats
+        );
+        previous = world.objects[&me].light;
+        world.tick(world.now + 1);
+        let messages = drain(&mut world);
+        assert!(
+            messages.iter().any(|message| matches!(
+                message, ServerMessage::ObjectLight { id, light } if *id == me && *light == previous
+            )),
+            "light messages: {messages:?}"
+        );
+    }
+}
+
+#[test]
+fn town_scroll_reports_same_map_teleport_to_client() {
+    let Some(mut world) = world() else { return };
+    let me = world.add_player(1, 1, &test_character("Traveler")).unwrap();
+    let map = world.objects[&me].map;
+    let start = world.objects[&me].location;
+    let far = (0..world.maps[&map].file.height as i32)
+        .flat_map(|y| (0..world.maps[&map].file.width as i32).map(move |x| Point::new(x, y)))
+        .find(|p| p.distance(start) > 20 && world.maps[&map].file.is_walkable(p.x, p.y))
+        .unwrap();
+    world.teleport(me, far);
+    world.tick(0);
+    drain(&mut world);
+    world.test_give_item(me, 156, 1); // Scroll Of Town Portal
+    let slot = world.test_slot_of(me, 156).unwrap();
+    world.item_use(me, slot);
+    assert_ne!(world.objects[&me].location, far);
+    world.tick(1);
+    let messages = drain(&mut world);
+    assert!(messages.iter().any(|message| matches!(
+        message, ServerMessage::ObjectTeleport { id, location, .. }
+            if *id == me && *location == world.objects[&me].location
+    )));
+    assert!(messages.iter().any(|message| matches!(
+        message, ServerMessage::ObjectEffect { id, effect: mir_proto::effect::TELEPORT_OUT, location }
+            if *id == me && *location == far
+    )));
+    assert!(messages.iter().any(|message| matches!(
+        message, ServerMessage::ObjectEffect { id, effect: mir_proto::effect::TELEPORT_IN, location }
+            if *id == me && *location == world.objects[&me].location
+    )));
+}
+
+#[test]
+fn town_scroll_plays_arrival_effect_after_changing_maps() {
+    let Some(mut world) = world() else { return };
+    let me = world
+        .add_player(1, 1, &test_character("Cave Traveler"))
+        .unwrap();
+    let cave = world.data.map_by_file("D303").unwrap().index;
+    world.test_change_map(me, cave, Point::new(134, 13));
+    world.tick(0);
+    drain(&mut world);
+
+    world.test_give_item(me, 156, 1);
+    let slot = world.test_slot_of(me, 156).unwrap();
+    world.item_use(me, slot);
+    assert_ne!(world.objects[&me].map, cave);
+    world.tick(1);
+    let messages = drain(&mut world);
+    let map_change = messages
+        .iter()
+        .position(|message| matches!(message, ServerMessage::MapChanged { .. }));
+    let arrival = messages.iter().position(|message| matches!(
+        message, ServerMessage::ObjectEffect { id, effect: mir_proto::effect::TELEPORT_IN, location }
+            if *id == me && *location == world.objects[&me].location
+    ));
+    assert!(
+        matches!((map_change, arrival), (Some(map), Some(effect)) if map < effect),
+        "town arrival effect should play on destination map: {messages:?}"
+    );
 }
 
 #[test]
@@ -2443,7 +4161,7 @@ fn fishing_reels_in_a_catch_with_the_dev_zone() {
         .index;
     world.dev_fishing_item = Some(potion);
     // Recast every 1.6 s, always reeling: once a fish nibbles the points
-    // only climb, so the catch is certain and perfect.
+    // only climb, so the catch is certain. The first nibble can be a miss.
     let mut now = 1000;
     world.tick(now);
     world.fishing_cast(me, fishing_state::CAST, dir, water, false);
@@ -2459,9 +4177,9 @@ fn fishing_reels_in_a_catch_with_the_dev_zone() {
     world.tick(now + 100);
     assert_eq!(world.test_bag(me).1, vec![(potion, 1)]);
     let msgs = drain(&mut world);
-    assert!(msgs
-        .iter()
-        .any(|m| matches!(m, ServerMessage::Say { text, .. } if text == "Perfect catch!")));
+    assert!(msgs.iter().any(|m| {
+        matches!(m, ServerMessage::Say { text, .. } if text == "You caught a Healing Potion.")
+    }));
     assert!(msgs.iter().any(
         |m| matches!(m, ServerMessage::ObjectFishing { state, .. } if *state == fishing_state::REEL)
     ));
@@ -2495,9 +4213,12 @@ fn refine_weapon_and_retrieve_it() {
         .items
         .values()
         .filter(|d| d.item_type == mir_proto::item_type::WEAPON && d.required_amount <= 1)
-        .find(|d| {
-            crate::items::can_use(d, mir_proto::Class::Warrior, mir_proto::Gender::Male, 1).is_ok()
+        .filter(|d| {
+            d.effect != 5
+                && crate::items::can_use(d, mir_proto::Class::Warrior, mir_proto::Gender::Male, 1)
+                    .is_ok()
         })
+        .min_by_key(|d| d.index)
         .map(|d| d.index)
         .expect("a starter weapon");
     let ore = world
@@ -2513,6 +4234,14 @@ fn refine_weapon_and_retrieve_it() {
     let wslot = world.test_slot_of(me, weapon).unwrap();
     world.item_move(me, Grid::Inventory, wslot, Grid::Equipment, 0);
     let oslot = world.test_slot_of(me, ore).unwrap();
+    // Combat unlocks the first refine; the furnace consumes this readiness.
+    world.gain_experience_test(me, 1);
+    assert!(
+        world.objects[&me].player().unwrap().bag.equipment[0]
+            .as_ref()
+            .unwrap()
+            .refinable
+    );
     // Refining needs a Refine page open; the retrieve page is another type.
     let refine_page = world.test_page_with_dialog_type(3);
     let retrieve_page = world.test_page_with_dialog_type(4);
@@ -2569,12 +4298,17 @@ fn refine_weapon_and_retrieve_it() {
         .inventory
         .iter()
         .flatten()
-        .find(|i| i.info == weapon)
+        .find(|i| i.id == r.weapon.id)
         .expect("weapon back in the bag");
-    // Success adds +1 MaxDC and a refine level; failure returns it as it was.
-    let succeeded = back.level == 1;
-    assert_eq!(succeeded, back.added.contains(&(9, 1)));
-    assert!(succeeded || back.added.is_empty());
+    // Success adds a sourced stat; both outcomes consume readiness.
+    assert_eq!(back.level, 1);
+    assert!(!back.refinable);
+    assert!(
+        back.added.is_empty()
+            || back.added.iter().any(|s| s.stat == 9
+                && s.amount == 1
+                && s.source == crate::items::StatSource::Refine)
+    );
     let msgs = drain(&mut world);
     assert!(msgs
         .iter()
@@ -2676,9 +4410,41 @@ fn companion_adopt_follow_pick_up_and_store() {
         }
     }
     assert!(picked, "companion did not pick up the drop");
+    {
+        let picked_item = &mut world
+            .objects
+            .get_mut(&me)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .companions[0]
+            .items[0];
+        picked_item.durability = 1_500;
+        picked_item.max_durability = 2_000;
+        picked_item.bound = true;
+        picked_item.colour = 0xFF0088CC;
+    }
     drain(&mut world);
     world.companion_bag_take(me, 1, 0);
     assert_eq!(world.test_bag(me).1, vec![(potion, 2)]);
+    let taken = world.objects[&me]
+        .player()
+        .unwrap()
+        .bag
+        .inventory
+        .iter()
+        .flatten()
+        .find(|i| i.info == potion)
+        .unwrap();
+    assert_eq!(
+        (
+            taken.durability,
+            taken.max_durability,
+            taken.bound,
+            taken.colour
+        ),
+        (1_500, 2_000, true, 0xFF0088CC)
+    );
     assert!(world.objects[&me].player().unwrap().companions[0]
         .items
         .is_empty());
@@ -2689,6 +4455,501 @@ fn companion_adopt_follow_pick_up_and_store() {
     assert!(!world.objects.contains_key(&cid));
     world.companion_release(me, 1);
     assert!(world.objects[&me].player().unwrap().companions.is_empty());
+}
+
+#[test]
+fn companion_skills_roll_at_milestones_once_and_survive_storage() {
+    use crate::world::StoredCompanion;
+
+    let Some(mut world) = world() else { return };
+    assert!(!world.data.companion_skills.is_empty());
+    let offer = world
+        .data
+        .companions
+        .iter()
+        .find(|offer| world.data.monsters.contains_key(&offer.monster))
+        .unwrap()
+        .clone();
+    let me = world
+        .add_player(1, 1, &test_character("SkillKeeper"))
+        .unwrap();
+    let max_exp = world
+        .data
+        .companion_levels
+        .iter()
+        .find(|def| def.level == 2)
+        .unwrap()
+        .max_experience;
+    let p = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+    p.companions.push(StoredCompanion {
+        index: 1,
+        info: offer.index,
+        name: "Rex".into(),
+        level: 2,
+        experience: max_exp - 1,
+        hunger: 100,
+        items: Vec::new(),
+        food: None,
+        bag: None,
+        bonuses: Vec::new(),
+    });
+    let page = world.test_page_with_dialog_type(5);
+    world.test_open_page(me, page);
+    world.companion_retrieve(me, 1);
+    assert!(world.objects[&me].player().unwrap().companions[0]
+        .bonuses
+        .is_empty());
+
+    world.tick(60_000);
+    let companion = &world.objects[&me].player().unwrap().companions[0];
+    assert_eq!(companion.level, 3);
+    assert_eq!(companion.bonuses.len(), 1);
+    let bonus = companion.bonuses[0];
+    assert_eq!(bonus.0, 3);
+    assert!(world.data.companion_skills.iter().any(|skill| {
+        skill.level == 3 && skill.stat == bonus.1 && (1..=skill.max_amount).contains(&bonus.2)
+    }));
+    let saved = serde_json::to_string(companion).unwrap();
+    let restored: StoredCompanion = serde_json::from_str(&saved).unwrap();
+    assert_eq!(restored.bonuses, vec![bonus]);
+
+    world.companion_store(me);
+    world.companion_retrieve(me, 1);
+    assert_eq!(
+        world.objects[&me].player().unwrap().companions[0].bonuses,
+        vec![bonus]
+    );
+    let p = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+    p.companions[0].level = 5;
+    world.companion_store(me);
+    world.companion_retrieve(me, 1);
+    let bonuses = &world.objects[&me].player().unwrap().companions[0].bonuses;
+    assert_eq!(bonuses.len(), 2);
+    assert!(bonuses.iter().any(|(level, _, _)| *level == 5));
+}
+
+#[test]
+fn companion_elixir_rerolls_only_an_armed_learned_skill() {
+    use crate::world::StoredCompanion;
+
+    let Some(mut world) = world() else { return };
+    for (item, level) in [
+        (767, 3),
+        (768, 5),
+        (769, 7),
+        (770, 10),
+        (1094, 11),
+        (1095, 13),
+        (1096, 15),
+    ] {
+        let def = &world.data.items[&item];
+        assert_eq!(
+            (def.item_type, def.shape, def.required_amount),
+            (mir_proto::item_type::CONSUMABLE, 16, level)
+        );
+    }
+    let offer = world
+        .data
+        .companions
+        .iter()
+        .find(|offer| world.data.monsters.contains_key(&offer.monster))
+        .unwrap()
+        .clone();
+    let me = world
+        .add_player(1, 1, &test_character("RegretPet"))
+        .unwrap();
+    let old = (3, mir_formats::mirdb::stat::HEALTH, 1);
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .companions
+        .push(StoredCompanion {
+            index: 1,
+            info: offer.index,
+            name: "Rex".into(),
+            level: 3,
+            experience: 0,
+            hunger: 100,
+            items: Vec::new(),
+            food: None,
+            bag: None,
+            bonuses: vec![old],
+        });
+    world.test_give_item(me, 767, 1);
+    let slot = world.test_slot_of(me, 767).unwrap();
+    world.item_use(me, slot);
+    assert!(world.test_slot_of(me, 767).is_some());
+    assert!(world.outgoing.iter().any(|event| matches!(event,
+        Outgoing::To(1, ServerMessage::Chat { text }) if text == "No companion is out"
+    )));
+    world.chat(me, "@EnableLevel3".into());
+    assert_eq!(
+        world.objects[&me]
+            .player()
+            .unwrap()
+            .companion_reroll_enabled,
+        1
+    );
+    let page = world.test_page_with_dialog_type(5);
+    world.test_open_page(me, page);
+    world.companion_retrieve(me, 1);
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .companions[0]
+        .bonuses
+        .clear();
+    world.item_use(me, slot);
+    assert!(world.test_slot_of(me, 767).is_some());
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .companions[0]
+        .bonuses
+        .push(old);
+    world.chat(me, "@EnableLevel3".into());
+    world.item_use(me, slot);
+    assert!(world.outgoing.iter().any(|event| matches!(event,
+        Outgoing::To(1, ServerMessage::Chat { text }) if text.contains("@EnableLevel3")
+    )));
+    assert!(world.test_slot_of(me, 767).is_some());
+    world.chat(me, "@EnableLevel3".into());
+    let before_hp = world.objects[&me].max_hp;
+
+    world.data.items.get_mut(&767).unwrap().required_amount = 4;
+    world.item_use(me, slot);
+    assert!(world.test_slot_of(me, 767).is_some());
+    world.data.items.get_mut(&767).unwrap().required_amount = 3;
+    world.data.items.get_mut(&767).unwrap().shape = 99;
+    world.item_use(me, slot);
+    assert!(world.test_slot_of(me, 767).is_some());
+    world.data.items.get_mut(&767).unwrap().shape = 16;
+    let skills = world.data.companion_skills.clone();
+    world.data.companion_skills.retain(|skill| skill.level != 3);
+    let mut only = skills
+        .iter()
+        .find(|skill| skill.level == 3 && skill.weight > 0)
+        .unwrap()
+        .clone();
+    only.stat = old.1;
+    only.max_amount = 1;
+    world.data.companion_skills.push(only.clone());
+    world.item_use(me, slot);
+    assert!(world.test_slot_of(me, 767).is_some());
+    assert_eq!(
+        world.objects[&me].player().unwrap().companions[0].bonuses[0],
+        old
+    );
+    only.max_amount = 2;
+    world.data.companion_skills.pop();
+    world.data.companion_skills.push(only);
+
+    world.item_use(me, slot);
+    let p = world.objects[&me].player().unwrap();
+    let new = p.companions[0].bonuses[0];
+    assert_eq!(new, (3, mir_formats::mirdb::stat::HEALTH, 2));
+    assert_eq!(world.objects[&me].max_hp, before_hp + 1);
+    assert!(p.bag.inventory[slot as usize].is_none());
+    let restored: StoredCompanion =
+        serde_json::from_str(&serde_json::to_string(&p.companions[0]).unwrap()).unwrap();
+    assert_eq!(restored.bonuses, vec![new]);
+}
+
+#[test]
+fn companion_food_slot_auto_feeds_and_hunger_pauses_experience() {
+    use crate::world::StoredCompanion;
+
+    let Some(mut world) = world() else { return };
+    let offer = world
+        .data
+        .companions
+        .iter()
+        .find(|offer| world.data.monsters.contains_key(&offer.monster))
+        .unwrap()
+        .clone();
+    let food = world
+        .data
+        .items
+        .values()
+        .find(|def| def.item_type == mir_proto::item_type::COMPANION_FOOD && def.stat(86) > 0)
+        .unwrap()
+        .index;
+    let me = world
+        .add_player(1, 1, &test_character("HungryPet"))
+        .unwrap();
+    world.test_give_item(me, food, 3);
+    let slot = world.test_slot_of(me, food).unwrap();
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .companions
+        .push(StoredCompanion {
+            index: 1,
+            info: offer.index,
+            name: "Rex".into(),
+            level: 1,
+            experience: 0,
+            hunger: 1,
+            items: Vec::new(),
+            food: None,
+            bag: None,
+            bonuses: Vec::new(),
+        });
+    let page = world.test_page_with_dialog_type(5);
+    world.test_open_page(me, page);
+    world.companion_retrieve(me, 1);
+    let requirement = {
+        let def = world.data.items.get(&food).unwrap();
+        (def.required_type, def.required_amount)
+    };
+    let def = world.data.items.get_mut(&food).unwrap();
+    def.required_type = 11; // CompanionLevel
+    def.required_amount = 2;
+    world.companion_food_equip(me, slot);
+    assert!(world.objects[&me].player().unwrap().companions[0]
+        .food
+        .is_none());
+    let def = world.data.items.get_mut(&food).unwrap();
+    def.required_type = 12; // MaxCompanionLevel
+    def.required_amount = 0;
+    world.companion_food_equip(me, slot);
+    assert!(world.objects[&me].player().unwrap().companions[0]
+        .food
+        .is_none());
+    let def = world.data.items.get_mut(&food).unwrap();
+    (def.required_type, def.required_amount) = requirement;
+    world.companion_food_equip(me, slot);
+    assert!(world.objects[&me].player().unwrap().bag.inventory[slot as usize].is_none());
+    assert_eq!(
+        world.objects[&me].player().unwrap().companions[0]
+            .food
+            .as_ref()
+            .unwrap()
+            .count,
+        3
+    );
+    let saved = serde_json::to_string(&world.objects[&me].player().unwrap().companions[0]).unwrap();
+    let restored: StoredCompanion = serde_json::from_str(&saved).unwrap();
+    assert_eq!(restored.food.unwrap().count, 3);
+    world.companion_release(me, 1);
+    assert_eq!(world.objects[&me].player().unwrap().companions.len(), 1);
+
+    world.tick(60_000);
+    let c = &world.objects[&me].player().unwrap().companions[0];
+    assert!(c.hunger > 0);
+    assert_eq!(c.experience, 1);
+    assert_eq!(c.food.as_ref().unwrap().count, 2);
+
+    world.companion_food_take(me);
+    let p = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+    assert!(p.companions[0].food.is_none());
+    p.companions[0].hunger = 1;
+    world.tick(120_000);
+    let exp = world.objects[&me].player().unwrap().companions[0].experience;
+    assert_eq!(world.objects[&me].player().unwrap().companions[0].hunger, 0);
+    world.tick(180_000);
+    assert_eq!(
+        world.objects[&me].player().unwrap().companions[0].experience,
+        exp
+    );
+
+    let slot = world.test_slot_of(me, food).unwrap();
+    world.item_use(me, slot);
+    assert!(world.objects[&me].player().unwrap().companions[0].hunger > 0);
+    world.tick(240_000);
+    assert!(world.objects[&me].player().unwrap().companions[0].experience > exp);
+}
+
+#[test]
+fn companion_bonus_stats_change_owner_and_collect_drops() {
+    use crate::world::StoredCompanion;
+
+    let Some(mut world) = world() else { return };
+    let offer = world
+        .data
+        .companions
+        .iter()
+        .find(|offer| world.data.monsters.contains_key(&offer.monster))
+        .unwrap()
+        .clone();
+    let me = world.add_player(1, 1, &test_character("BonusPet")).unwrap();
+    let base_hp = world.objects[&me].max_hp;
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .companions
+        .push(StoredCompanion {
+            index: 1,
+            info: offer.index,
+            name: "Rex".into(),
+            level: 3,
+            experience: 0,
+            hunger: 100,
+            items: Vec::new(),
+            food: None,
+            bag: None,
+            bonuses: vec![(3, 54, 10)],
+        });
+    let page = world.test_page_with_dialog_type(5);
+    world.test_open_page(me, page);
+    world.companion_retrieve(me, 1);
+    assert_eq!(world.objects[&me].max_hp, base_hp + base_hp / 10);
+
+    for (stat, amount) in [
+        (34, 4),
+        (35, 5),
+        (37, 25),
+        (55, 9),
+        (115, 50),
+        (19, 1),
+        (122, 200),
+        (123, 200),
+        (124, 200),
+        (125, 7),
+        (126, 7),
+        (76, 1),
+    ] {
+        world.companion_store(me);
+        world
+            .objects
+            .get_mut(&me)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .companions[0]
+            .bonuses = vec![(3, stat, amount)];
+        world.companion_retrieve(me, 1);
+        let o = &world.objects[&me];
+        let p = o.player().unwrap();
+        match stat {
+            34 => assert_eq!(p.comfort, 4),
+            35 => assert_eq!(p.life_steal, 5),
+            37 => assert_eq!(p.drop_rate, 25),
+            55 => assert_eq!(o.stats.critical_chance, 10),
+            115 => assert_eq!(o.stats.critical_damage, 50),
+            19 => assert_eq!(o.stats.luck, 1),
+            122 => assert_eq!(o.stats.paralysis_chance, 200),
+            123 => assert_eq!(o.stats.slow_chance, 200),
+            124 => assert_eq!(o.stats.silence_chance, 200),
+            125 => assert_eq!(o.stats.block_chance, 7),
+            126 => assert_eq!(o.stats.evasion_chance, 7),
+            76 => assert!(p.companion_collection),
+            _ => unreachable!(),
+        }
+    }
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|item| item.name == "Healing Potion")
+        .unwrap()
+        .index;
+    let item = crate::items::UserItem::fresh(&world.data, potion, 1).unwrap();
+    assert!(world.companion_auto_collect(me, &item));
+    assert_eq!(
+        world.objects[&me].player().unwrap().companions[0].items[0].info,
+        potion
+    );
+
+    world.companion_store(me);
+    assert!(!world.companion_auto_collect(me, &item));
+}
+
+#[test]
+fn companion_food_requires_active_hungry_companion_then_consumes_one() {
+    use crate::world::StoredCompanion;
+    const COMPANION_HUNGER_STAT: i32 = 86;
+    let Some(mut world) = world() else { return };
+    let me = world.add_player(1, 1, &test_character("Feeder")).unwrap();
+    let food = world
+        .data
+        .items
+        .values()
+        .find(|d| {
+            d.item_type == mir_proto::item_type::COMPANION_FOOD && d.stat(COMPANION_HUNGER_STAT) > 0
+        })
+        .expect("companion food")
+        .clone();
+    world.test_give_item(me, food.index, 2);
+    let slot = world.test_slot_of(me, food.index).unwrap();
+    drain(&mut world);
+
+    world.item_use(me, slot);
+    assert!(drain(&mut world)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Chat { text } if text == "No companion is out")));
+    assert_eq!(
+        world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+            .as_ref()
+            .unwrap()
+            .count,
+        2
+    );
+
+    let max_hunger = world
+        .data
+        .companion_levels
+        .iter()
+        .filter(|l| l.level <= 1)
+        .max_by_key(|l| l.level)
+        .map(|l| l.max_hunger)
+        .unwrap_or(100);
+    let p = world.objects.get_mut(&me).unwrap().player_mut().unwrap();
+    p.active_companion = Some(1);
+    p.companions.push(StoredCompanion {
+        index: 1,
+        info: 0,
+        name: "Rex".into(),
+        level: 1,
+        experience: 0,
+        hunger: 0,
+        items: Vec::new(),
+        food: None,
+        bag: None,
+        bonuses: Vec::new(),
+    });
+    world.item_use(me, slot);
+    let p = world.objects[&me].player().unwrap();
+    assert_eq!(
+        p.companions[0].hunger,
+        food.stat(COMPANION_HUNGER_STAT).min(max_hunger)
+    );
+    assert_eq!(p.bag.inventory[slot as usize].as_ref().unwrap().count, 1);
+    assert!(drain(&mut world)
+        .iter()
+        .any(|m| matches!(m, ServerMessage::Companions(_))));
+
+    world
+        .objects
+        .get_mut(&me)
+        .unwrap()
+        .player_mut()
+        .unwrap()
+        .companions[0]
+        .hunger = max_hunger;
+    world.item_use(me, slot);
+    assert_eq!(
+        world.objects[&me].player().unwrap().bag.inventory[slot as usize]
+            .as_ref()
+            .unwrap()
+            .count,
+        1
+    );
 }
 
 #[test]
@@ -2985,9 +5246,11 @@ fn npc_weapon_checks_read_refine_level_element_and_added_stats() {
     world.test_give_item(me, weapon, 1);
     let wslot = world.test_slot_of(me, weapon).unwrap();
     world.item_move(me, Grid::Inventory, wslot, Grid::Equipment, 0);
-    // Fresh weapon: level 0, refinable, no element, no added stats.
+    // Fresh weapon: level 0, not ready until combat, no added stats.
     assert!(world.test_npc_check(me, &check(7, 0, 0, 0, 0)));
     assert!(!world.test_npc_check(me, &check(7, 5, 3, 0, 0)));
+    assert!(!world.test_npc_check(me, &check(9, 0, 0, 0, 0)));
+    world.gain_experience_test(me, 1);
     assert!(world.test_npc_check(me, &check(9, 0, 0, 0, 0)));
     assert!(world.test_npc_check(me, &check(8, 0, 0, 0, 0)));
     // Three refines, a fire element of 5 and +3 added DC (stat 2).
@@ -3177,19 +5440,36 @@ fn monster_ai_wave_three_shinsu_terracotta_and_doom_claw() {
     assert!(world.objects[&terra].location.distance(loc) <= 2);
     world.remove_object(terra);
 
-    // Shinsu: hidden until a target opens a 10 s fighting window; the
-    // window closes 2 s after the target is gone.
+    // Shinsu appears in small form one second after spawn. A target opens
+    // the 10 s big-form fighting window; idle small form stays visible.
     let near = Direction::ALL
         .iter()
         .find_map(|d| cell_at(&world, *d, 1))
         .expect("an adjacent cell");
     let shinsu = world.test_spawn_ai(53, map, near).expect("a shinsu");
     assert!(world.test_monster_hidden_mode(shinsu).0);
+    drain(&mut world);
+    world.tick(5500);
+    assert_eq!(world.test_monster_hidden_mode(shinsu), (false, false));
+    assert!(
+        drain(&mut world)
+            .iter()
+            .any(|m| { matches!(m, ServerMessage::ObjectShow(state) if state.id == shinsu) }),
+        "the small Shinsu should become visible to the player"
+    );
+    assert!(matches!(
+        world.objects[&shinsu].appearance,
+        Appearance::Monster { image: 100, .. }
+    ));
     world.test_set_target(shinsu, me);
     for t in 0..8 {
         world.tick(10_000 + t * 500);
     }
     assert_eq!(world.test_monster_hidden_mode(shinsu), (false, true));
+    assert!(matches!(
+        world.objects[&shinsu].appearance,
+        Appearance::Monster { image: 99, .. }
+    ));
     // Out of view range (18) but still within the 20-cell tick radius: the
     // target lapses and the window closes 10 s later.
     let sloc = world.objects[&shinsu].location;
@@ -3208,6 +5488,11 @@ fn monster_ai_wave_three_shinsu_terracotta_and_doom_claw() {
         !world.test_monster_hidden_mode(shinsu).1,
         "window should have closed"
     );
+    assert_eq!(world.test_monster_hidden_mode(shinsu), (false, false));
+    assert!(matches!(
+        world.objects[&shinsu].appearance,
+        Appearance::Monster { image: 100, .. }
+    ));
     world.remove_object(shinsu);
     world.teleport(me, loc);
 
@@ -3688,10 +5973,10 @@ fn guild_war_and_castle_conquest() {
     let out = to(&mut world);
     assert!(out.iter().any(|(_, m)| matches!(m,
         ServerMessage::CastleInfo { owner, .. } if owner == "Rogues")));
-    // Owners earn 10 % more experience and cannot request another castle.
+    // The 10 % castle buff adds to this one-member guild's 30 % XP buff.
     let before = world.test_experience(bob);
     world.gain_experience_test(bob, 20);
-    assert_eq!(world.test_experience(bob) - before, 22);
+    assert_eq!(world.test_experience(bob) - before, 28);
     world.test_end_conquest();
     assert!(world.conquest.is_none());
     drain(&mut world);
@@ -4116,4 +6401,199 @@ fn fortunes_round_trip_through_the_account() {
     assert_eq!(loaded[0].item, 7);
     assert_eq!(loaded[0].drop_count, 3);
     assert!((loaded[0].progress - 0.5).abs() < 1e-9);
+}
+
+#[test]
+fn game_gold_tabs_charge_once_and_preserve_inventory_capacity() {
+    let Some(mut world) = world() else { return };
+    let mut rec = test_character("TabBuyer");
+    let id = world.add_player(1, 1, &rec).unwrap();
+    world.test_set_currency_by_type(id, 1, 99);
+    assert!(!world.buy_tab(id, false));
+    assert_eq!(world.objects[&id].player().unwrap().bag.inventory.len(), 48);
+
+    world.test_set_currency_by_type(id, 1, 500);
+    assert!(world.buy_tab(id, false));
+    assert!(!world.buy_tab(id, false));
+    assert!(world.buy_tab(id, true));
+    let player = world.objects[&id].player().unwrap();
+    assert_eq!(player.bag.inventory.len(), 96);
+    assert_eq!(player.bag.storage.len(), 200);
+    assert_eq!(world.test_currency_total(id), 200);
+    world.snapshot(id, &mut rec);
+    assert_eq!(rec.inventory_size, 96);
+    let loaded =
+        crate::items::Bag::from_stored_with_size(&rec.items, rec.gold, rec.inventory_size as usize);
+    assert_eq!(loaded.inventory.len(), 96);
+}
+
+mod field_spells;
+
+mod companion_bags;
+
+#[test]
+fn item_move_to_an_out_of_range_slot_is_refused() {
+    use mir_proto::Grid;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let info = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .unwrap()
+        .index;
+    world.test_give_item(alice, info, 5);
+    let slot = world.test_slot_of(alice, info).unwrap();
+    // A client can name any u8 slot; the bag has far fewer.
+    world.item_move(alice, Grid::Inventory, slot, Grid::Inventory, 200);
+    world.item_move(alice, Grid::Inventory, 250, Grid::Inventory, slot);
+    assert_eq!(world.test_slot_of(alice, info), Some(slot));
+}
+
+#[test]
+fn mail_refuses_the_same_cell_attached_twice() {
+    use mir_proto::Grid;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let _bob = world.add_player(2, 2, &test_character("Bob")).unwrap();
+    world.tick(20_000);
+    drain(&mut world);
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .unwrap()
+        .index;
+    world.test_give_item(alice, potion, 4);
+    let slot = world.test_slot_of(alice, potion).unwrap();
+    world.mail_send(
+        alice,
+        Some((2, "Bob".into())),
+        "Dupe".into(),
+        "x".into(),
+        0,
+        vec![(Grid::Inventory, slot, 1); 3],
+    );
+    assert!(world.mail_store.boxes.values().all(|b| b.is_empty()));
+    assert_eq!(world.test_bag(alice).1, vec![(potion, 4)]);
+}
+
+#[test]
+fn trade_cancels_when_an_offered_slot_is_swapped_after_confirm() {
+    use mir_proto::Grid;
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let alice = world.add_player(1, 1, &test_character("Alice")).unwrap();
+    let bob = world.add_player(2, 2, &test_character("Bob")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let potion = world
+        .data
+        .items
+        .values()
+        .find(|d| d.name == "Healing Potion")
+        .unwrap()
+        .index;
+    let ore = world
+        .data
+        .items
+        .values()
+        .find(|d| d.effect == 20)
+        .map(|d| d.index)
+        .expect("black iron ore");
+    world.test_give_item(alice, potion, 1);
+    world.test_give_item(alice, ore, 1);
+    let pslot = world.test_slot_of(alice, potion).unwrap();
+    let oslot = world.test_slot_of(alice, ore).unwrap();
+    let loc = world.objects[&alice].location;
+    let map = world.objects[&alice].map;
+    let (dir, cell) = Direction::ALL
+        .iter()
+        .map(|d| (*d, loc.step(*d, 1)))
+        .find(|(_, p)| world.maps[&map].file.is_walkable(p.x, p.y))
+        .expect("walkable neighbour");
+    world.teleport(bob, cell);
+    world.test_face(alice, dir);
+    world.test_face(bob, dir.opposite());
+    world.trade_request(alice);
+    world.trade_response(bob, true);
+    // Alice shows the ore; Bob confirms; Alice swaps the potion into that
+    // slot and confirms herself.
+    world.trade_add_item(alice, Grid::Inventory, oslot, 1);
+    world.trade_confirm(bob);
+    world.item_move(alice, Grid::Inventory, pslot, Grid::Inventory, oslot);
+    assert_eq!(world.test_slot_of(alice, potion), Some(oslot));
+    world.trade_confirm(alice);
+    drain(&mut world);
+    assert!(world.objects[&alice].player().unwrap().trade.is_none());
+    assert_eq!(world.test_slot_of(bob, potion), None);
+    assert_eq!(world.test_slot_of(bob, ore), None);
+    assert_eq!(world.test_slot_of(alice, potion), Some(oslot));
+    assert_eq!(world.test_slot_of(alice, ore), Some(pslot));
+}
+
+#[test]
+fn weapon_refine_refuses_the_same_ore_cell_twice() {
+    use mir_proto::{refine_quality, refine_type, Grid};
+    let Some(mut world) = world() else {
+        eprintln!("ZIRCON_ASSETS not set; skipping");
+        return;
+    };
+    let me = world.add_player(1, 1, &test_character("Smith")).unwrap();
+    world.tick(0);
+    drain(&mut world);
+    let weapon = world
+        .data
+        .items
+        .values()
+        .filter(|d| d.item_type == mir_proto::item_type::WEAPON && d.required_amount <= 1)
+        .filter(|d| {
+            d.effect != 5
+                && crate::items::can_use(d, mir_proto::Class::Warrior, mir_proto::Gender::Male, 1)
+                    .is_ok()
+        })
+        .min_by_key(|d| d.index)
+        .map(|d| d.index)
+        .expect("a starter weapon");
+    let ore = world
+        .data
+        .items
+        .values()
+        .find(|d| d.effect == 20)
+        .map(|d| d.index)
+        .expect("black iron ore");
+    world.test_give_item(me, weapon, 1);
+    world.test_give_item(me, ore, 1);
+    world.test_set_gold(me, 100_000);
+    let wslot = world.test_slot_of(me, weapon).unwrap();
+    world.item_move(me, Grid::Inventory, wslot, Grid::Equipment, 0);
+    let oslot = world.test_slot_of(me, ore).unwrap();
+    world.gain_experience_test(me, 1);
+    let refine_page = world.test_page_with_dialog_type(3);
+    world.test_open_page(me, refine_page);
+    world.npc_refine(
+        me,
+        refine_type::DC,
+        refine_quality::RUSH,
+        vec![(Grid::Inventory, oslot, 1); 3],
+        vec![],
+        vec![],
+    );
+    let p = world.objects[&me].player().unwrap();
+    assert!(p.refines.is_empty());
+    assert!(p.bag.equipment[0].is_some());
+    assert_eq!(p.bag.gold, 100_000);
+    assert_eq!(world.test_slot_of(me, ore), Some(oslot));
 }

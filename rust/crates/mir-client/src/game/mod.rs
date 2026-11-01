@@ -11,7 +11,7 @@ use mir_formats::MapFile;
 use mir_proto::{
     Action, Appearance, BeltLink, CharacterSummary, Class, ClientMessage, Direction, Gender,
     ItemInstance, ObjectId, ObjectState, PlayerStats, Point, ServerMessage, Weights,
-    EQUIPMENT_SIZE, INVENTORY_SIZE, MAX_BELT,
+    EQUIPMENT_SIZE, INVENTORY_SIZE, MAX_BELT, MAX_INVENTORY_SIZE,
 };
 
 use crate::anim::{ClientObject, Queued};
@@ -54,12 +54,24 @@ pub fn attack_mode_name(mode: u8) -> &'static str {
         _ => "All",
     }
 }
+
+pub fn pet_mode_name(mode: u8) -> &'static str {
+    match mode {
+        mir_proto::pet_mode::BOTH => "Move + Attack",
+        mir_proto::pet_mode::MOVE => "Move",
+        mir_proto::pet_mode::ATTACK => "Attack",
+        mir_proto::pet_mode::PVP => "PvP",
+        _ => "None",
+    }
+}
 use std::collections::{HashMap as StdHashMap, HashSet};
 
 pub const CELL_W: i32 = 48;
 pub const CELL_H: i32 = 32;
 const MANUAL_HEIGHT_OFFSET: i32 = 34;
-use mir_proto::rules::{attack_delay, use_item_lock, ATTACK_TIME, MOVE_TIME, TURN_TIME};
+use mir_proto::rules::{
+    attack_delay, use_item_lock, ATTACK_TIME, HARVEST_TIME, MOVE_TIME, TURN_TIME,
+};
 
 /// A spell payload waiting for the cast animation: (time, magic, caster cell, targets, cells).
 type PendingPayload = (u64, u16, Point, Vec<ObjectId>, Vec<Point>);
@@ -72,18 +84,23 @@ pub struct Game {
     pub status: String,
     map: Option<MapFile>,
     map_name: String,
+    map_file: String,
     /// `MapInfo.Light` of the current map and the server's daylight.
     map_light: u8,
     /// `MapInfo.MiniMap` of the current map (0 = none).
     mini_map_index: i32,
     minimap: minimap::MiniMap,
+    portal_markers: Vec<mir_formats::navigation::Portal>,
     /// Server-driven countdowns on the HUD (Zircon `TimerDialog`).
     timers: timers::Timers,
     /// Drop-fortune window and the snapshots the server last sent.
     fortune: crate::fortune::FortuneWindow,
+    dungeon_codex: crate::dungeon_codex::DungeonCodex,
+    wardrobe: crate::wardrobe::WardrobeWindow,
     fortunes: Vec<mir_proto::FortuneSummary>,
     /// The chat-tab editor (Zircon `ChatOptionsDialog`).
     chat_options: crate::chat_options::ChatOptions,
+    character_services: crate::character_services::CharacterServices,
     day_time: f32,
     objects: HashMap<ObjectId, ClientObject>,
     user: Option<ObjectId>,
@@ -104,6 +121,7 @@ pub struct Game {
     float_time: u64,
     auto_mount_done: bool,
     hovered: Option<ObjectId>,
+    item_label_rects: Vec<(ObjectId, f32, f32, f32)>,
     /// Zircon `MonsterDialog.Monster`: what the target panel describes.
     /// Latched from the last hovered monster or player.
     target: Option<ObjectId>,
@@ -123,6 +141,7 @@ pub struct Game {
     /// Object we are walking toward to interact with (NPC or ground item).
     goal: Option<ObjectId>,
     windows_open_last_frame: bool,
+    ui_hover_last_frame: bool,
     pending_messages: Vec<ClientMessage>,
     magics: Vec<MagicSummary>,
     /// Quest log (Zircon `ClientUserQuest`).
@@ -132,6 +151,8 @@ pub struct Game {
     allow_group: bool,
     /// Zircon `AttackMode` (`attack_mode::*`), cycled with H.
     attack_mode: u8,
+    /// Zircon `PetMode` (`pet_mode::*`), cycled with Ctrl+A.
+    pet_mode: u8,
     guild: Option<mir_proto::GuildSummary>,
     /// Our own cast in progress (Zircon `MapControl.FishingState`).
     fishing: Option<FishingUi>,
@@ -176,6 +197,7 @@ pub struct Game {
     pending_payloads: Vec<PendingPayload>,
     /// Belt links, one per slot (Zircon `BeltDialog.Links`).
     belt: Vec<BeltLink>,
+    belt_key_pending: Option<(u8, u64)>,
     /// Zircon `GameScene.UseItemTime`: no consumable before this.
     use_item_time: u64,
     /// Own buffs: (kind, client time it ends; MAX = never).
@@ -253,9 +275,18 @@ mod sound;
 mod timers;
 
 impl Game {
+    pub fn take_pending_resolution(&mut self) -> Option<(u32, u32)> {
+        self.windows.settings.pending_resolution.take()
+    }
+
     pub fn new(mut assets: Assets, catalog: ItemCatalog) -> Game {
         let audio = crate::audio::Audio::new(assets.root());
         crate::anim::set_fishing_frames(assets.info(lib::M_HUM, 2000).is_some());
+        // Some packs contain only 920..922; never animate through absent fire frames.
+        let firewall_frames = (920..925)
+            .take_while(|&index| assets.info(effects::MAGIC, index).is_some())
+            .count();
+        crate::anim::set_firewall_frames(firewall_frames as u32);
         // Windows that own their open flag read ZIRCON_OPEN themselves.
         let opened = |name: &str| {
             std::env::var("ZIRCON_OPEN")
@@ -301,6 +332,7 @@ impl Game {
                         "skills" => w.skills_open = true,
                         "companion" => w.companion_open = true,
                         "menu" => w.menu.menu_open = true,
+                        "settings" => w.settings.open = true,
                         "help" => w.menu.help_open = true,
                         "exit" => w.menu.exit_open = true,
                         "currency" => w.menu.currency_open = true,
@@ -325,19 +357,31 @@ impl Game {
                             w.market.tab = crate::market::Tab::Consign;
                             w.market.refresh();
                         }
+                        "marketstore" => {
+                            // ZIRCON_STORE_TAG / ZIRCON_STORE_HUNT preset the
+                            // Store tab's filter and currency for headless
+                            // checks; the tag is applied once the stock lands.
+                            w.market.open = true;
+                            w.market.tab = crate::market::Tab::Store;
+                            w.market.wanted_tag = std::env::var("ZIRCON_STORE_TAG").ok();
+                            w.market.hunt_gold = std::env::var_os("ZIRCON_STORE_HUNT").is_some();
+                        }
                         _ => {}
                     }
                 }
                 w
             },
+            wardrobe: Default::default(),
             goal: None,
             windows_open_last_frame: false,
+            ui_hover_last_frame: false,
             pending_messages: Vec::new(),
             magics: Vec::new(),
             quests: Vec::new(),
             group: Vec::new(),
             allow_group: false,
             attack_mode: 0,
+            pet_mode: 0,
             guild: None,
             fishing: None,
             mail: Vec::new(),
@@ -366,6 +410,7 @@ impl Game {
             projectiles: Vec::new(),
             pending_payloads: Vec::new(),
             belt: (0..MAX_BELT as u8).map(BeltLink::empty).collect(),
+            belt_key_pending: None,
             use_item_time: 0,
             buffs: Vec::new(),
             charged: None,
@@ -375,16 +420,24 @@ impl Game {
             status: String::new(),
             map: None,
             map_name: String::new(),
+            map_file: String::new(),
             map_light: 0,
             mini_map_index: 0,
             minimap: minimap::MiniMap::default(),
+            portal_markers: Vec::new(),
             timers: timers::Timers::default(),
             fortune: {
                 let mut w = crate::fortune::FortuneWindow::default();
                 w.open = opened("fortune");
                 w
             },
+            dungeon_codex: crate::dungeon_codex::DungeonCodex::default(),
             fortunes: Vec::new(),
+            character_services: {
+                let mut w = crate::character_services::CharacterServices::default();
+                w.open |= opened("characterservices");
+                w
+            },
             chat_options: {
                 let mut w = crate::chat_options::ChatOptions::default();
                 w.open = opened("chatoptions");
@@ -405,11 +458,21 @@ impl Game {
                 max_dc: 0,
                 min_ac: 0,
                 max_ac: 0,
+                min_mr: 0,
+                max_mr: 0,
+                min_mc: 0,
+                max_mc: 0,
+                min_sc: 0,
+                max_sc: 0,
                 accuracy: 0,
                 agility: 0,
                 attack_speed: 0,
                 fame: 0,
                 fame_title: String::new(),
+                fp: 0,
+                max_fp: 0,
+                discipline: 0,
+                discipline_experience: 0,
             },
             mouse: (0.0, 0.0),
             lmb: false,
@@ -429,6 +492,7 @@ impl Game {
             float_time: 0,
             auto_mount_done: false,
             hovered: None,
+            item_label_rects: Vec::new(),
             target: None,
             debug: true,
         }
@@ -596,7 +660,7 @@ impl Game {
             .and_then(|v| v.parse::<u8>().ok())
         {
             if now > 3000 && self.use_item_time == 0 {
-                self.belt_key(slot, now, conn);
+                self.belt_key(slot, now, conn, false);
             }
         }
         // ZIRCON_AUTO_GROUP=name invites that player 3 s after entry (and
@@ -623,6 +687,22 @@ impl Game {
                     c.send(ClientMessage::GroupResponse { accept: true });
                 }
                 self.windows.group_open = true;
+            }
+        }
+        // Screenshot automation: walk up to a corpse, then harvest it.
+        if std::env::var_os("ZIRCON_AUTO_HARVEST").is_some()
+            && now > 2000
+            && self.user().is_some_and(|u| !u.dead && !u.mounted())
+        {
+            if let Some(corpse) = self.nearest_corpse(12) {
+                let loc = self.user().unwrap().location;
+                if loc.distance(corpse) <= 1 {
+                    if now >= self.action_time && now >= self.move_time {
+                        self.swing_harvest(corpse, now, conn);
+                    }
+                } else if now >= self.action_time && now >= self.move_time {
+                    self.step_toward(now, loc, corpse, false, conn);
+                }
             }
         }
         // ZIRCON_AUTO_MINE=1 swings the pickaxe at the nearest wall (walking

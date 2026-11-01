@@ -49,7 +49,7 @@ impl World {
         killer: Option<ObjectId>,
         item: i32,
         amount: i32,
-        one_in: i32,
+        one_in: i64,
         part_only: bool,
     ) -> bool {
         if one_in <= 0 {
@@ -217,8 +217,9 @@ impl World {
         }
     }
 
-    /// A system line to one player (the fortune window's feedback).
-    fn say_system(&mut self, id: ObjectId, text: String) {
+    /// A system line to one player (the fortune window's feedback, and the
+    /// harvest messages).
+    pub(super) fn say_system(&mut self, id: ObjectId, text: String) {
         self.send_to(
             id,
             ServerMessage::Say {

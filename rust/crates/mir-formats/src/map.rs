@@ -18,7 +18,7 @@ use std::path::Path;
 
 use crate::{Cursor, FormatError, Result, Writer};
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Cell {
     pub flag: u8,
     /// Zircon `KROrder` key of the back tile library (only meaningful on even x/y cells).
@@ -107,6 +107,10 @@ impl MapFile {
             return Err(FormatError::Invalid("map dimensions"));
         }
         let (w, h) = (width as usize, height as usize);
+        let end = 28 + (w / 2) * (h / 2) * 3 + w * h * 14;
+        if data.len() < end {
+            return Err(FormatError::Eof(data.len()));
+        }
         let mut cells = vec![Cell::default(); w * h];
         c.seek(28);
         for x in 0..w / 2 {
@@ -138,7 +142,6 @@ impl MapFile {
                 cell.padding[3] = c.u8()?;
             }
         }
-        let end = 28 + (w / 2) * (h / 2) * 3 + w * h * 14;
         Ok(MapFile {
             width: width as u16,
             height: height as u16,
@@ -281,6 +284,19 @@ mod tests {
         assert_eq!(again.cell(1, 1).unwrap().light, 10);
         assert_eq!(again.cell(1, 1).unwrap().front_anim, 0x83);
         assert_eq!(again.to_bytes(), back);
+    }
+
+    #[test]
+    fn truncated_map_is_an_error_not_an_abort() {
+        let bytes = MapFile::blank(6, 4).to_bytes();
+        for cut in [0, 5, 27, 28, bytes.len() / 2, bytes.len() - 1] {
+            assert!(MapFile::parse(&bytes[..cut]).is_err(), "cut {cut}");
+        }
+        // A header claiming a huge map with no cell data behind it.
+        let mut huge = bytes[..28].to_vec();
+        huge[22..24].copy_from_slice(&i16::MAX.to_le_bytes());
+        huge[24..26].copy_from_slice(&i16::MAX.to_le_bytes());
+        assert!(MapFile::parse(&huge).is_err());
     }
 
     #[test]

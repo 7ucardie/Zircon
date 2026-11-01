@@ -169,6 +169,8 @@ pub struct ChatPanel {
     /// Where the panel was drawn last frame, for hit tests.
     rect: Rect,
     hovered: bool,
+    /// Zircon `ChatTab.HideChat`: faded away with nothing recent to show.
+    hidden: bool,
     dev_seeded: bool,
 }
 
@@ -188,12 +190,30 @@ impl Default for ChatPanel {
             entered_at: 0,
             rect: Rect::new(0.0, 0.0, 0.0, 0.0),
             hovered: false,
+            hidden: false,
             dev_seeded: false,
         }
     }
 }
 
 impl ChatPanel {
+    pub fn contains_mouse(&self, mouse: (f32, f32)) -> bool {
+        (!self.hidden && self.rect.contains(mouse.0, mouse.1))
+            || (self.open && self.bar.rect.contains(mouse.0, mouse.1))
+    }
+
+    /// Zircon `ChatTab.HideChat` (upstream #284): with the bar closed and no
+    /// line newer than `FADE_MS` on a fading tab, the panel is not a control.
+    /// Clicks there walk and hovering does not bring it back.
+    fn update_hidden(&mut self, now: u64) {
+        self.hidden = !self.open
+            && self.tabs.get(self.tab).is_none_or(|t| t.fade)
+            && self
+                .lines
+                .last()
+                .is_none_or(|l| now.saturating_sub(l.time) >= FADE_MS);
+    }
+
     /// Keep the unread flags the same length as the tabs after the options
     /// window adds or removes one.
     pub fn sync_tabs(&mut self) {
@@ -207,7 +227,8 @@ impl ChatPanel {
         self.scroll = 0;
         self.unread = vec![false; self.tabs.len()];
         self.open = false;
-        self.bar.text.clear();
+        self.bar.set_text(String::new());
+        self.bar.focused = false;
     }
 
     /// Add a line of a known kind (chat from the server).
@@ -283,13 +304,13 @@ impl ChatPanel {
             let prefix = input.text.chars().find(|c| matches!(c, '/' | '!' | '@'));
             if let Some(p) = prefix {
                 self.open = true;
-                self.bar.text = match p {
+                self.bar.set_text(match p {
                     '/' => match &self.last_pm {
                         Some(name) => format!("{name} "),
                         None => "/".into(),
                     },
                     other => other.to_string(),
-                };
+                });
                 input.text.clear();
             } else if input.enter {
                 input.enter = false;
@@ -304,14 +325,8 @@ impl ChatPanel {
             return None;
         }
 
-        for c in input.text.chars() {
-            if !c.is_control() && self.bar.text.chars().count() < self.bar.max_len {
-                self.bar.text.push(c);
-            }
-        }
-        if input.backspace {
-            self.bar.text.pop();
-        }
+        self.bar.focused = true;
+        self.bar.edit(input);
         // Walk the lines sent this session.
         if input.up && !self.history.is_empty() {
             let pos = match self.history_pos {
@@ -319,17 +334,17 @@ impl ChatPanel {
                 Some(p) => p.saturating_sub(1),
             };
             self.history_pos = Some(pos);
-            self.bar.text = self.history[pos].clone();
+            self.bar.set_text(self.history[pos].clone());
         }
         if input.down {
             match self.history_pos {
                 Some(p) if p + 1 < self.history.len() => {
                     self.history_pos = Some(p + 1);
-                    self.bar.text = self.history[p + 1].clone();
+                    self.bar.set_text(self.history[p + 1].clone());
                 }
                 Some(_) => {
                     self.history_pos = None;
-                    self.bar.text.clear();
+                    self.bar.set_text(String::new());
                 }
                 None => {}
             }
@@ -337,7 +352,9 @@ impl ChatPanel {
         let mut send = None;
         if input.enter {
             let text = std::mem::take(&mut self.bar.text);
+            self.bar.set_text(String::new());
             self.open = false;
+            self.bar.focused = false;
             self.history_pos = None;
             if !text.trim().is_empty() {
                 // Zircon remembers the whisper target for the next `/`.
@@ -357,17 +374,21 @@ impl ChatPanel {
         }
         if input.escape {
             self.open = false;
-            self.bar.text.clear();
+            self.bar.focused = false;
+            self.bar.set_text(String::new());
             self.history_pos = None;
         }
         // The world must not see anything typed into the bar.
         input.text.clear();
         input.backspace = false;
+        input.delete = false;
         input.enter = false;
         input.escape = false;
         input.tab = false;
         input.up = false;
         input.down = false;
+        input.left = false;
+        input.right = false;
         input.digit = None;
         input.fkey = None;
         send
@@ -387,10 +408,22 @@ impl ChatPanel {
         };
         let kinds = [
             (Category::Local, "Tarnhelm: anyone selling a bronze helmet?"),
-            (Category::Shout, "(!)Bodil: recruiting for Zuma temple, whisper me"),
-            (Category::Group, "Rieka: pulling the next room, hold here a second"),
-            (Category::Guild, "Sanhu: guild war starts at eight, be online"),
-            (Category::Whisper, "Isolde=> trade at the smith in five minutes"),
+            (
+                Category::Shout,
+                "(!)Bodil: recruiting for Zuma temple, whisper me",
+            ),
+            (
+                Category::Group,
+                "Rieka: pulling the next room, hold here a second",
+            ),
+            (
+                Category::Guild,
+                "Sanhu: guild war starts at eight, be online",
+            ),
+            (
+                Category::Whisper,
+                "Isolde=> trade at the smith in five minutes",
+            ),
             (
                 Category::System,
                 "A long system notice that has to wrap across the panel to prove the word wrapping works.",
@@ -410,7 +443,8 @@ impl ChatPanel {
         let bar = Rect::new(12.0, height as f32 - 176.0, w, 22.0);
         let panel = Rect::new(12.0, bar.y - PANEL_H - 4.0, w, PANEL_H);
         self.rect = panel;
-        self.hovered = panel.contains(c.input.mouse.0, c.input.mouse.1);
+        self.update_hidden(now);
+        self.hovered = !self.hidden && panel.contains(c.input.mouse.0, c.input.mouse.1);
         // Zircon's default tab fades out: with the bar closed and the mouse
         // away, only recent lines show and the chrome stays hidden.
         let faded = !self.open && !self.hovered;
@@ -573,6 +607,32 @@ mod tests {
     }
 
     #[test]
+    fn panel_and_open_chat_bar_block_ground_item_drop() {
+        let mut p = panel();
+        p.rect = Rect::new(12.0, 500.0, 480.0, 150.0);
+        p.bar.rect = Rect::new(12.0, 654.0, 480.0, 22.0);
+        assert!(p.contains_mouse((30.0, 520.0)));
+        assert!(!p.contains_mouse((30.0, 660.0)));
+        p.open = true;
+        assert!(p.contains_mouse((30.0, 660.0)));
+        assert!(!p.contains_mouse((600.0, 520.0)));
+    }
+
+    #[test]
+    fn a_hidden_panel_lets_clicks_through_to_the_map() {
+        let mut p = panel();
+        p.rect = Rect::new(12.0, 500.0, 480.0, 150.0);
+        p.push("hello".into(), 1_000, Category::Local);
+        p.update_hidden(2_000);
+        assert!(p.contains_mouse((30.0, 520.0)));
+        p.update_hidden(1_000 + FADE_MS);
+        assert!(!p.contains_mouse((30.0, 520.0)));
+        p.open = true;
+        p.update_hidden(1_000 + FADE_MS);
+        assert!(p.contains_mouse((30.0, 520.0)));
+    }
+
+    #[test]
     fn backlog_is_capped_like_zircon() {
         let mut p = panel();
         for i in 0..MAX_LINES + 20 {
@@ -661,6 +721,33 @@ mod tests {
         assert_eq!(p.bar.text, "second");
         p.keys(&mut down(), 0, true);
         assert_eq!(p.bar.text, "", "past the newest the bar clears");
+    }
+
+    #[test]
+    fn left_right_and_delete_edit_chat_at_the_caret() {
+        let mut p = panel();
+        p.open = true;
+        p.bar.focused = true;
+        p.keys(&mut typed("ac"), 0, true);
+        p.keys(
+            &mut Input {
+                left: true,
+                ..Input::default()
+            },
+            0,
+            true,
+        );
+        p.keys(&mut typed("b"), 0, true);
+        assert_eq!(p.bar.text, "abc");
+        p.keys(
+            &mut Input {
+                delete: true,
+                ..Input::default()
+            },
+            0,
+            true,
+        );
+        assert_eq!(p.bar.text, "ab");
     }
 
     #[test]

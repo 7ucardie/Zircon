@@ -1,0 +1,437 @@
+<!doctype html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rebuilding Legend of Mir 3 in Rust: From Zircon to ZirconRust | Blog</title><link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;700&family=IBM+Plex+Mono:wght@400;700&display=optional" rel="stylesheet"><style>:root{--white:#fff;--graphite:#242424;--steel:#5c7c89;--teal:#1f4959;--navy:#011425;--bg:var(--navy);--bg-gradient:linear-gradient(180deg, #011425 0%, #0a2434 100%);--surface:var(--teal);--surface2:#5c7c8947;--text:var(--white);--text-body:#ffffffd1;--text-muted:#b7ccd5;--text-dim:#8faab5;--text-gray:#b7ccd5;--border:#5c7c8980;--border-subtle:#5c7c8947;--accent:var(--steel);--accent-hover:#7a9aa7;--accent-text:#9dc2d2;--heading-accent:#7fa3b2;--code-bg:var(--graphite);--grotesk:"Space Grotesk", system-ui, sans-serif;--mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace}*,:before,:after{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth;-webkit-font-smoothing:antialiased;text-size-adjust:100%;overflow-x:hidden}body{font-family:var(--mono);background:var(--bg-gradient) fixed, var(--bg);color:var(--text);-webkit-tap-highlight-color:#5c7c894d;min-height:100%;overflow-x:hidden}a{color:var(--accent-text);text-decoration:none;transition:color .2s}a:hover{color:var(--accent-hover)}a:focus-visible{outline:2px solid var(--accent);outline-offset:3px}::selection{background:#5c7c898c}img{max-width:100%;height:auto;display:block}.wrap{max-width:1100px;margin:0 auto;padding:0 24px}.section{padding:100px 0}.nav{z-index:100;-webkit-backdrop-filter:blur(8px);border-bottom:1px solid var(--border-subtle);height:60px;padding-top:env(safe-area-inset-top,0);background:#011425f0;position:fixed;top:0;left:0;right:0}.nav-inner{justify-content:space-between;align-items:center;max-width:1100px;height:100%;margin:0 auto;padding:0 24px;display:flex}.nav-brand{font-family:var(--grotesk);color:var(--text);letter-spacing:1px;align-items:center;gap:10px;font-size:14px;font-weight:700;display:flex}.nav-dot{background:var(--accent);width:12px;height:12px}.nav-links{align-items:center;gap:28px;display:flex}.nav-link{color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;font-size:10px;font-weight:500;font-family:var(--mono);align-items:center;min-height:44px;padding:4px 0;transition:color .15s;display:flex;position:relative}.nav-link:hover,.nav-link.active{color:var(--accent-text)}.nav-link:after{content:"";background:var(--accent);width:0;height:1.5px;transition:width .3s;position:absolute;bottom:-3px;left:0}.nav-link.active:after{width:100%}.nav-cta{cursor:pointer;background:0 0;border:1.5px solid #ffffff4d;border-radius:50%;justify-content:center;align-items:center;width:34px;height:34px;transition:border-color .2s,background .2s;display:flex}.nav-cta:hover{border-color:var(--accent-hover);background:#5c7c894d}.nav-cta svg{width:17px;height:17px;fill:var(--white)}.hamburger{cursor:pointer;background:0 0;border:none;width:44px;height:44px;display:none;position:relative}.hamburger span{background:var(--text);width:20px;height:1.5px;transition:all .3s;display:block;position:absolute;left:12px}.hamburger span:first-child{top:16px}.hamburger span:nth-child(2){top:21px}.hamburger span:nth-child(3){top:26px}.hamburger.open span:first-child{transform:translateY(5px)rotate(45deg)}.hamburger.open span:nth-child(2){opacity:0}.hamburger.open span:nth-child(3){transform:translateY(-5px)rotate(-45deg)}.mobile-drawer{background:var(--navy);border-bottom:1px solid var(--border);z-index:99;max-height:0;transition:max-height .3s;display:none;position:fixed;top:60px;left:0;right:0;overflow:hidden}.mobile-drawer.open{max-height:400px}.mobile-drawer a{color:var(--text-muted);letter-spacing:2px;text-transform:uppercase;border-top:1px solid var(--border-subtle);align-items:center;min-height:48px;padding:16px 24px;font-size:12px;font-weight:500;display:flex}.skip{background:var(--white);color:var(--navy);z-index:200;padding:10px 20px;font-weight:700;position:absolute;top:-100%;left:16px}.skip:focus{top:10px}main{padding-top:60px;overflow-x:hidden}.breadcrumb{color:var(--text-dim);letter-spacing:1px;padding:16px 0;font-size:10px}.breadcrumb a{color:var(--text-muted);text-underline-offset:2px;text-decoration:underline}.breadcrumb a:hover{color:var(--accent-text)}.breadcrumb span{color:var(--text-dim);margin:0 8px}.sec-label{color:var(--accent-text);letter-spacing:3px;margin-bottom:16px;font-size:12px;font-weight:700}.sec-title{font-family:var(--grotesk);color:var(--text);letter-spacing:-1px;overflow-wrap:break-word;margin-bottom:16px;font-size:clamp(22px,5vw,56px);font-weight:700;line-height:1}.sec-title .accent{color:var(--heading-accent)}.sec-sub{color:var(--text-muted);max-width:600px;font-size:13px;line-height:1.7}.blog-grid{grid-template-columns:repeat(2,1fr);gap:2px;margin-top:48px;display:grid}.blog-card{background:var(--surface);border:1px solid var(--border-subtle);color:inherit;flex-direction:column;gap:12px;padding:32px;transition:border-color .3s,transform .2s;display:flex}.blog-card:hover{border-color:var(--accent);color:inherit;transform:translateY(-2px)}.blog-card-tag{color:var(--accent-text);letter-spacing:2px;text-transform:uppercase;font-size:10px;font-weight:700}.blog-card-title{font-family:var(--grotesk);font-size:20px;font-weight:700;line-height:1.3}.blog-card-desc{color:var(--text-muted);flex:1;font-size:12px;line-height:1.6}.blog-card-meta{color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;margin-top:auto;font-size:10px}.blog-card-link{color:var(--accent-text);letter-spacing:.5px;margin-top:8px;font-size:11px}.empty{color:var(--text-muted);padding:48px 0;font-size:13px;line-height:1.7}.empty code{background:var(--graphite);color:var(--accent-text);padding:2px 6px}.hero{padding:44px 0 64px}.eyebrow{color:var(--accent-text);letter-spacing:3px;text-transform:uppercase;font-size:12px;font-weight:700}.hero h1{max-width:930px;font:700 clamp(28px, 6vw, 56px)/1 var(--grotesk);letter-spacing:-1px;margin:16px 0}.dek{max-width:780px;color:var(--text-muted);font-size:13px;line-height:1.7}.meta{color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;flex-wrap:wrap;gap:10px 16px;margin:26px 0 0;font-size:11px;display:flex}.hero-image{border:1px solid var(--border);background:var(--surface);width:100%;margin-top:28px}.article-shell{background:var(--surface);padding:80px 0}.article{max-width:800px;font-size:14px;line-height:1.75}.article h2{font:700 clamp(24px, 4vw, 34px)/1.18 var(--grotesk);margin:52px 0 16px}.article h2:first-child{margin-top:0}.article a{color:var(--accent-text)}.article h3{font:700 21px/1.3 var(--grotesk);margin:36px 0 12px}.article h4{font:700 16px/1.3 var(--grotesk);margin:28px 0 10px}.article p,.article li{color:var(--text-body)}.article p{margin:0 0 20px}.article ul,.article ol{margin:0 0 20px;padding-left:24px}.article li{margin:8px 0}.article strong{color:var(--text)}.article a{text-underline-offset:3px;text-decoration:underline}.article code{background:var(--graphite);color:var(--accent-text);padding:2px 6px;font-size:.92em}.article pre{border:1px solid #ffffff1f;margin:0 0 24px;padding:20px;font-size:12px;line-height:1.6;overflow:auto;background:var(--code-bg)!important}.article pre code{color:inherit;font-size:inherit;background:0 0;padding:0}.article blockquote{border-left:4px solid var(--accent);background:var(--surface2);color:var(--text-body);margin:28px 0;padding:18px 24px}.article blockquote p:last-child{margin-bottom:0}.article table{border-collapse:collapse;width:100%;max-width:100%;margin:24px 0;font-size:13px;display:block;overflow-x:auto}.article th,.article td{border:1px solid var(--border);text-align:left;padding:11px}.article th{color:var(--text)}.article figure{margin:32px 0}.article figcaption{color:var(--text-muted);margin-top:8px;font-size:11px}.article hr{border:0;border-top:1px solid var(--border);margin:40px 0}.article img{border:1px solid var(--border)}.sources,.faq,.author,.related{border-top:1px solid var(--border);padding:72px 0}.section-label{color:var(--accent-text);letter-spacing:3px;font-size:12px;font-weight:700}.section-title{font:700 clamp(28px, 5vw, 48px)/1.05 var(--grotesk);margin:12px 0 26px}.author-card{border:1px solid var(--border);background:var(--surface);max-width:800px;padding:28px}.author-card h2{font:700 20px/1.3 var(--grotesk);margin-bottom:10px}.author-card p{color:var(--text-body);font-size:13px;line-height:1.7}.author-card a{letter-spacing:1px;text-transform:uppercase;margin-top:12px;font-size:11px;display:inline-block}.related-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;display:grid}.related-card{border:1px solid var(--border);background:var(--surface);padding:24px}.related-card h3{font:700 16px/1.35 var(--grotesk);margin:0 0 10px}.related-card p{color:var(--text-body);margin-bottom:12px;font-size:13px;line-height:1.6}.related-card a{letter-spacing:.5px;font-size:11px}.tags{flex-wrap:wrap;gap:8px;margin-top:32px;display:flex}.tag{letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);border:1px solid var(--border);padding:6px 10px;font-size:10px}.home-hero{padding:96px 0 72px}.home-hero h1{font:700 clamp(36px, 8vw, 88px)/.95 var(--grotesk);letter-spacing:-2px;margin:16px 0 24px}.home-hero h1 .accent{color:var(--heading-accent)}.home-hero p{max-width:620px;color:var(--text-muted);font-size:14px;line-height:1.7}.home-actions{flex-wrap:wrap;gap:12px;margin-top:32px;display:flex}.pixel-div{width:100%;display:flex}.pixel-div div{flex:1;height:4px}.final-cta{border-top:2px solid var(--accent);text-align:center;flex-direction:column;align-items:center;gap:32px;padding:80px 24px;display:flex}.final-cta h2{font-family:var(--grotesk);letter-spacing:-1px;font-size:clamp(22px,5vw,48px);font-weight:700;line-height:1}.btn-primary{background:var(--accent);cursor:pointer;border:none;justify-content:center;align-items:center;height:56px;padding:0 36px;transition:background .2s;display:inline-flex}.btn-primary span{font-family:var(--grotesk);color:var(--white);letter-spacing:.5px;font-size:13px;font-weight:700}.btn-primary:hover{background:var(--accent-hover)}.btn-ghost{border:1px solid var(--steel);cursor:pointer;background:0 0;justify-content:center;align-items:center;height:56px;padding:0 28px;transition:border-color .2s,background .2s;display:inline-flex}.btn-ghost span{color:var(--white);font-size:12px}.btn-ghost:hover{border-color:var(--white);background:#ffffff0f}footer{padding:32px 0;padding-bottom:calc(32px + env(safe-area-inset-bottom,0));border-top:1px solid var(--border-subtle)}.footer-inner{flex-wrap:wrap;justify-content:space-between;align-items:center;gap:16px;display:flex}.footer-left{color:var(--text-dim);letter-spacing:1px;font-size:10px}.footer-left a{text-underline-offset:2px;text-decoration:underline}.footer-links{flex-wrap:wrap;gap:24px;list-style:none;display:flex}.footer-links a{color:var(--text-dim);letter-spacing:1px;text-transform:uppercase;font-size:10px}.footer-links a:hover{color:var(--white)}@media (prefers-reduced-motion:reduce){*,:before,:after{transition-duration:.01ms!important;animation-duration:.01ms!important}}@media (width<=768px){.nav-links{display:none}.hamburger,.mobile-drawer{display:block}.blog-grid{grid-template-columns:1fr}.section{padding:72px 0}.footer-inner{text-align:center;flex-direction:column}.footer-links{justify-content:center}.hero{padding-top:28px}.article-shell{padding:52px 0}.related-grid{grid-template-columns:1fr}}@media (width<=480px){.wrap{padding:0 16px}.blog-card-title{font-size:16px}.final-cta{padding:60px 16px}.article{font-size:13px}.article pre{padding:14px 16px;font-size:11px}.footer-left,.footer-links a{font-size:9px}}@media print{.nav,.mobile-drawer,.skip,.final-cta{display:none!important}main{padding-top:0!important}}
+
+.article table{border-collapse:collapse;width:100%;display:block;overflow-x:auto}.article th,.article td{border:1px solid var(--border);padding:8px 12px;text-align:left}
+.article img{max-width:100%;height:auto}.video-embed iframe{width:100%;height:auto;aspect-ratio:16/9;border:0}</style></head>
+<body><header class="nav"><div class="nav-inner"><a href="#" class="nav-brand"><div class="nav-dot"></div>BLOG</a><nav class="nav-links"><a class="nav-link">HOME</a><a class="nav-link active">BLOG</a></nav></div></header>
+<main id="main"><div class="wrap"><nav class="breadcrumb"><a>Home</a><span>/</span><a>Blog</a><span>/</span>Rebuilding Legend of Mir 3 in Rust: From Zircon to ZirconRust</nav></div>
+<section class="hero"><div class="wrap"><div class="eyebrow">// DEEP DIVE</div><h1>Rebuilding Legend of Mir 3 in Rust: From Zircon to ZirconRust</h1><p class="dek">How I rebuilt the Legend of Mir 3 client and server in Rust by reading the original Zircon assets directly. Covers a failed first port, the crate layout, and staying playable at every step.</p>
+<div class="meta"><span>Ellert van der Vecht</span><span>//</span><time>September 30, 2026</time><span>//</span><span>14 min read</span></div>
+<img class="hero-image" src="images/login.jpg" alt=""></div></section>
+<section class="article-shell"><div class="wrap"><article class="article"><h1 id="rebuilding-legend-of-mir-3-in-rust-from-zircon-to-zirconrust">Rebuilding Legend of Mir 3 in Rust: From Zircon to ZirconRust</h1>
+<p>I played Legend of Mir 3 in the early 2000s. It had dark 2D towns and
+crowded spawn rooms, and on siege nights whole guilds threw themselves at
+Sabuk Wall. <!-- TODO(author): add a personal memory here: your server,
+your class, a night you remember. --> Twenty years later the game still
+exists, kept alive by a community C# project called <strong>Zircon</strong>. This post
+is about rewriting that project in Rust as <strong>ZirconRust</strong>: a new client and
+a new server that read the original game files, look like Mir 3, and run
+natively on macOS, Windows and Linux.</p>
+<p>Below I walk through why I picked Rust, why my first port failed, what I
+did differently the second time, and what Rust actually changed. It is aimed at developers and at
+anyone who spent too many hours in Bichon.</p>
+<p><strong>Key Takeaways</strong></p>
+<ul>
+<li>Porting a game file by file never gave me something I could run.
+  Building a new client and server around the original asset formats did,
+  and I could play it from the first milestone.</li>
+<li>ZirconRust has five crates and about 110,000 lines of Rust. There is a
+  separate server, a native wgpu client, and a data editor that writes the
+  original files back byte for byte.</li>
+<li>I chose Rust for one language across client, server and protocol, native
+  graphics on three operating systems, and a compiler strict enough to
+  catch AI agents' mistakes early.</li>
+<li>The C# code stays untouched and serves as the specification. When the
+  two disagree, the C# code wins, not its comments.</li>
+<li>AI does more than write the code. One MCP server lets an AI host run live
+  events as a game master, and another builds playable maps from a
+  one-line brief without touching the installed game files.</li>
+<li>A screenshot at every step, plus more than 500 tests on three operating systems,
+  kept a fast rewrite honest.</li>
+</ul>
+<p><img alt="The ZirconRust login screen: a palace flanked by stone dragons, with email and password fields and a New Account button." src="./images/login.jpg" /></p>
+<h2 id="what-zircon-is">What Zircon is</h2>
+<p>Zircon is the open-source Legend of Mir 3 server and client, written in C#
+and published by the Mir community. The main repository,
+<a href="https://github.com/Suprcode/Zircon">Suprcode/Zircon</a>, dates from February
+2019 and had 474 stars and 351 forks when I looked
+(<a href="https://api.github.com/repos/Suprcode/Zircon">GitHub API</a>, retrieved
+2026-09-30). Its README points to the LOMCN forum, where most private-server
+discussion happens.</p>
+<p>The game underneath is WeMade's Legend of Mir 3. It was the sequel to Legend
+of Mir 2, which Wikipedia calls the most popular MMORPG in China in 2002 and
+2003, with more than 250,000 simultaneous users
+(<a href="https://en.wikipedia.org/wiki/The_Legend_of_Mir_2">Wikipedia: The Legend of Mir 2</a>,
+retrieved 2026-09-30). Mir 3 moved to 16-bit colour and, according to
+Wikipedia, peaked at 750,000 concurrent users
+(<a href="https://en.wikipedia.org/wiki/The_Legend_of_Mir_3">Wikipedia: The Legend of Mir 3</a>,
+retrieved 2026-09-30).</p>
+<p>Zircon is Windows-only on the client side because it draws with DirectX. A
+Zircon install has three parts I care about:</p>
+<ul>
+<li><code>.Zl</code> sprite libraries holding every character, monster, spell and
+  interface image</li>
+<li><code>.map</code> files: grids of 48×32 pixel cells, each with three tile layers
+  and walk flags</li>
+<li><code>System.db</code>, a binary database of every item, monster, NPC, spell and
+  quest, written by Zircon's own ORM (MirDB)</li>
+</ul>
+<p>This is what a Sabuk Wall siege looked like. It is the reason any of this
+exists:</p>
+<div class="video-embed">
+  <iframe
+    width="560" height="315"
+    title="Sabuk Wall Siege (apexguild)"
+    aria-label="YouTube video: Sabuk Wall Siege, a Legend of Mir 3 castle siege, by apexguild"
+    loading="lazy"
+    src="https://www.youtube-nocookie.com/embed/_geowvmGFpY"
+    srcdoc="<style>*{padding:0;margin:0;overflow:hidden}html,body{height:100%}img,span{position:absolute;width:100%;top:0;bottom:0;margin:auto}span{height:1.5em;text-align:center;font:48px/1.5 sans-serif;color:white;text-shadow:0 0 0.5em black}</style><a href=https://www.youtube-nocookie.com/embed/_geowvmGFpY?autoplay=1><img src=https://img.youtube.com/vi/_geowvmGFpY/hqdefault.jpg alt='Sabuk Wall Siege'><span>▶</span></a>"
+    frameborder="0"
+    allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+    allowfullscreen></iframe>
+  <noscript><a href="https://www.youtube.com/watch?v=_geowvmGFpY">Watch "Sabuk Wall Siege" by apexguild on YouTube</a></noscript>
+</div>
+
+<h2 id="why-rust-and-not-c-or-anything-else">Why Rust, and not C# or anything else</h2>
+<p>Rust fit the goal: one native client for macOS, Windows and Linux, and a
+server I could put on a cheap Linux box and trust with traffic from
+strangers. <!-- TODO(author): check these reasons are yours, and add any
+personal ones. --> The options I weighed:</p>
+<ul>
+<li><strong>Staying in C#.</strong> Zircon's client is tied to Windows through DirectX and
+  WinForms. Modern .NET runs on every platform, but making this client
+  cross-platform would mean replacing its rendering, windowing, audio and
+  UI layers. That is most of a client, so it is a rewrite either way, just
+  one that keeps the old structure. The C# server already runs on Linux, and
+  keeping it was a real option. Owning both ends instead let me design the
+  protocol, the data loading and the tests together.</li>
+<li><strong>A game engine (Godot, Unity, Bevy).</strong> Mir 3 is a fixed-order 2D sprite
+  renderer on a cell grid, not a scene graph. An engine brings an editor,
+  a runtime and its own ideas about scenes and input that the game does
+  not need. Zircon-Godot shows that route works; I wanted a smaller stack
+  that I understand end to end.</li>
+<li><strong>C++.</strong> Close to the original games and fast, but a network server in
+  C++ makes memory safety my job in every file.</li>
+<li><strong>Go or Java.</strong> Both are good for servers, but neither has a mature,
+  portable GPU stack for the client, so I would still need a second
+  language on that side.</li>
+</ul>
+<p>What Rust gave in return:</p>
+<ul>
+<li><strong>One language on both sides.</strong> <code>mir-proto</code> holds the messages and the
+  shared game rules, so the client and server compile against the same
+  types. If one side changes a message, the other side stops compiling.</li>
+<li><strong>Native graphics on every platform.</strong> wgpu targets Metal, Direct3D 12 and
+  Vulkan from one code base, and winit handles the window.</li>
+<li><strong>No garbage-collector pauses</strong> in a game loop, and a single static binary
+  for the server that fits in a small Docker image.</li>
+<li><strong>A compiler that checks the agents.</strong> Most of the code was written with
+  AI agents. Rust's type checker and borrow checker, plus <code>clippy
+  -D warnings</code> in CI, reject a lot of plausible-looking mistakes before any
+  test runs. That mattered more than raw speed.</li>
+</ul>
+<h2 id="why-the-first-port-failed">Why the first port failed</h2>
+<p>My first attempt translated the C# into Rust one piece at a time. It had a
+Bevy client, a Tokio server and a Tauri admin tool. After about 18,000
+lines it still was not playable, and what it did draw looked wrong.</p>
+<!-- [PERSONAL EXPERIENCE] -->
+<p>That approach went wrong in a way I think is common. Every translated piece
+compiled and passed its tests, but nothing connected end to end. I had no
+screen to look at, so I only found out the rendering was wrong once enough
+parts were in place to see it, and by then it was badly wrong. The branch
+also broke the C# build it was supposed to leave alone. I deleted it.</p>
+<p>The lesson I took: <strong>a port is only real once you can play it.</strong> Translating
+code preserves its structure, and Zircon's structure was designed around
+WinForms, DirectX and a single Windows process. Those are exactly the parts
+a Rust rewrite should not copy.</p>
+<h2 id="what-the-second-attempt-did-differently">What the second attempt did differently</h2>
+<p>The second attempt started from the data, not the code. The rules I set on
+day one:</p>
+<ol>
+<li><strong>Never edit the C# projects.</strong> They are the reference for file formats
+   and game rules, nothing more.</li>
+<li><strong>Read the original assets directly.</strong> No export step, no JSON copy of
+   <code>System.db</code>. The Rust server opens the MirDB binary at startup.</li>
+<li><strong>Purpose-built client and server</strong> with their own protocol, rather
+   than a copy of Zircon's packet layout.</li>
+<li><strong>Something visible at every step.</strong> The first milestone was a real map
+   from real <code>.map</code> and <code>.Zl</code> files, a warrior you click to move, monsters
+   from the real spawn tables, melee combat, death and respawn, and two
+   clients that can see each other.</li>
+</ol>
+<p><img alt="A level-40 warrior stands in Bichon Town among chickens, pigs and a cow, with a pagoda, a blossom tree and the minimap in the corner." src="./images/world.jpg" /></p>
+<p>The formats turned out to be small. A <code>.Zl</code> library is a header followed by
+DXT1 or DXT5 compressed images, each with a draw offset and an optional
+shadow. A <code>.map</code> file is a grid of 14-byte cell records. MirDB is harder
+because it stores whole object graphs, but its layout is regular once you
+have read the C# serializer. In <code>mir-formats</code> all three readers share one
+primitive, a little-endian cursor over a byte slice:</p>
+<pre><code class="language-rust">/// Width of one map cell in pixels.
+pub const CELL_WIDTH: i32 = 48;
+/// Height of one map cell in pixels.
+pub const CELL_HEIGHT: i32 = 32;
+
+/// Little-endian cursor over a byte slice, the only primitive the readers need.
+pub(crate) struct Cursor&lt;'a&gt; {
+    data: &amp;'a [u8],
+    pos: usize,
+}
+</code></pre>
+<!-- [UNIQUE INSIGHT] -->
+<p>Later I added writers for the same formats. The data editor saves <code>.map</code> and
+<code>System.db</code> files that are <strong>byte-identical</strong> to the originals when nothing
+has changed, and a test checks this against the shipped files. That
+round-trip test is the best evidence I have that the readers really
+understand the formats, as opposed to just being good enough to draw a
+picture.</p>
+<h2 id="five-crates-one-workspace">Five crates, one workspace</h2>
+<p>ZirconRust is a Cargo workspace of five crates:</p>
+<table>
+<thead>
+<tr>
+<th>Crate</th>
+<th>Role</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>mir-formats</code></td>
+<td>Readers and writers for <code>.Zl</code>, <code>.map</code> and MirDB, plus DXT1/DXT5 codecs</td>
+</tr>
+<tr>
+<td><code>mir-proto</code></td>
+<td>Client/server messages, encoded with postcard and a length prefix</td>
+</tr>
+<tr>
+<td><code>mir-server</code></td>
+<td>Tokio server: accounts, maps, spawns, combat, monster AI, magic, quests, guilds</td>
+</tr>
+<tr>
+<td><code>mir-client</code></td>
+<td>Native client built on winit and wgpu, with a custom sprite batch</td>
+</tr>
+<tr>
+<td><code>mir-editor</code></td>
+<td>egui editor for <code>System.db</code>, maps and sprites</td>
+</tr>
+</tbody>
+</table>
+<!-- [ORIGINAL DATA] -->
+<figure>
+  <svg viewBox="0 0 560 270" role="img" aria-labelledby="loc-title loc-desc" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;font-family:system-ui,sans-serif">
+    <title id="loc-title">Lines of Rust per ZirconRust crate</title>
+    <desc id="loc-desc">Horizontal bar chart. mir-server 49,140 lines; mir-editor 27,201; mir-client 25,843; mir-formats 4,314; mir-proto 3,011. Total 109,509.</desc>
+    <text x="10" y="24" fill="currentColor" font-size="15" font-weight="600">Lines of Rust per crate (total 109,509)</text>
+    <g font-size="13" fill="currentColor">
+      <text x="10" y="67">mir-server</text>
+      <rect x="120" y="50" width="360" height="24" rx="3" fill="#d97706"/>
+      <text x="486" y="67">49,140</text>
+      <text x="10" y="107">mir-editor</text>
+      <rect x="120" y="90" width="199" height="24" rx="3" fill="#2563eb"/>
+      <text x="325" y="107">27,201</text>
+      <text x="10" y="147">mir-client</text>
+      <rect x="120" y="130" width="189" height="24" rx="3" fill="#2563eb"/>
+      <text x="315" y="147">25,843</text>
+      <text x="10" y="187">mir-formats</text>
+      <rect x="120" y="170" width="32" height="24" rx="3" fill="#2563eb"/>
+      <text x="158" y="187">4,314</text>
+      <text x="10" y="227">mir-proto</text>
+      <rect x="120" y="210" width="22" height="24" rx="3" fill="#2563eb"/>
+      <text x="148" y="227">3,011</text>
+    </g>
+  </svg>
+  <figcaption>Source: line counts of <code>*.rs</code> files in the ZirconRust workspace, 2026-09-30.</figcaption>
+</figure>
+
+<p>The server is the biggest crate because that is where the game lives. It
+holds the whole player spell list of about 174 spells, monster AI profiles,
+bosses, quests, NPC scripts (including Lua page scripts through <code>mlua</code>),
+groups, guilds, trading, mail, a marketplace, mounts, fishing and mining,
+and the Sabuk Wall conquest. Rules that both sides need, such as Zircon's move
+and attack timings, attack speed and spell cost and power formulas, live in
+<code>mir_proto::rules</code>, so the client and server cannot drift apart on them.</p>
+<p>The client uses <a href="https://crates.io/crates/wgpu">wgpu</a> 30 for rendering and
+<a href="https://crates.io/crates/winit">winit</a> for windowing. It deliberately does
+not use a game engine. Mir 3 is a flat 2D grid of 48×32 cells with 8-way
+movement, drawn in a fixed layer order, with the UI on top. A sprite batch
+that knows that order was simpler than bending an engine
+to match it. The interface is built from the original interface sprites, so
+the game still looks like Mir 3.</p>
+<h2 id="playable-at-every-step">Playable at every step</h2>
+<p>I made "can I see it?" the definition of done. Every milestone ended with
+a screenshot taken by the client itself.
+<code>ZIRCON_SCREENSHOT=out.png:5 cargo run -p mir-client</code> saves a frame after
+five seconds, and <code>ZIRCON_HEADLESS=1</code> renders offscreen so it also works on
+a locked Mac. More environment switches log in, create a character, open
+windows, cast spells or talk to an NPC, so one command reaches almost any
+screen. The screenshots in this post were all made that way.</p>
+<!-- [ORIGINAL DATA] -->
+<figure>
+  <svg viewBox="0 0 560 290" role="img" aria-labelledby="cm-title cm-desc" xmlns="http://www.w3.org/2000/svg" style="max-width:100%;height:auto;font-family:system-ui,sans-serif">
+    <title id="cm-title">Commits per day in the first five days of ZirconRust</title>
+    <desc id="cm-desc">Lollipop chart of commits touching the rust directory: 10 September 2026, 1; 11 September, 5; 12 September, 23; 13 September, 23; 14 September, 26. 78 commits in total.</desc>
+    <text x="10" y="24" fill="currentColor" font-size="15" font-weight="600">Commits per day, first five days (78 total)</text>
+    <line x1="40" y1="230" x2="530" y2="230" stroke="currentColor" stroke-opacity="0.4"/>
+    <g stroke="#d97706" stroke-width="3">
+      <line x1="80" y1="230" x2="80" y2="223.5"/>
+      <line x1="180" y1="230" x2="180" y2="197.3"/>
+      <line x1="280" y1="230" x2="280" y2="79.6"/>
+      <line x1="380" y1="230" x2="380" y2="79.6"/>
+      <line x1="480" y1="230" x2="480" y2="60"/>
+    </g>
+    <g fill="#d97706">
+      <circle cx="80" cy="223.5" r="7"/>
+      <circle cx="180" cy="197.3" r="7"/>
+      <circle cx="280" cy="79.6" r="7"/>
+      <circle cx="380" cy="79.6" r="7"/>
+      <circle cx="480" cy="60" r="7"/>
+    </g>
+    <g font-size="13" fill="currentColor" text-anchor="middle">
+      <text x="80" y="208">1</text>
+      <text x="180" y="182">5</text>
+      <text x="280" y="64">23</text>
+      <text x="380" y="64">23</text>
+      <text x="480" y="45">26</text>
+      <text x="80" y="252">10 Sep</text>
+      <text x="180" y="252">11 Sep</text>
+      <text x="280" y="252">12 Sep</text>
+      <text x="380" y="252">13 Sep</text>
+      <text x="480" y="252">14 Sep</text>
+    </g>
+  </svg>
+  <figcaption>Source: <code>git log</code> of the <code>rust/</code> directory, 10–14 September 2026.</figcaption>
+</figure>
+
+<!-- [PERSONAL EXPERIENCE] -->
+<p>The pace came from working with two AI coding agents, Anthropic's Claude
+Code and OpenAI's Codex. <!-- TODO(author): say how you split work between
+Claude and Codex, if you want to. --> Independent systems such as horses
+and marriage, fishing and mining, refining and companions, or guilds and
+mail went to parallel agents, each in its own git worktree, and
+I merged their branches in order. The merge conflicts almost always landed
+in the same few shared places: protocol enums, the player record, the main
+dispatch <code>match</code>, and key-binding tables. That told me where the code was
+coupled more than any architecture diagram did.</p>
+<p><img alt="A wizard stands in Banya Village next to a large tiled-roof building, with a shop NPC, a market stall and the minimap in view." src="./images/cast.jpg" /></p>
+<p>Staying playable also meant writing down where the Rust port chose to
+differ from Zircon, and why. For example, Zircon potions heal instantly, not
+over time, and its marketplace charges no listing fee, only a 7% tax on
+sales. When the C# code and its comments disagree, the code wins. When the
+asset pack has no data for a feature (this pack has no loot-box or bundle
+tables), the feature is left out rather than invented.</p>
+<h2 id="letting-ai-run-events-and-build-maps">Letting AI run events and build maps</h2>
+<p>Using AI to write the code was only the first step. ZirconRust also lets an
+AI work inside the game, through two local
+<a href="https://modelcontextprotocol.io/">Model Context Protocol</a> (MCP) servers
+that any MCP host, such as Claude Code or Codex, can launch.</p>
+<h3 id="an-ai-game-master-for-live-events">An AI game master for live events</h3>
+<p><code>mir-game-mcp</code> logs in to a running server as a game-master character and
+gives the AI two tools:</p>
+<ul>
+<li><strong><code>gm_command</code></strong> runs any existing GM command, such as <code>@monster</code> to spawn
+  a boss, <code>@move</code> to set up the arena, <code>@make gold 100000</code> to hand out a
+  reward, or <code>@startconquest</code> to open a Sabuk Wall siege.</li>
+<li><strong><code>log_tail</code></strong> reads the last lines of the server log, so the AI can see
+  what actually happened.</li>
+</ul>
+<p>That is enough for an AI to host an event: pick a map, spawn the boss,
+announce it, watch the log and pay out the winners. <!-- TODO(author): add
+an event the AI actually ran, and how players reacted. --> The server keeps
+control. GM rights are stored on the character on the server side, so no
+client can grant them to itself, and the AI can only use commands a human
+GM could also type. The same server has a <code>triage_issue</code> prompt that turns
+a player's bug report into log reading, a reproduction and a GitHub issue.
+It says to treat logs and chat as untrusted evidence, and not to run
+state-changing commands without permission.</p>
+<p>These AI-run events sit on top of the scheduled ones. Every two hours (UTC)
+the server rotates in a boss hunt from the original event tables, with a
+100,000 gold reward. That is the red "World event" line in the screenshots.</p>
+<h3 id="an-mcp-server-that-builds-maps">An MCP server that builds maps</h3>
+<p>The data editor has a second mode, <code>mir-editor --mcp</code>, that exposes map and
+database authoring as tools. <code>map_inspect</code>, <code>map_copy_area</code>, <code>map_stamp</code>
+and <code>map_collision</code> edit maps cell by cell. <code>world_generate</code>,
+<code>world_branch</code> and <code>world_populate</code> build whole playable areas with walls,
+a safe zone, portals and monster spawns. The shortest path is a single
+call:</p>
+<pre><code class="language-json">{
+  &quot;name&quot;: &quot;world_from_brief&quot;,
+  &quot;arguments&quot;: {
+    &quot;brief&quot;: &quot;six-room Wood dungeon with chickens&quot;,
+    &quot;output&quot;: &quot;chicken-world&quot;,
+    &quot;seed&quot;: 42
+  }
+}
+</code></pre>
+<p>That returns a playable map, a database revision and any private wall art
+it generated. For richer requests, a <code>create_world</code> prompt tells the
+host's AI to search the installed content, choose a generator, call the
+tools, inspect the result and report back. The editor never calls an AI
+provider itself. The AI lives in the host, and the editor only provides
+checked tools.</p>
+<!-- [UNIQUE INSIGHT] -->
+<p>The design rule that made this safe to hand to an AI: <strong>every edit writes a
+new revision directory.</strong> The installed assets, the source <code>System.db</code> and
+earlier revisions are never modified, and the authoring server has no
+network listener and no connection to a live game server. A request that
+fails validation, such as a blocked portal or an unknown monster, writes
+nothing. An AI can try ten dungeon layouts, and a human decides which one
+ships.</p>
+<h2 id="what-rust-actually-changed">What Rust actually changed</h2>
+<p>Rust mostly changed how confident I could be when changing things, rather
+than how fast the game runs.</p>
+<ul>
+<li><strong>Determinism.</strong> The server uses a seeded RNG (<code>ZIRCON_SEED</code>) and ordered
+  maps for world objects, so a test replays the same fight every time. Two
+  tests that were flaky because of <code>HashMap</code> iteration order became stable
+  once their helpers picked the lowest index instead of the first one found.</li>
+<li><strong>Tests without ceremony.</strong> The workspace has more than 500 tests,
+  from DXT block decoding up to a load test that starts the real server
+  binary and connects twelve bots. CI runs <code>fmt</code>, <code>clippy -D warnings</code>,
+  build and test on Linux, macOS and Windows, and builds the server Docker
+  image.</li>
+<li><strong>One language, three platforms.</strong> The same client builds as a macOS
+  <code>.app</code>, a Windows binary and a Linux binary. The server ships as a
+  container with the assets mounted as a volume.</li>
+<li><strong>Memory safety as a default, not a project.</strong> Google reported that memory
+  safety bugs fell from 76% of Android vulnerabilities in 2019 to an
+  expected 24% by the end of 2024, mainly because new code was written in
+  memory-safe languages such as Rust
+  (<a href="https://www.theregister.com/2024/09/25/google_rust_safe_code_android/">The Register</a>,
+  25 September 2024). For a game server that accepts packets from strangers,
+  that default is worth having. In ZirconRust it sits alongside explicit
+  limits: bounded queues, flood and idle checks, and a maximum number of
+  packets per tick.</li>
+</ul>
+<p><img alt="The character window showing a level-40 warrior's equipment and stats, next to an empty inventory grid, over Bichon Town." src="./images/windows.jpg" /></p>
+<h2 id="where-this-goes-next">Where this goes next</h2>
+<!-- TODO(author): confirm plans and add anything you want to call out. -->
+<p>The planned scope (content, then the missing systems, then multiplayer
+hardening) is done. What remains is mostly polish and tooling. The editor
+is growing into a place to make new sprites and maps, and a VPS deployment
+guide covers running a public server. There are other rewrites too:
+<a href="https://github.com/iamcheyan/Zircon-Godot">Zircon-Godot</a> keeps the C#
+server rules and rebuilds the client in Godot. ZirconRust made the opposite
+choice and rebuilt both sides, keeping only the data.</p>
+<p>For the original game in motion,
+<a href="https://www.youtube.com/watch?v=DDDHK14QjIk">MMOHuts' Legend of Mir 3 first look</a>
+is a good reference for how the Rust client should feel.</p>
+<h2 id="frequently-asked-questions">Frequently asked questions</h2>
+<h3 id="does-zirconrust-include-the-game-assets">Does ZirconRust include the game assets?</h3>
+<p>No. The <code>.Zl</code>, <code>.map</code> and <code>System.db</code> files are not in the repository. You
+extract them from a Zircon client package and point <code>ZIRCON_ASSETS</code> and
+<code>ZIRCON_DB</code> at them. The sprites in this post come from that asset pack.</p>
+<h3 id="can-the-rust-client-connect-to-a-zircon-c-server">Can the Rust client connect to a Zircon C# server?</h3>
+<p>No. ZirconRust uses its own protocol (postcard-encoded messages defined in
+<code>mir-proto</code>), so the Rust client needs the Rust server. Both must be built
+from the same commit.</p>
+<h3 id="why-not-use-bevy-or-another-game-engine">Why not use Bevy or another game engine?</h3>
+<p>The first attempt used Bevy and never became playable. Mir 3 needs a fixed
+draw order over a 2D cell grid, and a custom wgpu sprite batch does that in
+far less code than adapting an engine.</p>
+<h2 id="conclusion">Conclusion</h2>
+<p>Rebuilding Legend of Mir 3 in Rust worked once I stopped translating code
+and started from the data. The summary:</p>
+<ul>
+<li>Treat the original C# as a specification, not source to convert.</li>
+<li>Read the original asset formats directly, and prove it with byte-identical
+  round-trips.</li>
+<li>Define "done" as a screenshot of the running game.</li>
+<li>Use deterministic tests and CI on every platform to keep speed from
+  turning into breakage.</li>
+</ul>
+<!-- TODO(author): closing line about getting back to Sabuk Wall. -->
+<p>If you played Mir 3 back then, the towns look the way you remember. If you
+are thinking about porting an old game of your own, start with its data
+files.</p><div class="tags"><span class="tag">rust</span><span class="tag">legend of mir 3</span><span class="tag">game development</span><span class="tag">mmorpg</span><span class="tag">wgpu</span><span class="tag">porting</span></div></article></div></section>
+<section class="author"><div class="wrap"><div class="section-label">// AUTHOR</div><div class="author-card"><h2>Ellert van der Vecht</h2><p>Cloud and security engineer at Schuberg Philis since 2011. Builds observability, compliance, and AI tooling for enterprise infrastructure. Gamer, father, builder.</p></div></div></section>
+</main></body></html>

@@ -115,6 +115,33 @@ pub struct Collection {
 }
 
 impl Collection {
+    /// Create an empty collection with an explicit ORM mapping.
+    pub fn new(mapping: Mapping) -> Result<Self> {
+        let mut index_of = HashMap::new();
+        for (index, property) in mapping.properties.iter().enumerate() {
+            if property.name.is_empty() || index_of.insert(property.name.clone(), index).is_some() {
+                return Err(FormatError::Other(
+                    "Collection properties must have unique nonempty names".into(),
+                ));
+            }
+        }
+        if !mapping
+            .properties
+            .iter()
+            .any(|p| p.name == "Index" && p.type_name == "System.Int32")
+        {
+            return Err(FormatError::Other(
+                "Collection requires a System.Int32 Index property".into(),
+            ));
+        }
+        Ok(Self {
+            mapping,
+            next_index: 1,
+            records: vec![],
+            index_of,
+        })
+    }
+
     /// Short type name, e.g. `MapInfo` for `Library.SystemModels.MapInfo`.
     pub fn short_name(&self) -> &str {
         self.mapping
@@ -198,7 +225,7 @@ impl MirDb {
         if mapping_count < 0 {
             return Err(FormatError::Invalid("mirdb mapping count"));
         }
-        let mut mappings = Vec::with_capacity(mapping_count as usize);
+        let mut mappings = Vec::new();
         for _ in 0..mapping_count {
             let stored_type_name = c.string()?;
             let mut type_name = stored_type_name.clone();
@@ -206,7 +233,7 @@ impl MirDb {
                 type_name = type_name.replace("Server.DBModels", "Library.SystemModels");
             }
             let prop_count = c.i32()?;
-            let mut properties = Vec::with_capacity(prop_count.max(0) as usize);
+            let mut properties = Vec::new();
             for _ in 0..prop_count {
                 let name = c.string()?;
                 let type_name = c.string()?;
@@ -225,7 +252,7 @@ impl MirDb {
             let mut b = Cursor::new(blob);
             let next_index = b.i32()?;
             let count = b.i32()?;
-            let mut records = Vec::with_capacity(count.max(0) as usize);
+            let mut records = Vec::new();
             for _ in 0..count {
                 let raw_len = b.i32()?;
                 let raw = b.bytes(raw_len.max(0) as usize)?;
@@ -431,11 +458,28 @@ impl Collection {
         }
     }
 
+    /// Shipped databases can store the last issued identity in next_index.
+    /// Honour higher counters, but never reuse an identity present in the rows.
+    pub fn allocate_index(&mut self) -> i32 {
+        let first_unused = self
+            .records
+            .iter()
+            .map(|r| self.index(r))
+            .max()
+            .unwrap_or(0)
+            .checked_add(1)
+            .expect("collection identities exhausted");
+        let index = self.next_index.max(first_unused);
+        self.next_index = index
+            .checked_add(1)
+            .expect("collection identities exhausted");
+        index
+    }
+
     /// Append a record whose `Index` is the collection's next index (like the
     /// C# ORM); other values come from `values` (missing ones default).
     pub fn push_record(&mut self, values: Vec<(&str, Value)>) -> i32 {
-        let index = self.next_index;
-        self.next_index += 1;
+        let index = self.allocate_index();
         let mut record = Record {
             values: self
                 .mapping
@@ -519,7 +563,7 @@ fn read_value(c: &mut Cursor, type_name: &str) -> Result<Value> {
                 Value::IntArray(None)
             } else {
                 let len = c.i32()?.max(0) as usize;
-                let mut v = Vec::with_capacity(len);
+                let mut v = Vec::new();
                 for _ in 0..len {
                     v.push(c.i32()?);
                 }
@@ -531,7 +575,7 @@ fn read_value(c: &mut Cursor, type_name: &str) -> Result<Value> {
                 Value::PointArray(None)
             } else {
                 let len = c.i32()?.max(0) as usize;
-                let mut v = Vec::with_capacity(len);
+                let mut v = Vec::new();
                 for _ in 0..len {
                     v.push((c.i32()?, c.i32()?));
                 }
@@ -551,7 +595,7 @@ fn read_value(c: &mut Cursor, type_name: &str) -> Result<Value> {
                 Value::Stats(None)
             } else {
                 let len = c.i32()?.max(0) as usize;
-                let mut v = Vec::with_capacity(len);
+                let mut v = Vec::new();
                 for _ in 0..len {
                     v.push((c.i32()?, c.i32()?));
                 }
@@ -587,8 +631,22 @@ pub mod stat {
     pub const ATTACK_SPEED: i32 = 16;
     /// Light radius.
     pub const LIGHT: i32 = 17;
+    pub const LUCK: i32 = 19;
+    pub const PICK_UP_RADIUS: i32 = 40;
+    pub const MC_PERCENT: i32 = 67;
+    pub const DC_PERCENT: i32 = 84;
+    pub const SC_PERCENT: i32 = 85;
+    /// Experience modifiers (`Stat.ExperienceRate` and `Stat.BaseExperienceRate`).
+    pub const EXPERIENCE_RATE: i32 = 36;
+    pub const BASE_EXPERIENCE_RATE: i32 = 106;
     /// Experience granted by a consumable.
     pub const EXPERIENCE: i32 = 116;
+    pub const BLOCK_CHANCE: i32 = 125;
+    pub const EVASION_CHANCE: i32 = 126;
+    pub const POISON_RESISTANCE: i32 = 129;
+    /// Focus point pool, granted by the discipline track.
+    pub const FOCUS: i32 = 131;
+    pub const GROWTH_LEVEL: i32 = 133;
 }
 
 /// `RegionType` values.
@@ -629,6 +687,57 @@ pub fn region_points(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn new_collection_builds_field_lookup_and_roundtrips_references() {
+        let mapping = Mapping {
+            type_name: "Library.SystemModels.CastleGateInfo".into(),
+            stored_type_name: "Library.SystemModels.CastleGateInfo".into(),
+            properties: [("Castle", "System.Int32"), ("Index", "System.Int32")]
+                .into_iter()
+                .map(|(name, type_name)| Property {
+                    name: name.into(),
+                    type_name: type_name.into(),
+                })
+                .collect(),
+        };
+        let mut collection = Collection::new(mapping.clone()).unwrap();
+        assert_eq!(collection.push_record(vec![("Castle", Value::Int(7))]), 1);
+        let db = MirDb {
+            collections: vec![collection],
+        };
+        let bytes = db.to_bytes().unwrap();
+        let restored = MirDb::parse(&bytes).unwrap();
+        let c = restored.collection("CastleGateInfo").unwrap();
+        assert_eq!(c.int(&c.records[0], "Castle"), Some(7));
+        assert_eq!(restored.to_bytes().unwrap(), bytes);
+        let mut duplicate = mapping.clone();
+        duplicate.properties.push(duplicate.properties[0].clone());
+        assert!(Collection::new(duplicate).is_err());
+        let mut no_index = mapping;
+        no_index.properties.pop();
+        assert!(Collection::new(no_index).is_err());
+    }
+
+    #[test]
+    fn truncated_db_is_an_error_not_an_abort() {
+        let mapping = Mapping {
+            type_name: "Library.SystemModels.CastleGateInfo".into(),
+            stored_type_name: "Library.SystemModels.CastleGateInfo".into(),
+            properties: vec![Property {
+                name: "Index".into(),
+                type_name: "System.Int32".into(),
+            }],
+        };
+        let mut collection = Collection::new(mapping).unwrap();
+        collection.push_record(vec![("Index", Value::Int(1))]);
+        let db = MirDb {
+            collections: vec![collection],
+        };
+        let bytes = db.to_bytes().unwrap();
+        for cut in [0, 10, 21, bytes.len() / 2, bytes.len() - 1] {
+            assert!(MirDb::parse(&bytes[..cut]).is_err(), "cut {cut}");
+        }
+    }
 
     #[test]
     fn decimal_to_f64() {

@@ -52,19 +52,14 @@ pub struct SocialStore {
 
 impl SocialStore {
     pub fn load(path: PathBuf) -> SocialStore {
-        let mut store: SocialStore = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let mut store: SocialStore = super::load_json(&path);
         store.path = Some(path);
         store
     }
 
     fn save(&self) {
         if let Some(p) = &self.path {
-            if let Ok(json) = serde_json::to_vec_pretty(self) {
-                let _ = std::fs::write(p, json);
-            }
+            super::save_json(p, self);
         }
     }
 

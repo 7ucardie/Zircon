@@ -1,6 +1,73 @@
 use super::*;
 
 impl World {
+    /// Prefer the requested summon cell, then nearby free cells; C# falls
+    /// back to the caster's occupied cell if no free cell exists.
+    pub(super) fn summon_placement(&self, map: i32, preferred: Point, caster: Point) -> Point {
+        for center in [preferred, caster] {
+            if !self.cell_blocked(map, center, false) {
+                return center;
+            }
+            for dir in Direction::ALL {
+                let p = center.step(dir, 1);
+                if !self.cell_blocked(map, p, false) {
+                    return p;
+                }
+            }
+        }
+        caster
+    }
+
+    /// Zircon `PlayerObject.CanAttackTarget`, including a summoned monster's owner.
+    pub(super) fn player_can_attack_target(&self, caster: ObjectId, target: &Object) -> bool {
+        let Some(me) = self.objects.get(&caster) else {
+            return false;
+        };
+        let Some(player) = me.player() else {
+            return false;
+        };
+        let Some(monster) = target.monster() else {
+            return me.hostile_to(target);
+        };
+        let Some(owner) = monster.owner else {
+            return me.hostile_to(target);
+        };
+        if target.dead
+            || monster.guard
+            || monster.castle.is_some()
+            || monster.companion.is_some()
+            || monster.room_door.is_some()
+            || monster.hidden
+        {
+            return false;
+        }
+        let puppet = self
+            .data
+            .monsters
+            .get(&monster.def)
+            .is_some_and(|def| def.flag == 6);
+        if owner == caster {
+            return player.attack_mode == mir_proto::attack_mode::ALL || puppet;
+        }
+        if puppet || me.in_safe_zone || target.in_safe_zone {
+            return false;
+        }
+        let Some(other) = self.objects.get(&owner).and_then(Object::player) else {
+            return false;
+        };
+        match player.attack_mode {
+            mir_proto::attack_mode::PEACE => false,
+            mir_proto::attack_mode::GROUP => player.group.is_none() || player.group != other.group,
+            mir_proto::attack_mode::GUILD => player.guild.is_none() || player.guild != other.guild,
+            mir_proto::attack_mode::WAR_RED_BROWN => {
+                other.brown
+                    || other.pk_points >= super::pvp::RED_POINT
+                    || super::pvp::at_war(player, other)
+            }
+            _ => true,
+        }
+    }
+
     /// Zircon `PlayerObject.Magic`: validate, pay, schedule the effect,
     /// broadcast the cast.
     pub fn cast(
@@ -47,6 +114,10 @@ impl World {
             deny(self, "That skill cannot be cast.");
             return;
         }
+        if paralysed(o) {
+            deny(self, "You are stunned.");
+            return;
+        }
         if p.level < def.need_level[0] {
             deny(
                 self,
@@ -54,7 +125,11 @@ impl World {
             );
             return;
         }
-        if o.dead || self.now < o.action_time || self.now < p.magic_time {
+        let mobile_support = magic_type::is_mobile_support_cast(magic);
+        if o.dead
+            || (self.now < o.action_time && !(mobile_support && self.now < o.move_time))
+            || self.now < p.magic_time
+        {
             deny(self, "");
             return;
         }
@@ -63,12 +138,17 @@ impl World {
             return;
         }
         // Cloak is paid in HP (see its arm); everything else in MP.
-        let cost = if magic == magic_type::CLOAK {
+        let cost = if matches!(magic, magic_type::CLOAK | magic_type::ELEMENTAL_HURRICANE) {
             0
         } else {
             um.cost(&def)
         };
-        if cost > p.mp {
+        let required_cost = if magic == magic_type::ELEMENTAL_HURRICANE && p.channel.is_none() {
+            um.cost(&def)
+        } else {
+            cost
+        };
+        if required_cost > p.mp {
             deny(self, "Not enough mana.");
             return;
         }
@@ -157,7 +237,13 @@ impl World {
                 None => locations.push(location),
             },
             magic_type::THUNDER_BOLT | magic_type::POISON_DUST => {
-                match target.filter(|t| self.objects[t].is_monster()) {
+                match target.filter(|t| {
+                    if magic == magic_type::POISON_DUST {
+                        self.player_can_attack_target(id, &self.objects[t])
+                    } else {
+                        self.objects[t].is_monster()
+                    }
+                }) {
                     Some(t) => {
                         targets.push(t);
                         pending.push(pm(
@@ -347,7 +433,10 @@ impl World {
                     self.send_to(
                         id,
                         ServerMessage::Chat {
-                            text: format!("{} needs {need} talismans.", def.name),
+                            text: format!(
+                                "{} needs {need} Talisman charges. Equip a standard or elemental Talisman in the Amulet slot.",
+                                def.name
+                            ),
                         },
                     );
                 } else {
@@ -373,7 +462,10 @@ impl World {
                     self.send_to(
                         id,
                         ServerMessage::Chat {
-                            text: format!("{} needs {need} talisman(s).", def.name),
+                            text: format!(
+                                "{} needs {need} Talisman charges. Equip a standard or elemental Talisman in the Amulet slot.",
+                                def.name
+                            ),
                         },
                     );
                 } else {
@@ -447,7 +539,10 @@ impl World {
                     self.send_to(
                         id,
                         ServerMessage::Chat {
-                            text: format!("{} needs {need} talisman(s).", def.name),
+                            text: format!(
+                                "{} needs {need} Talisman charges. Equip a standard or elemental Talisman in the Amulet slot.",
+                                def.name
+                            ),
                         },
                     );
                 } else {
@@ -509,7 +604,7 @@ impl World {
                 let mut pool: Vec<ObjectId> = self
                     .on_map(map)
                     .filter(|o| {
-                        o.is_monster()
+                        self.objects[&id].hostile_to(o)
                             && !o.dead
                             && o.location.distance(location) <= 3
                             && o.location.distance(loc) <= MAGIC_RANGE
@@ -680,8 +775,10 @@ impl World {
         };
         {
             let o = self.objects.get_mut(&id).unwrap();
-            o.action_time = self.now + CAST_TIME;
-            o.direction = face;
+            if !mobile_support {
+                o.action_time = self.now + CAST_TIME;
+                o.direction = face;
+            }
             let p = o.player_mut().unwrap();
             p.mp -= cost;
             p.magic_time = self.now + MAGIC_DELAY;
@@ -749,22 +846,9 @@ impl World {
             return 0;
         }
         let ts = t.stats;
-        let resist = match &t.kind {
-            Kind::Monster(m) => {
-                let d = &self.data.monsters[&m.def];
-                match elem {
-                    element::FIRE => d.stat(21),
-                    element::ICE => d.stat(23),
-                    element::LIGHTNING => d.stat(25),
-                    element::WIND => d.stat(27),
-                    element::HOLY => d.stat(29),
-                    element::DARK => d.stat(31),
-                    element::PHANTOM => d.stat(33),
-                    _ => 0,
-                }
-            }
-            _ => 0,
-        };
+        let element_index = usize::from(elem).min(7);
+        let resist = ts.element_resist[element_index];
+        let target_is_player = t.player().is_some();
         let mut power = if pmin >= pmax {
             pmin
         } else {
@@ -777,11 +861,13 @@ impl World {
             _ => {
                 power
                     + match class {
-                        Class::Wizard => self.roll_range(cs.min_mc, cs.max_mc),
-                        Class::Taoist => self.roll_range(cs.min_sc, cs.max_sc),
-                        Class::Assassin => {
-                            self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc))
-                        }
+                        Class::Wizard => self.roll_lucky(cs.min_mc, cs.max_mc, cs.luck),
+                        Class::Taoist => self.roll_lucky(cs.min_sc, cs.max_sc, cs.luck),
+                        Class::Assassin => self.roll_lucky(
+                            cs.min_mc.min(cs.min_sc),
+                            cs.max_mc.min(cs.max_sc),
+                            cs.luck,
+                        ),
                         Class::Warrior => 0,
                     }
             }
@@ -789,6 +875,14 @@ impl World {
         // Zircon `ModifyPowerMultiplier` (flank cells 30 %, fire wall 60 %...).
         power = power * scale / 100;
         power -= self.roll_range(ts.min_mr, ts.max_mr);
+        if elem != element::NONE {
+            let attack = cs.element_attack[element_index].max(0);
+            power += if target_is_player {
+                self.rng.random_range(0..=attack) * 2
+            } else {
+                attack * 2
+            };
+        }
         if resist != 0 {
             power -= power * resist / 10;
         }
@@ -940,7 +1034,7 @@ impl World {
                     let Some(to) = self.objects.get(&t) else {
                         continue;
                     };
-                    if to.dead || !to.is_monster() {
+                    if !self.player_can_attack_target(pm.caster, to) {
                         continue;
                     }
                     let (lvl, duration, kind, poison_slot) = {
@@ -990,8 +1084,7 @@ impl World {
                             .on_map(map)
                             .filter(|o| {
                                 o.id != t
-                                    && o.is_monster()
-                                    && !o.dead
+                                    && self.player_can_attack_target(pm.caster, o)
                                     && o.location.distance(at) <= 3
                                     && !o.poisons.iter().any(|p| p.kind == kind)
                             })
@@ -1542,7 +1635,11 @@ impl World {
                     let (pmin, pmax, _) = self.caster_power(pm.caster, pm.magic);
                     let duration = self.roll_range(pmin, pmax).max(2);
                     let cs = self.objects[&pm.caster].stats;
-                    let sp = self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc));
+                    let sp = self.roll_lucky(
+                        cs.min_mc.min(cs.min_sc),
+                        cs.max_mc.min(cs.max_sc),
+                        cs.luck,
+                    );
                     self.apply_poison(
                         t,
                         Poison {
@@ -1585,8 +1682,8 @@ impl World {
                     let duration = self.roll_range(pmin, pmax).max(2);
                     let cs = self.objects[&pm.caster].stats;
                     let value = self
-                        .roll_range(cs.min_sc, cs.max_sc)
-                        .min(self.roll_range(cs.min_mc, cs.max_mc))
+                        .roll_lucky(cs.min_sc, cs.max_sc, cs.luck)
+                        .min(self.roll_lucky(cs.min_mc, cs.max_mc, cs.luck))
                         / 2;
                     self.apply_poison(
                         t,
@@ -1932,10 +2029,8 @@ impl World {
                     if o.is_player() {
                         o.poisons.clear();
                     }
-                    let poisoned = !o.poisons.is_empty();
                     if removed > 0 && o.is_player() {
-                        self.events
-                            .push((t, ServerMessage::ObjectPoisoned { id: t, poisoned }));
+                        self.send_poison_status(t);
                         for _ in 0..removed {
                             self.level_magic(pm.caster, pm.magic);
                         }
@@ -2030,28 +2125,14 @@ impl World {
                     }) {
                         let dir = self.objects[&pm.caster].direction;
                         let behind = cloc.step(dir.rotate(4), 1);
-                        let to = if self.maps[&cmap].file.is_walkable(behind.x, behind.y)
-                            && !self.cell_blocked(cmap, behind, false)
-                        {
-                            behind
-                        } else {
-                            cloc
-                        };
+                        let to = self.summon_placement(cmap, behind, cloc);
                         self.teleport_object(existing, to);
                         continue;
                     }
                     if pets.len() >= 2 {
                         continue;
                     }
-                    let spot = if self.maps[&cmap]
-                        .file
-                        .is_walkable(pm.location.x, pm.location.y)
-                        && !self.cell_blocked(cmap, pm.location, false)
-                    {
-                        pm.location
-                    } else {
-                        cloc
-                    };
+                    let spot = self.summon_placement(cmap, pm.location, cloc);
                     self.create_monster(def_index, cmap, spot, None, Some(pm.caster), level * 2);
                     self.level_magic(pm.caster, pm.magic);
                 }

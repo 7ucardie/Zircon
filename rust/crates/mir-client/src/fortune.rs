@@ -14,6 +14,7 @@ use mir_proto::{ClientMessage, FortuneSummary};
 use crate::assets::lib;
 use crate::items::ItemCatalog;
 use crate::ui::{Button, Ctx, Rect, TextBox, GOLD};
+use crate::windows::WindowLayout;
 
 const ROW_H: f32 = 52.0;
 const SEARCH_ROWS: usize = 3;
@@ -30,6 +31,7 @@ pub struct FortuneWindow {
     search_scroll: usize,
     checked_scroll: usize,
     check_buttons: Vec<Button>,
+    layout: WindowLayout,
 }
 
 impl Default for FortuneWindow {
@@ -45,6 +47,7 @@ impl Default for FortuneWindow {
             search_scroll: 0,
             checked_scroll: 0,
             check_buttons: Vec::new(),
+            layout: WindowLayout::default(),
         }
     }
 }
@@ -108,14 +111,19 @@ impl FortuneWindow {
         if !self.open {
             return false;
         }
-        let win = Rect::new(
-            (width as f32 - 500.0) / 2.0,
-            (height as f32 - 420.0) / 2.0,
-            500.0,
-            420.0,
+        let win = self.layout.place(
+            "fortune",
+            Rect::new(
+                (width as f32 - 500.0) / 2.0,
+                (height as f32 - 420.0) / 2.0,
+                500.0,
+                420.0,
+            ),
+            c.input,
+            (width, height),
         );
-        let over = win.contains(c.input.mouse.0, c.input.mouse.1);
-        let closed = c.window(win, "Fortune Checker", false);
+        let over = win.contains(c.input.mouse.0, c.input.mouse.1) || self.layout.is_dragging();
+        let closed = c.window(win, "Fortune Checker", false) && !self.layout.is_dragging();
 
         // ---- search ----
         self.search.rect = Rect::new(win.x + 74.0, win.y + 36.0, 240.0, 22.0);
@@ -230,6 +238,7 @@ impl FortuneWindow {
         if closed {
             self.open = false;
         }
+        self.layout.end_frame(c.input);
         over
     }
 

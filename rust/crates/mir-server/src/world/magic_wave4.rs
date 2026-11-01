@@ -281,9 +281,15 @@ impl World {
         let cs = self.objects[&caster].stats;
         let power = self.roll_range(pmin, pmax);
         let dc = self.roll_dc(cs);
-        let sp = self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc));
+        let sp = self.roll_lucky(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc), cs.luck);
         // Victims: the explicit target, or hostiles standing on the cell.
         let victims: Vec<ObjectId> = match pm.target {
+            Some(t) if pm.magic == m::POISON_CLOUD => self
+                .objects
+                .get(&t)
+                .filter(|o| self.player_can_attack_target(caster, o))
+                .map(|_| vec![t])
+                .unwrap_or_default(),
             Some(t) => vec![t],
             None => self
                 .maps
@@ -291,7 +297,13 @@ impl World {
                 .map(|mp| mp.objects_at(pm.location).to_vec())
                 .unwrap_or_default()
                 .into_iter()
-                .filter(|v| self.objects[&caster].hostile_to(&self.objects[v]))
+                .filter(|v| {
+                    if pm.magic == m::POISON_CLOUD {
+                        self.player_can_attack_target(caster, &self.objects[v])
+                    } else {
+                        self.objects[&caster].hostile_to(&self.objects[v])
+                    }
+                })
                 .collect(),
         };
         match pm.magic {
@@ -396,7 +408,7 @@ impl World {
                 self.level_magic(caster, pm.magic);
             }
             m::POISON_CLOUD => {
-                let duration = power + self.roll_range(cs.min_sc, cs.max_sc);
+                let duration = power + self.roll_lucky(cs.min_sc, cs.max_sc, cs.luck);
                 let value = level + 1 + self.level_of(&self.objects[&caster]) / 14;
                 for v in victims {
                     self.apply_poison(
@@ -557,7 +569,7 @@ impl World {
             // ---- buffs ----
             m::LIFE_STEAL => {
                 if let Some(t) = pm.target {
-                    let secs = power + self.roll_range(cs.min_sc, cs.max_sc);
+                    let secs = power + self.roll_lucky(cs.min_sc, cs.max_sc, cs.luck);
                     self.buff_add(
                         t,
                         buff_type::LIFE_STEAL,
@@ -571,7 +583,7 @@ impl World {
                 self.level_magic(caster, pm.magic);
             }
             m::SPIRITUALISM => {
-                let secs = power + self.roll_range(cs.min_sc, cs.max_sc) * 2;
+                let secs = power + self.roll_lucky(cs.min_sc, cs.max_sc, cs.luck) * 2;
                 self.buff_add(
                     caster,
                     buff_type::SPIRITUALISM,

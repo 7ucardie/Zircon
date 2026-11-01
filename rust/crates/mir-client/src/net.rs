@@ -1,9 +1,11 @@
 //! Blocking TCP client on a background thread.
 
+use std::cell::Cell;
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use std::thread;
+use std::time::Duration;
 
 use mir_proto::{decode_frame, encode, ClientMessage, ServerMessage};
 
@@ -15,6 +17,7 @@ pub enum NetEvent {
 pub struct Connection {
     rx: Receiver<NetEvent>,
     tx: Sender<ClientMessage>,
+    closed_reported: Cell<bool>,
 }
 
 impl Connection {
@@ -66,22 +69,26 @@ impl Connection {
 
         thread::Builder::new()
             .name("net-write".into())
-            .spawn(move || {
-                while let Ok(msg) = msg_rx.recv() {
-                    let frame = match encode(&msg) {
-                        Ok(f) => f,
-                        Err(_) => continue,
-                    };
-                    if writer.write_all(&frame).is_err() {
-                        let _ = ev_tx.send(NetEvent::Disconnected("write failed".into()));
-                        return;
-                    }
+            .spawn(move || loop {
+                let msg = match msg_rx.recv_timeout(Duration::from_secs(5)) {
+                    Ok(msg) => msg,
+                    Err(RecvTimeoutError::Timeout) => ClientMessage::Ping { nonce: 0 },
+                    Err(RecvTimeoutError::Disconnected) => return,
+                };
+                let frame = match encode(&msg) {
+                    Ok(f) => f,
+                    Err(_) => continue,
+                };
+                if writer.write_all(&frame).is_err() {
+                    let _ = ev_tx.send(NetEvent::Disconnected("write failed".into()));
+                    return;
                 }
             })?;
 
         Ok(Connection {
             rx: ev_rx,
             tx: msg_tx,
+            closed_reported: Cell::new(false),
         })
     }
 
@@ -93,8 +100,49 @@ impl Connection {
         match self.rx.try_recv() {
             Ok(ev) => Some(ev),
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => {
+            Err(TryRecvError::Disconnected) if !self.closed_reported.replace(true) => {
                 Some(NetEvent::Disconnected("channel closed".into()))
+            }
+            Err(TryRecvError::Disconnected) => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    #[test]
+    fn closed_network_channel_reports_disconnect_once() {
+        let (event_tx, rx) = mpsc::channel();
+        let (tx, _) = mpsc::channel();
+        let connection = Connection {
+            rx,
+            tx,
+            closed_reported: Cell::new(false),
+        };
+        drop(event_tx);
+        assert!(matches!(connection.poll(), Some(NetEvent::Disconnected(_))));
+        assert!(connection.poll().is_none());
+    }
+
+    #[test]
+    fn heartbeat_continues_without_render_frames() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let _connection = Connection::connect(&listener.local_addr().unwrap().to_string()).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(7)))
+            .unwrap();
+        let mut bytes = Vec::new();
+        let mut chunk = [0; 1024];
+        loop {
+            let count = stream.read(&mut chunk).unwrap();
+            assert!(count > 0);
+            bytes.extend_from_slice(&chunk[..count]);
+            if let Some(ClientMessage::Ping { .. }) = decode_frame(&mut bytes).unwrap() {
+                break;
             }
         }
     }

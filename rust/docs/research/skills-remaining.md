@@ -8,11 +8,26 @@ fields, summons, kicks, dashes, channels and augments. Wave six (2026-09-13,
 Mirror Image, Frost Bite, Tornado, Burning/Shocked, Cursed Doll, Soul
 Resonance, Augment Poison Dust, Infection, Corpse Exploder, Summon Dead
 (corpses are clickable), Dragon Blood, Magic Combustion, Chain, Chain Of
-Fire. Simplifications: the hurricane's element is always fire and it
-stops after 10 s; Mirror Image takes any Dark Stone; Cursed Doll takes a
-plain amulet and skips the boss check; Soul Resonance lasts 60 s; Dragon
-Blood re-arms without a poison item; Frost Bite's Slow chance and the
-IceAttack terms are dropped; augment rolls use MaxLevel 3.
+Fire.
+
+Parity corrections (2026-09-22): Elemental Hurricane uses the equipped Dark
+Stone's strongest affinity, has no fixed timeout, and follows the reference
+start, tick and stop mana rules. Mirror Image requires an equipped stone with
+Fire/Ice/Lightning/Wind affinity, consumes no stone, and allows one decoy.
+The stationary, invulnerable decoy selects its area spell by affinity, uses
+the owner's MC, and preserves the reference's Ice damage for all four spells.
+Cursed Doll and Summon Dead require shape-1 amulets. Dragon Blood automatically
+rolls charges while attacking, requires equipped shape-2 poison, consumes it
+on nine of ten successful arming rolls, and spends its charge on selection.
+Frost Bite includes IceAttack in its starting pool and cap, rolls Slow against
+attackers, excludes bosses and friendly monsters, and cannot refresh an active
+buff. Cursed Doll rejects bosses, friendly targets and targets already linked
+to a doll, and admits hostile players under the existing PvP rules.
+Soul Resonance now lasts until removal, gives its HP bonus only to the target,
+and clears both links on buff removal, group leave or disconnect. Delayed
+completion rechecks target life, group membership and existing resonance.
+Summon Dead rolls against `MagicMaxLevel + 1` (five outcomes). Burning/Shocked
+already had the correct four-outcome roll; both now name the shared constant.
 Field art for Ice Aura, Burning Fire and Dark Soul Prison uses placeholder
 frames on the client.
 Originally: 98 magics implemented in Rust; 92 missing with C#
@@ -82,7 +97,7 @@ HasMassacre. GetSP = random over min(MinMC,MinSC)..min(MaxMC,MaxSC).
   3 (delay dist*48, first +500); power = GetPower()+MC. Projectile Magic
   1640/6/100, impact Magic 1800/10/100, cast Magic 1560/9/65.
 - 232 ElementalHurricane: channelled 8-cell beam with flanks (0.3), ticks
-  every 500 ms costing Cost MP; start costs Mana*Cost/1000; element from a
+  every 500 ms costing Cost MP; stopping costs Mana*Cost/1000; element from a
   DarkStone amulet affinity; cancelled by being struck. Anim ChannellingStart.
 - 233 SuperiorMagicShield: self, pool = Mana*(0.25+0.05L) absorbs raw
   damage; removes MagicShield. 1100 ms. MagicEx2 1900/17/60.

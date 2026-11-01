@@ -326,7 +326,12 @@ impl World {
 
     fn set_gate(&mut self, id: ObjectId, close: bool, close_at_time: u64) {
         let dir = if close {
-            Direction::Down
+            let object = &self.objects[&id];
+            // Source CastleGate: closed direction reflects three health stages.
+            let level = (3.0 * f64::from(object.hp) / f64::from(object.max_hp.max(1)))
+                .round_ties_even()
+                .clamp(1.0, 3.0) as u8;
+            Direction::from_index(3 - level)
         } else {
             Direction::UpLeft
         };

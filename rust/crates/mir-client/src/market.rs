@@ -2,14 +2,20 @@
 //! browses what everyone has listed and buys, and a Consign tab that lists
 //! items out of the bag and takes them back.
 //!
-//! Zircon's dialog has a third tab, the game-gold Store, which is a separate
-//! cash-shop system (`MarketPlaceStoreBuy`, game gold and hunt gold) and is
-//! not part of the player auction house; it is not built here.
+//! Zircon's third tab is the Store, the game-gold cash shop
+//! (`MarketPlaceStoreBuy`). It is a different system from the auction house
+//! (fixed stock out of `StoreInfo`, paid for in game gold or hunt gold
+//! rather than the gold in the bag) but it shares this window, as it does
+//! in Zircon.
 
-use mir_proto::{item_type, ClientMessage, ItemInstance, MarketListing, MarketSort, MARKET_PAGE};
+use mir_proto::{
+    item_type, ClientMessage, ItemInstance, MarketListing, MarketSort, StoreEntry, StoreSort,
+    MARKET_PAGE,
+};
 
 use crate::items::ItemCatalog;
 use crate::ui::{Button, Ctx, Rect, TextBox};
+use crate::windows::WindowLayout;
 
 /// The item-type filters Zircon offers, in its own order. `None` is "any".
 pub const TYPE_FILTERS: [(Option<u8>, &str); 9] = [
@@ -24,11 +30,15 @@ pub const TYPE_FILTERS: [(Option<u8>, &str); 9] = [
     (Some(item_type::BOOK), "Book"),
 ];
 
+/// How many store rows fit on a page. Zircon shows nine.
+pub const STORE_PAGE: usize = 9;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Tab {
     #[default]
     Search,
     Consign,
+    Store,
 }
 
 #[derive(Default)]
@@ -47,11 +57,25 @@ pub struct MarketState {
     pub selected: Option<u32>,
     /// Bag slot picked to list.
     pub consign_slot: Option<u8>,
+    /// The whole store, as the server sent it on entry.
+    pub stock: Vec<StoreEntry>,
+    /// Every tag in the stock, sorted, with "All" as index 0. Zircon builds
+    /// its drop-down the same way, out of the data rather than a fixed list.
+    pub store_tags: Vec<String>,
+    pub store_tag: usize,
+    pub store_sort: usize,
+    pub store_page: u32,
+    pub store_selected: Option<u32>,
+    /// Pay with hunt gold instead of game gold.
+    pub hunt_gold: bool,
+    /// A tag to select as soon as the stock arrives (`ZIRCON_STORE_TAG`).
+    pub wanted_tag: Option<String>,
     /// Search name, buy count, consign price, consign count, consign note.
     boxes: Vec<TextBox>,
     buttons: Vec<Button>,
     /// A search is owed to the server (tab opened, filter changed, paged).
     dirty: bool,
+    layout: WindowLayout,
 }
 
 /// Indices into `boxes`.
@@ -60,6 +84,8 @@ const B_BUY_COUNT: usize = 1;
 const B_PRICE: usize = 2;
 const B_COUNT: usize = 3;
 const B_NOTE: usize = 4;
+const B_STORE_NAME: usize = 5;
+const B_STORE_COUNT: usize = 6;
 
 impl MarketState {
     pub fn typing(&self) -> bool {
@@ -92,19 +118,86 @@ impl MarketState {
         }
     }
 
+    /// Rebuild the tag list from freshly arrived stock. Zircon splits every
+    /// `Filter`, collects the distinct tags and sorts them, with "All" first.
+    pub fn set_stock(&mut self, stock: Vec<StoreEntry>) {
+        let mut tags: Vec<String> = Vec::new();
+        for e in &stock {
+            for f in &e.filters {
+                if !tags.iter().any(|t| t.eq_ignore_ascii_case(f)) {
+                    tags.push(f.clone());
+                }
+            }
+        }
+        tags.sort();
+        tags.insert(0, "All".into());
+        self.stock = stock;
+        self.store_tag = self
+            .wanted_tag
+            .as_deref()
+            .and_then(|w| tags.iter().position(|t| t.eq_ignore_ascii_case(w)))
+            .unwrap_or(0);
+        self.store_tags = tags;
+        self.store_page = 0;
+    }
+
+    /// The tag the filter is on, or `None` while it is on "All".
+    pub fn store_tag(&self) -> Option<&str> {
+        match self.store_tags.get(self.store_tag) {
+            Some(t) if self.store_tag > 0 => Some(t.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn store_sort(&self) -> StoreSort {
+        StoreSort::ALL[self.store_sort.min(StoreSort::ALL.len() - 1)].0
+    }
+
+    /// The stock the current filter, name box and sort select, in order.
+    pub fn store_results(&self, catalog: &ItemCatalog) -> Vec<StoreEntry> {
+        let name = self
+            .boxes
+            .get(B_STORE_NAME)
+            .map(|b| b.text.clone())
+            .unwrap_or_default();
+        let tag = self.store_tag();
+        let mut rows: Vec<StoreEntry> = self
+            .stock
+            .iter()
+            .filter(|e| store_matches(e, &catalog.name(e.item), tag, &name))
+            .cloned()
+            .collect();
+        match self.store_sort() {
+            StoreSort::Alphabetical => {
+                rows.sort_by_key(|e| catalog.name(e.item));
+            }
+            StoreSort::HighestPrice => rows.sort_by_key(|a| std::cmp::Reverse(a.price)),
+            StoreSort::LowestPrice => rows.sort_by_key(|a| a.price),
+        }
+        rows
+    }
+
+    /// How many pages the store spans at the current filter (at least one).
+    pub fn store_pages(&self, matched: usize) -> u32 {
+        (matched as u32).div_ceil(STORE_PAGE as u32).max(1)
+    }
+
     /// How many pages the last search spans (at least one).
     pub fn pages(&self) -> u32 {
         self.total.div_ceil(MARKET_PAGE as u32).max(1)
     }
 
     /// Draw the window. Returns true while the mouse is over it.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         c: &mut Ctx,
         catalog: &ItemCatalog,
         inventory: &[Option<ItemInstance>],
         gold: u64,
+        currencies: &[mir_proto::CurrencySummary],
         width: i32,
+        height: i32,
         out: &mut Vec<ClientMessage>,
     ) -> bool {
         if !self.open {
@@ -117,6 +210,8 @@ impl MarketState {
                 TextBox::new(Rect::new(0.0, 0.0, 100.0, 22.0), 12),
                 TextBox::new(Rect::new(0.0, 0.0, 60.0, 22.0), 9),
                 TextBox::new(Rect::new(0.0, 0.0, 300.0, 22.0), 150),
+                TextBox::new(Rect::new(0.0, 0.0, 150.0, 22.0), 40),
+                TextBox::new(Rect::new(0.0, 0.0, 60.0, 22.0), 9),
             ];
         }
         if self.buttons.is_empty() {
@@ -127,19 +222,32 @@ impl MarketState {
                 Button::default_style(0.0, 0.0, 60.0, "Next"),
                 Button::default_style(0.0, 0.0, 70.0, "List"),
                 Button::default_style(0.0, 0.0, 80.0, "Cancel"),
+                Button::default_style(0.0, 0.0, 70.0, "Buy"),
+                Button::default_style(0.0, 0.0, 60.0, "Prev"),
+                Button::default_style(0.0, 0.0, 60.0, "Next"),
             ];
         }
-        let win = Rect::new(width as f32 / 2.0 - 320.0, 40.0, 640.0, 440.0);
+        let win = self.layout.place(
+            "market",
+            Rect::new(width as f32 / 2.0 - 320.0, 40.0, 640.0, 440.0),
+            c.input,
+            (width, height),
+        );
         let mouse = c.input.mouse;
-        let over = win.contains(mouse.0, mouse.1);
-        if c.window(win, "Market Place", true) {
+        let over = win.contains(mouse.0, mouse.1) || self.layout.is_dragging();
+        if c.window(win, "Market Place", true) && !self.layout.is_dragging() {
             self.open = false;
+            self.layout.end_frame(c.input);
             return over;
         }
 
         // ---- Tabs ----
         let mut tx = win.x + 12.0;
-        for (tab, label) in [(Tab::Search, "Search"), (Tab::Consign, "Consign")] {
+        for (tab, label) in [
+            (Tab::Search, "Search"),
+            (Tab::Consign, "Consign"),
+            (Tab::Store, "Store"),
+        ] {
             let r = Rect::new(tx, win.y + 30.0, 84.0, 22.0);
             let hot = r.contains(mouse.0, mouse.1);
             let on = self.tab == tab;
@@ -184,11 +292,15 @@ impl MarketState {
         match self.tab {
             Tab::Search => self.draw_search(c, catalog, win, fy, out),
             Tab::Consign => self.draw_consign(c, catalog, inventory, win, fy, out),
+            Tab::Store => self.draw_store(c, catalog, currencies, win, fy, out),
         }
-        if self.dirty {
+        // The store is served whole on entry, so only the auction tabs owe
+        // the server a search.
+        if self.dirty && self.tab != Tab::Store {
             self.dirty = false;
             out.push(self.search_msg());
         }
+        self.layout.end_frame(c.input);
         over
     }
 
@@ -376,6 +488,276 @@ impl MarketState {
         }
     }
 
+    /// The Store tab: fixed stock out of `StoreInfo`, filtered by tag and
+    /// name, paid for in game gold or hunt gold.
+    fn draw_store(
+        &mut self,
+        c: &mut Ctx,
+        catalog: &ItemCatalog,
+        currencies: &[mir_proto::CurrencySummary],
+        win: Rect,
+        fy: f32,
+        out: &mut Vec<ClientMessage>,
+    ) {
+        let mouse = c.input.mouse;
+        let top = win.y + 60.0;
+
+        // ---- Filter row: name, tag, sort ----
+        c.text
+            .draw("Name", 11, win.x + 12.0, top + 4.0, [220, 220, 220, 255]);
+        self.boxes[B_STORE_NAME].rect = Rect::new(win.x + 52.0, top, 150.0, 22.0);
+        self.boxes[B_STORE_NAME].update(c);
+
+        let tag_label = self
+            .store_tags
+            .get(self.store_tag)
+            .cloned()
+            .unwrap_or_else(|| "All".into());
+        let tr = Rect::new(win.x + 212.0, top, 110.0, 22.0);
+        if cycle(c, tr, &tag_label) && !self.store_tags.is_empty() {
+            self.store_tag = (self.store_tag + 1) % self.store_tags.len();
+            self.store_page = 0;
+            self.store_selected = None;
+        }
+        let sr = Rect::new(win.x + 330.0, top, 110.0, 22.0);
+        if cycle(c, sr, StoreSort::ALL[self.store_sort].1) {
+            self.store_sort = (self.store_sort + 1) % StoreSort::ALL.len();
+            self.store_page = 0;
+        }
+        // Hunt gold is a toggle, as it is a check box in Zircon.
+        let hr = Rect::new(win.x + 448.0, top, 96.0, 22.0);
+        let hot = hr.contains(mouse.0, mouse.1);
+        c.fill(
+            hr,
+            if self.hunt_gold {
+                [0.35, 0.3, 0.18, 0.95]
+            } else if hot {
+                [0.25, 0.25, 0.25, 0.9]
+            } else {
+                [0.12, 0.12, 0.12, 0.85]
+            },
+        );
+        c.border(hr, [198, 166, 99, 255]);
+        c.text.draw(
+            if self.hunt_gold {
+                "Hunt gold"
+            } else {
+                "Game gold"
+            },
+            11,
+            hr.x + 6.0,
+            hr.y + 4.0,
+            if self.hunt_gold {
+                [255, 255, 200, 255]
+            } else {
+                [200, 200, 200, 255]
+            },
+        );
+        if hot && c.input.lmb_pressed {
+            self.hunt_gold = !self.hunt_gold;
+        }
+
+        // ---- Rows ----
+        let all = self.store_results(catalog);
+        let pages = self.store_pages(all.len());
+        if self.store_page >= pages {
+            self.store_page = pages - 1;
+        }
+        let rows: Vec<StoreEntry> = all
+            .iter()
+            .skip(self.store_page as usize * STORE_PAGE)
+            .take(STORE_PAGE)
+            .cloned()
+            .collect();
+        let mut y = top + 34.0;
+        for e in &rows {
+            let r = Rect::new(win.x + 12.0, y, win.w - 24.0, 32.0);
+            let hot = r.contains(mouse.0, mouse.1);
+            let on = self.store_selected == Some(e.index);
+            c.fill(
+                r,
+                if on {
+                    [0.3, 0.3, 0.5, 0.85]
+                } else if hot {
+                    [0.22, 0.22, 0.3, 0.6]
+                } else {
+                    [0.0, 0.0, 0.0, 0.35]
+                },
+            );
+            let inst = ItemInstance {
+                id: 0,
+                info: e.item,
+                count: 1,
+                durability: 0,
+                max_durability: 0,
+                added: Vec::new(),
+                enhancements: Vec::new(),
+                refinable: false,
+                level: 0,
+                accessory_experience: 0,
+                non_refinable: false,
+                bound: false,
+                worthless: false,
+                locked: false,
+                expires_at: None,
+                colour: 0,
+            };
+            crate::windows::draw_item_cell(
+                c,
+                catalog,
+                Rect::new(r.x + 2.0, r.y + 2.0, 28.0, 28.0),
+                Some(&inst),
+                false,
+                false,
+            );
+            c.text.draw(
+                &catalog.name(e.item),
+                12,
+                r.x + 38.0,
+                r.y + 2.0,
+                [255, 255, 255, 255],
+            );
+            // Zircon labels the tag list under the name, which is the only
+            // place a row says what kind of thing it is.
+            c.text.draw(
+                &e.filters.join(", "),
+                10,
+                r.x + 38.0,
+                r.y + 18.0,
+                [160, 160, 160, 255],
+            );
+            if e.duration > 0 {
+                c.text.draw(
+                    &format!("{} days", e.duration / 86_400),
+                    10,
+                    r.x + r.w - 250.0,
+                    r.y + 18.0,
+                    [200, 180, 140, 255],
+                );
+            }
+            let price = self.unit_price(e);
+            c.text.draw(
+                &format!("{price} {}", if self.hunt_gold { "HG" } else { "GG" }),
+                12,
+                r.x + r.w - 130.0,
+                r.y + 9.0,
+                if e.available {
+                    [255, 220, 120, 255]
+                } else {
+                    [160, 160, 160, 255]
+                },
+            );
+            if !e.available {
+                c.text.draw(
+                    "(Not Available)",
+                    10,
+                    r.x + r.w - 250.0,
+                    r.y + 2.0,
+                    [220, 140, 140, 255],
+                );
+            }
+            if hot && c.input.lmb_pressed {
+                self.store_selected = Some(e.index);
+                self.boxes[B_STORE_COUNT].text = "1".into();
+            }
+            y += 34.0;
+        }
+        if rows.is_empty() {
+            c.text.draw(
+                "Nothing matched. Try another tag.",
+                12,
+                win.x + 16.0,
+                top + 44.0,
+                [180, 180, 180, 255],
+            );
+        }
+
+        // ---- Footer: paging, count, buy ----
+        c.text.draw(
+            &format!(
+                "{} items, page {}/{}",
+                all.len(),
+                self.store_page + 1,
+                pages
+            ),
+            11,
+            win.x + 12.0,
+            fy + 5.0,
+            [200, 200, 200, 255],
+        );
+        let b = &mut self.buttons[7];
+        b.pos = (win.x + 180.0, fy);
+        b.enabled = self.store_page > 0;
+        if b.update(c) && b.enabled {
+            self.store_page -= 1;
+        }
+        let b = &mut self.buttons[8];
+        b.pos = (win.x + 246.0, fy);
+        b.enabled = self.store_page + 1 < pages;
+        if b.update(c) && b.enabled {
+            self.store_page += 1;
+        }
+        c.text
+            .draw("Count", 11, win.x + 330.0, fy + 5.0, [220, 220, 220, 255]);
+        self.boxes[B_STORE_COUNT].rect = Rect::new(win.x + 376.0, fy, 60.0, 22.0);
+        self.boxes[B_STORE_COUNT].update(c);
+        self.boxes[B_STORE_COUNT]
+            .text
+            .retain(|ch| ch.is_ascii_digit());
+        let count: u32 = self.boxes[B_STORE_COUNT].text.parse().unwrap_or(0);
+        let picked = self
+            .store_selected
+            .and_then(|i| rows.iter().find(|e| e.index == i))
+            .cloned();
+        let b = &mut self.buttons[6];
+        b.pos = (win.x + 446.0, fy);
+        b.enabled = picked
+            .as_ref()
+            .is_some_and(|e| e.available && count > 0 && count <= e.stack_size);
+        if b.update(c) && b.enabled {
+            if let Some(e) = &picked {
+                out.push(ClientMessage::MarketStoreBuy {
+                    index: e.index,
+                    count,
+                    hunt_gold: self.hunt_gold,
+                });
+            }
+        }
+        // What the purchase costs, and what is in the purse for it.
+        let want = if self.hunt_gold { "HG" } else { "GG" };
+        let held = currencies
+            .iter()
+            .find(|c| c.abbreviation == want)
+            .map(|c| c.amount)
+            .unwrap_or(0);
+        let total = picked
+            .as_ref()
+            .map(|e| self.unit_price(e) * u64::from(count))
+            .unwrap_or(0);
+        c.text.draw(
+            &format!("Total {total} / {held} {want}"),
+            11,
+            win.x + 530.0,
+            fy + 5.0,
+            if total as i64 > held {
+                [255, 140, 140, 255]
+            } else {
+                [255, 220, 120, 255]
+            },
+        );
+    }
+
+    /// The price one unit costs right now. Zircon's rule: a zero
+    /// `HuntGoldPrice` means hunt gold costs the game-gold price, not that
+    /// the row cannot be bought with it.
+    fn unit_price(&self, e: &StoreEntry) -> u64 {
+        if self.hunt_gold && e.hunt_gold_price != 0 {
+            e.hunt_gold_price
+        } else {
+            e.price
+        }
+    }
+
     fn draw_consign(
         &mut self,
         c: &mut Ctx,
@@ -548,6 +930,17 @@ impl MarketState {
 }
 
 /// A click-to-cycle stand-in for Zircon's `DXComboBox`.
+/// Zircon `StoreSearch`: a row matches when the chosen tag is in its tag
+/// list and the typed text is in the item's name, both case-insensitively.
+pub fn store_matches(e: &StoreEntry, item_name: &str, tag: Option<&str>, name: &str) -> bool {
+    if let Some(tag) = tag {
+        if !e.filters.iter().any(|f| f.eq_ignore_ascii_case(tag)) {
+            return false;
+        }
+    }
+    name.is_empty() || item_name.to_lowercase().contains(&name.to_lowercase())
+}
+
 fn cycle(c: &mut Ctx, r: Rect, label: &str) -> bool {
     let hot = r.contains(c.input.mouse.0, c.input.mouse.1);
     c.fill(
@@ -584,6 +977,67 @@ mod tests {
         assert_eq!(s.pages(), 1);
         s.total = 0;
         assert_eq!(s.pages(), 1);
+    }
+
+    fn entry(index: u32, item: i32, price: u64, tags: &[&str]) -> StoreEntry {
+        StoreEntry {
+            index,
+            item,
+            stack_size: 10,
+            price,
+            hunt_gold_price: 0,
+            filters: tags.iter().map(|t| t.to_string()).collect(),
+            available: true,
+            duration: 0,
+        }
+    }
+
+    #[test]
+    fn store_tags_are_built_from_the_stock_sorted_with_all_first() {
+        let mut s = state();
+        s.set_stock(vec![
+            entry(1, 10, 200, &["Torch", "Temporary"]),
+            entry(2, 11, 500, &["Mount", "Temporary"]),
+            entry(3, 12, 100, &["Torch"]),
+        ]);
+        // Distinct, sorted, "All" first -- Zircon builds its drop-down the
+        // same way rather than from a fixed list.
+        assert_eq!(s.store_tags, vec!["All", "Mount", "Temporary", "Torch"]);
+        // Index 0 is "All", which filters nothing.
+        assert_eq!(s.store_tag(), None);
+        s.store_tag = 3;
+        assert_eq!(s.store_tag(), Some("Torch"));
+    }
+
+    #[test]
+    fn store_sort_and_paging_follow_zircon() {
+        let mut s = state();
+        s.set_stock(
+            (0..14)
+                .map(|i| entry(i, i as i32, 100 + i as u64, &["X"]))
+                .collect(),
+        );
+        // Nine rows a page, as Zircon shows.
+        assert_eq!(s.store_pages(14), 2);
+        assert_eq!(s.store_pages(9), 1);
+        assert_eq!(s.store_pages(0), 1);
+        // Zircon's fourth sort, Favourite, is a TODO in its own client and
+        // is left out, so three remain.
+        assert_eq!(StoreSort::ALL.len(), 3);
+        assert_eq!(s.store_sort(), StoreSort::Alphabetical);
+        s.store_sort = 1;
+        assert_eq!(s.store_sort(), StoreSort::HighestPrice);
+        s.store_sort = 99;
+        assert_eq!(s.store_sort(), StoreSort::LowestPrice);
+    }
+
+    #[test]
+    fn store_matching_is_tag_and_name_case_insensitive() {
+        let e = entry(1, 10, 200, &["Torch", "Warrior"]);
+        assert!(store_matches(&e, "Iron Torch", None, ""));
+        assert!(store_matches(&e, "Iron Torch", Some("torch"), "IRON"));
+        assert!(!store_matches(&e, "Iron Torch", Some("Mount"), ""));
+        assert!(!store_matches(&e, "Iron Torch", None, "sword"));
     }
 
     #[test]

@@ -1,8 +1,16 @@
 use super::ai_profile::{AiProfile, Hidden, Spell};
 use super::*;
+use mir_proto::{attack_mode, pet_mode};
 
 /// Zircon `Globals.ProjectileSpeed`: ms per cell of travel.
 const PROJECTILE_MS: u64 = 48;
+
+/// Delayed actions from Zircon-Godot's NumaWarlord (AI 137).
+#[derive(Debug)]
+pub enum NumaAction {
+    Teleport(ObjectId),
+    Pull(Vec<ObjectId>),
+}
 
 impl World {
     // ---- monster AI --------------------------------------------------------
@@ -20,14 +28,20 @@ impl World {
     }
 
     pub(super) fn process_monster(&mut self, id: ObjectId) {
+        let Some(object) = self.objects.get(&id) else {
+            return;
+        };
+        if object.monster_ref().room_door.is_some() {
+            return;
+        }
         let now = self.now;
-        let (map, loc, dead, dead_time) = {
+        let (dead, dead_time) = {
             let o = &self.objects[&id];
             let m = match &o.kind {
                 Kind::Monster(m) => m,
                 _ => return,
             };
-            (o.map, o.location, o.dead, m.dead_time)
+            (o.dead, m.dead_time)
         };
         if dead {
             let (revives, revive_at) = {
@@ -43,12 +57,22 @@ impl World {
             }
             return;
         }
+        self.process_numa_action(id);
+        let object = &self.objects[&id];
+        if object.dead {
+            return;
+        }
+        let (map, loc) = (object.map, object.location);
         // Timed summons vanish; gates only sweep players through.
         if let Some(t) = self.objects[&id].monster_ref().despawn_at {
             if now >= t {
                 self.despawn_summon(id);
                 return;
             }
+        }
+        if self.objects[&id].monster_ref().mirror_element.is_some() {
+            self.process_mirror_image(id);
+            return;
         }
         if let Some(gate) = self.ai_profile(self.monster_ai(id)).gate {
             self.process_gate(id, gate, map, loc);
@@ -111,9 +135,10 @@ impl World {
                         o.location,
                         o.direction,
                         o.visible.contains(&id),
+                        o.player().unwrap().pet_mode,
                     )
                 });
-            let Some((odead, omap, oloc, odir, seen)) = owner_state else {
+            let Some((odead, omap, oloc, odir, seen, mode)) = owner_state else {
                 self.remove_object(id);
                 return;
             };
@@ -121,9 +146,17 @@ impl World {
                 self.monster_die(id, owner_id);
                 return;
             }
+            // Shinsu is invisible for its first second. Do not treat that as
+            // a lost pet and return before its reveal timer can run.
+            let appearing_shinsu = self.objects[&id].monster_ref().hidden
+                && self.ai_profile(self.monster_ai(id)).mode_windows
+                && omap == map;
             if now >= self.objects[&id].monster_ref().tame_until {
                 self.untame(id);
-            } else if !seen || omap != map {
+            } else if matches!(mode, pet_mode::BOTH | pet_mode::MOVE | pet_mode::PVP)
+                && (!seen || omap != map)
+                && !appearing_shinsu
+            {
                 let behind = oloc.step(odir.rotate(4), 1);
                 let to = if omap == map
                     && self.maps[&omap].file.is_walkable(behind.x, behind.y)
@@ -147,6 +180,7 @@ impl World {
 
         let ai = self.monster_ai(id);
         let prof = self.ai_profile(ai);
+        self.process_boss_minions(id, ai);
 
         // Drop invalid targets (Zircon `Process`): dead, elsewhere, too far,
         // or no longer attackable. Abyss shrinks the view range to 2.
@@ -164,7 +198,7 @@ impl World {
                             && to.location.distance(loc) <= MAX_VIEW_RANGE
                             && (to.location.distance(loc) <= view_range
                                 || !has_poison(me, poison_kind::ABYSS))
-                            && me.hostile_to(to)
+                            && self.monster_hostile_to(id, to)
                             && self.monster_may_target(me, to)
                     })
                     .unwrap_or(false);
@@ -248,7 +282,13 @@ impl World {
                 (now >= m.search_time, m.target.is_some())
             };
             let is_pet = owner.is_some();
-            if search_due && (!prof.passive || is_pet) {
+            // Taoist summons defend their owner or join an attack; they do not
+            // pick fights merely because a monster walks into view.
+            if search_due
+                && !self.is_reactive_summon(id)
+                && (!prof.passive || is_pet)
+                && self.monster_can_attack_mode(id)
+            {
                 let delay = if has_target { 500 } else { SEARCH_DELAY };
                 self.objects
                     .get_mut(&id)
@@ -256,7 +296,9 @@ impl World {
                     .monster_mut()
                     .unwrap()
                     .search_time = now + delay;
-                if let Some(pick) = self.monster_search(id, view_range, prof.guard) {
+                if let Some(pick) =
+                    self.monster_search(id, view_range.saturating_sub(1).max(1), prof.guard)
+                {
                     self.objects
                         .get_mut(&id)
                         .unwrap()
@@ -358,7 +400,7 @@ impl World {
             if *pid == id || p.dead {
                 continue;
             }
-            let ok = if guard {
+            let ok = if guard && me.monster_ref().owner.is_none() {
                 match &p.kind {
                     Kind::Monster(m) => {
                         m.owner.is_none()
@@ -370,7 +412,9 @@ impl World {
                     _ => false,
                 }
             } else {
-                me.hostile_to(p) && self.can_see(me, p) && self.monster_may_target(me, p)
+                self.monster_hostile_to(id, p)
+                    && self.can_see(me, p)
+                    && self.monster_may_target(me, p)
             };
             if !ok {
                 continue;
@@ -430,7 +474,7 @@ impl World {
                 .objects
                 .iter()
                 .map(|o| &self.objects[o])
-                .filter(|p| me.hostile_to(p) && self.monster_may_target(me, p))
+                .filter(|p| self.monster_hostile_to(id, p) && self.monster_may_target(me, p))
                 .filter(|p| p.location.distance(loc) <= range.max(prof.attack_range))
                 .map(|p| p.id)
                 .min_by_key(|p| self.objects[p].location.distance(loc))
@@ -439,13 +483,12 @@ impl World {
             if let Some(t) = near {
                 self.reveal_monster(id, Some(t));
                 if h.wake_range > 0 {
-                    // Statues wake their neighbours of the same kind.
-                    let def = self.objects[&id].monster_ref().def;
+                    // Zuma guardians and kings share the same wake family.
                     let others: Vec<ObjectId> = self
                         .on_map(map)
                         .filter(|o| {
                             o.id != id
-                                && matches!(&o.kind, Kind::Monster(m) if m.def == def && m.hidden)
+                                && matches!(&o.kind, Kind::Monster(m) if m.hidden && matches!(self.data.monsters[&m.def].ai, 21 | 22))
                                 && o.location.distance(loc) <= h.wake_range
                         })
                         .map(|o| o.id)
@@ -473,20 +516,152 @@ impl World {
             let (hp, max_hp) = (o.hp, o.max_hp);
             self.events
                 .push((id, ServerMessage::HealthChanged { id, hp, max_hp }));
+            self.send_poison_status(id);
             return true;
         }
         false
     }
 
     fn reveal_monster(&mut self, id: ObjectId, target: Option<ObjectId>) {
+        let delay = if self.monster_ai(id) == 22 {
+            2000
+        } else {
+            1000
+        };
         let o = self.objects.get_mut(&id).unwrap();
-        o.action_time = self.now + 1000;
+        o.action_time = self.now + delay;
         o.cell_time = self.now + 500;
         if let Kind::Monster(m) = &mut o.kind {
             m.hidden = false;
             if target.is_some() {
                 m.target = target;
             }
+        }
+    }
+
+    fn teleport_near_cell(&mut self, id: ObjectId, centre: Point, radius: i32) {
+        let map = self.objects[&id].map;
+        for _ in 0..100 {
+            let cell = Point::new(
+                centre.x + self.rng.random_range(-radius..=radius),
+                centre.y + self.rng.random_range(-radius..=radius),
+            );
+            if self.maps[&map].file.is_walkable(cell.x, cell.y)
+                && !self.cell_blocked(map, cell, false)
+            {
+                self.teleport_object(id, cell);
+                return;
+            }
+        }
+    }
+
+    pub(super) fn spawn_prophet_sorcerer(&mut self, id: ObjectId) {
+        self.spawn_minions(id, 1, &[(190, 1)], 1, None, 9);
+        let centre = self.objects[&id].location.step(Direction::DownLeft, 5);
+        let minion = self.objects[&id].monster_ref().minions.first().copied();
+        if let Some(minion) = minion {
+            self.teleport_near_cell(minion, centre, 4);
+        }
+    }
+
+    fn process_boss_minions(&mut self, id: ObjectId, ai: i32) {
+        if !matches!(ai, 74 | 77 | 101 | 102 | 115 | 122)
+            || self.now < self.objects[&id].monster_ref().minion_time
+        {
+            return;
+        }
+        let (map, loc) = (self.objects[&id].map, self.objects[&id].location);
+        let interval = match ai {
+            74 => 45_000,
+            77 => 30_000,
+            122 => 20_000,
+            101 | 102 => 15_000,
+            _ => 10_000,
+        };
+        self.objects
+            .get_mut(&id)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .minion_time = self.now + interval;
+        if ai == 115 {
+            let view = self.data.monsters[&self.objects[&id].monster_ref().def].view_range;
+            let far = self
+                .on_map(map)
+                .find(|o| {
+                    o.monster()
+                        .is_some_and(|m| self.data.monsters[&m.def].flag == 190)
+                        && o.location.distance(loc) > view - 3
+                })
+                .map(|o| o.id);
+            if let Some(minion) = far {
+                self.teleport_near_cell(minion, loc.step(Direction::DownLeft, 2), 1);
+            }
+            return;
+        }
+        let leash = if matches!(ai, 74 | 77) { 10 } else { 15 };
+        let stray: Vec<_> = self.objects[&id]
+            .monster_ref()
+            .minions
+            .iter()
+            .copied()
+            .filter(|m| {
+                self.objects.get(m).is_some_and(|o| {
+                    ai != 122
+                        && (o.map != map || o.location.distance(loc) > leash)
+                        && !(ai == 102
+                            && o.monster()
+                                .is_some_and(|m| self.data.monsters[&m.def].is_boss))
+                })
+            })
+            .collect();
+        for minion in stray {
+            self.remove_object(minion);
+        }
+        let target = self.objects[&id].monster_ref().target;
+        if ai == 74 {
+            self.spawn_minions(id, 5, &[(180, 2)], 5, target, 10);
+        } else if ai == 122 {
+            self.spawn_minions(id, 10, &[(204, 2)], 10, target, 10);
+        } else if ai == 77 {
+            self.spawn_minions(id, 5, &[(142, 1)], 5, target, 10);
+        } else if ai == 102 {
+            self.spawn_minions(
+                id,
+                10,
+                &[
+                    (171, 10000),
+                    (172, 10000),
+                    (173, 10000),
+                    (174, 10000),
+                    (175, 10000),
+                    (176, 10000),
+                    (177, 10000),
+                    (178, 10000),
+                    (170, 1),
+                ],
+                10,
+                target,
+                10,
+            );
+        } else {
+            self.spawn_minions(
+                id,
+                10,
+                &[
+                    (171, 2),
+                    (172, 2),
+                    (173, 2),
+                    (174, 2),
+                    (175, 2),
+                    (176, 2),
+                    (177, 2),
+                    (178, 2),
+                ],
+                10,
+                target,
+                10,
+            );
         }
     }
 
@@ -612,9 +787,22 @@ impl World {
             let o = &self.objects[&id];
             (o.location, o.map)
         };
+        if matches!(self.monster_ai(id), 115 | 116)
+            && self.monster_can_attack(id)
+            && loc.distance(self.objects[&t].location) > 5
+            && self.rng.random_range(0..5) == 0
+        {
+            let centre = if self.monster_ai(id) == 115 {
+                loc.step(Direction::DownLeft, 2)
+            } else {
+                loc
+            };
+            let radius = if self.monster_ai(id) == 115 { 1 } else { 2 };
+            self.teleport_near_cell(t, centre, radius);
+        }
         let tloc = self.objects[&t].location;
         let dist = tloc.distance(loc);
-        // Shinsu fights only inside its window; outside it is unseen.
+        // Small idle Shinsu remains visible but cannot attack.
         if prof.mode_windows && !self.objects[&id].monster_ref().mode {
             return;
         }
@@ -631,6 +819,36 @@ impl World {
                 let away = Direction::from_points(tloc, loc);
                 self.move_toward(id, loc.step(away, 2), true);
             }
+            return;
+        }
+        if matches!(self.monster_ai(id), 98 | 100 | 101) {
+            if dist > 0
+                && dist <= prof.attack_range
+                && self.monster_can_attack(id)
+                && self.rng.random_range(0..2) == 0
+            {
+                self.monster_attack_shape(id, t, prof);
+            }
+            if self.monster_can_move(id) {
+                if tloc == loc {
+                    let dir = Direction::from_index(self.rng.random_range(0..8));
+                    for i in 0..8 {
+                        if self.monster_walk(id, dir.rotate(i)) {
+                            break;
+                        }
+                    }
+                } else {
+                    self.move_toward(id, tloc, false);
+                }
+            }
+            let distance = self.objects[&id].location.distance(tloc);
+            if distance > 0 && distance <= prof.attack_range && self.monster_can_attack(id) {
+                self.monster_attack_shape(id, t, prof);
+            }
+            return;
+        }
+        if self.monster_ai(id) == 137 {
+            self.process_numa_target(id, t);
             return;
         }
         // Banyo Captain: every 3 s a 1-in-n chance to purify the target.
@@ -678,6 +896,13 @@ impl World {
                 .cadence_time = now + every;
             if prof.weakness_every_ms > 0 {
                 let victims = self.hostiles_within(id, loc, 3);
+                if let Some(&target) = victims.first() {
+                    self.face_and_swing(
+                        id,
+                        Direction::from_points(loc, self.objects[&target].location),
+                        Some(target),
+                    );
+                }
                 for v in victims {
                     self.apply_poison(
                         v,
@@ -695,6 +920,22 @@ impl World {
                 let view = self.data.monsters[&self.objects[&id].monster_ref().def].view_range;
                 let (hp, max_hp) = (self.objects[&id].hp, self.objects[&id].max_hp);
                 let victims = self.hostiles_within(id, loc, view.max(1));
+                if !victims.is_empty() {
+                    let dir = self.objects[&id].direction;
+                    self.begin_monster_attack(id, dir);
+                    self.events.push((
+                        id,
+                        ServerMessage::ObjectMagic {
+                            id,
+                            direction: dir,
+                            location: loc,
+                            magic: 0,
+                            targets: vec![t],
+                            locations: Vec::new(),
+                            cast: true,
+                        },
+                    ));
+                }
                 for v in victims {
                     if hp > max_hp / 2 && self.rng.random_range(0..2) > 0 {
                         continue;
@@ -718,7 +959,12 @@ impl World {
                 return;
             }
         }
-        if prof.blink_chance > 0 && dist > 1 && !prof.immobile {
+        if prof.blink_chance > 0
+            && dist > 1
+            && !prof.immobile
+            && self.monster_can_move(id)
+            && self.monster_can_attack(id)
+        {
             let blink_due = now > self.objects[&id].monster_ref().blink_time;
             if blink_due {
                 self.objects
@@ -746,7 +992,8 @@ impl World {
         let ranged_allowed = prof.attack_range > 1
             && (prof.range_cooldown_ms == 0 || now > self.objects[&id].monster_ref().range_time);
         let reach = if ranged_allowed { prof.attack_range } else { 1 };
-        let in_range = tloc != loc && dist <= reach && (!prof.rays_only || on_ray || dist <= 1);
+        let in_range = self.monster_ai(id) == 19
+            || (tloc != loc && dist <= reach && (!prof.rays_only || on_ray || dist <= 1));
         // Timed or chance-based spells.
         if let Some(spell) = &prof.spell {
             let cooled = now >= self.objects[&id].monster_ref().spell_time;
@@ -782,7 +1029,7 @@ impl World {
                 return;
             }
             if self.monster_can_move(id) {
-                if tloc == loc {
+                if tloc == loc && self.monster_can_move(id) {
                     let dir = Direction::from_index(self.rng.random_range(0..8));
                     for i in 0..8 {
                         if self.monster_walk(id, dir.rotate(i)) {
@@ -805,6 +1052,182 @@ impl World {
         }
         let _ = map;
         self.monster_attack_shape(id, t, prof);
+    }
+
+    fn numa_teleport_cell(&mut self, id: ObjectId, target: ObjectId) -> Option<Point> {
+        let me = &self.objects[&id];
+        let victim = self.objects.get(&target)?;
+        if victim.dead || me.map != victim.map || !self.monster_hostile_to(id, victim) {
+            return None;
+        }
+        let (map, loc, direction) = (
+            me.map,
+            victim.location,
+            Direction::from_points(me.location, victim.location),
+        );
+        let start: i8 = self.rng.random_range(0..8);
+        let rotation: i8 = if self.rng.random_range(0..2) == 0 {
+            1
+        } else {
+            -1
+        };
+        (0..8)
+            .map(|i| loc.step(direction.rotate((start + i * rotation).rem_euclid(8)), 1))
+            .find(|cell| {
+                self.maps[&map].file.is_walkable(cell.x, cell.y)
+                    && !self.cell_blocked(map, *cell, false)
+            })
+    }
+
+    fn process_numa_target(&mut self, id: ObjectId, target: ObjectId) {
+        let loc = self.objects[&id].location;
+        let target_loc = self.objects[&target].location;
+        let distance = loc.distance(target_loc);
+        let direction = Direction::from_points(loc, target_loc);
+        let ready = self.monster_can_attack(id);
+        if ready
+            && distance > 4
+            && self.now >= self.objects[&id].monster_ref().blink_time
+            && self.numa_teleport_cell(id, target).is_some()
+        {
+            self.face_and_swing(id, direction, None);
+            let m = self.objects.get_mut(&id).unwrap().monster_mut().unwrap();
+            m.blink_time = self.now + 6000;
+            m.numa_action = Some((self.now + 500, NumaAction::Teleport(target)));
+            return;
+        }
+        if ready
+            && distance > 2
+            && distance <= 5
+            && self.now >= self.objects[&id].monster_ref().cadence_time
+        {
+            let targets = self.hostiles_within(id, loc, 5);
+            if !targets.is_empty() {
+                self.begin_monster_attack(id, direction);
+                self.events.push((
+                    id,
+                    ServerMessage::ObjectMagic {
+                        id,
+                        direction,
+                        location: loc,
+                        magic: 0,
+                        targets: targets.clone(),
+                        locations: Vec::new(),
+                        cast: true,
+                    },
+                ));
+                let m = self.objects.get_mut(&id).unwrap().monster_mut().unwrap();
+                m.cadence_time = self.now + 10000;
+                m.numa_action = Some((self.now + 400, NumaAction::Pull(targets)));
+                return;
+            }
+        }
+        if distance == 0 || distance > 2 {
+            if self.monster_can_move(id) {
+                if distance == 0 {
+                    let direction = Direction::from_index(self.rng.random_range(0..8));
+                    for i in 0..8 {
+                        if self.monster_walk(id, direction.rotate(i)) {
+                            break;
+                        }
+                    }
+                } else {
+                    self.move_toward(id, target_loc, false);
+                }
+            }
+            return;
+        }
+        if ready {
+            self.monster_range_swing(id, direction);
+            let element = self.monster_attack_element(id);
+            for victim in self.hostiles_within(id, loc.step(direction, 1), 1) {
+                self.push_monster_hit(id, victim, 400, true, element);
+            }
+        }
+    }
+
+    fn process_numa_action(&mut self, id: ObjectId) {
+        if self.objects[&id].dead
+            || self.objects[&id]
+                .monster_ref()
+                .numa_action
+                .as_ref()
+                .is_none_or(|(at, _)| self.now < *at)
+        {
+            return;
+        }
+        let (_, action) = self
+            .objects
+            .get_mut(&id)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .numa_action
+            .take()
+            .unwrap();
+        match action {
+            NumaAction::Teleport(target) => {
+                if let Some(cell) = self.numa_teleport_cell(id, target) {
+                    self.objects.get_mut(&id).unwrap().direction =
+                        Direction::from_points(cell, self.objects[&target].location);
+                    self.teleport_object(id, cell);
+                }
+            }
+            NumaAction::Pull(targets) => {
+                let (map, loc, stats) = (
+                    self.objects[&id].map,
+                    self.objects[&id].location,
+                    self.objects[&id].stats,
+                );
+                let element = self.monster_attack_element(id);
+                for victim in targets {
+                    let Some(location) = self
+                        .objects
+                        .get(&victim)
+                        .filter(|o| {
+                            o.map == map
+                                && loc.distance(o.location) <= 5
+                                && self.monster_hostile_to(id, o)
+                        })
+                        .map(|o| o.location)
+                    else {
+                        continue;
+                    };
+                    let power = (self.roll_dc(stats) / 2).max(1);
+                    self.resolve_hit_batch(vec![PendingHit {
+                        time: self.now,
+                        attacker: id,
+                        target_cell: (map, location),
+                        power,
+                        target: Some(victim),
+                        magics: Vec::new(),
+                        primary: true,
+                        raw: false,
+                        element,
+                        ranged: true,
+                    }]);
+                    let Some(o) = self
+                        .objects
+                        .get(&victim)
+                        .filter(|o| !o.dead && o.map == map)
+                    else {
+                        continue;
+                    };
+                    if o.has_buff(buff_type::ENDURANCE)
+                        || o.has_buff(buff_type::DRAGON_REPULSE)
+                        || o.player().is_some_and(|p| p.channel.is_some())
+                        || o.monster()
+                            .is_some_and(|m| !self.data.monsters[&m.def].can_push)
+                    {
+                        continue;
+                    }
+                    let distance = (o.location.distance(loc) - 1).min(3);
+                    if distance > 0 {
+                        self.push_back(victim, Direction::from_points(o.location, loc), distance);
+                    }
+                }
+            }
+        }
     }
 
     /// Straight line toward `goal`, then rotate outward through all eight
@@ -914,6 +1337,80 @@ impl World {
             });
             return;
         }
+        // These bosses strike everyone around themselves, even with an adjacent target.
+        let ai = self.monster_ai(id);
+        if matches!(ai, 13 | 19 | 77) {
+            let direction = if ai == 19 { Direction::Up } else { dir };
+            self.face_and_swing(id, direction, (ai == 19).then_some(t));
+            let radius = if ai == 19 { 40 } else { MAGIC_RANGE };
+            for victim in self.hostiles_within(id, loc, radius) {
+                let delay = 500
+                    + if ai == 19 {
+                        0
+                    } else {
+                        loc.distance(self.objects[&victim].location) as u64 * PROJECTILE_MS
+                    };
+                self.push_monster_hit(id, victim, delay, true, element::NONE);
+            }
+            return;
+        }
+        if ai == 102 {
+            self.begin_monster_attack(id, dir);
+            let affinity = self.monster_attack_element(id);
+            for centre in self.hostiles_within(id, loc, 12) {
+                if self.rng.random_range(0..10) > 3 {
+                    continue;
+                }
+                self.events.push((
+                    id,
+                    ServerMessage::ObjectRangeAttack {
+                        id,
+                        direction: dir,
+                        target: Some(centre),
+                        location: self.objects[&centre].location,
+                        magic: 0,
+                    },
+                ));
+                for victim in self.hostiles_within(id, self.objects[&centre].location, 2) {
+                    self.push_monster_hit(id, victim, 1000, true, affinity);
+                }
+            }
+            return;
+        }
+        if matches!(ai, 98 | 100 | 101) {
+            let affinity = self.monster_attack_element(id);
+            if self.rng.random_range(0..5) == 0 && dist <= 3 {
+                self.monster_range_swing(id, dir);
+                let element = match ai {
+                    98 => element::LIGHTNING,
+                    101 => affinity,
+                    _ => element::NONE,
+                };
+                for victim in self.hostiles_within(id, loc, 3) {
+                    self.push_monster_hit(id, victim, 400, true, element);
+                }
+            } else {
+                self.face_and_swing(id, dir, None);
+                self.push_monster_hit(id, t, 400, false, affinity);
+            }
+            return;
+        }
+        if matches!(ai, 78 | 127) {
+            if self.rng.random_range(0..3) == 0 || dist > 2 {
+                self.monster_line_attack(id, dir, 3);
+            } else {
+                self.face_and_swing(id, dir, None);
+                if let Some(victim) = self
+                    .hostiles_within(id, loc.step(dir, 1), 1)
+                    .first()
+                    .copied()
+                {
+                    let affinity = self.monster_attack_element(id);
+                    self.push_monster_hit(id, victim, 400, false, affinity);
+                }
+            }
+            return;
+        }
         if prof.line_attack > 0 && dist > 1 {
             self.monster_line_attack(id, dir, prof.line_attack);
             return;
@@ -966,13 +1463,7 @@ impl World {
         self.monster_attack(id, t);
     }
 
-    /// Face the target, broadcast the swing and start the attack timers.
-    pub(super) fn face_and_swing(
-        &mut self,
-        id: ObjectId,
-        dir: Direction,
-        ranged_at: Option<ObjectId>,
-    ) {
+    fn begin_monster_attack(&mut self, id: ObjectId, dir: Direction) {
         {
             let o = self.objects.get_mut(&id).unwrap();
             o.direction = dir;
@@ -984,7 +1475,42 @@ impl World {
             o.attack_time = self.now + ad + slow;
             o.action_time = self.now + ad.saturating_sub(100).min(md.max(1)) + slow;
         }
-        let loc = self.objects[&id].location;
+    }
+
+    fn monster_range_swing(&mut self, id: ObjectId, dir: Direction) {
+        self.begin_monster_attack(id, dir);
+        self.events.push((
+            id,
+            ServerMessage::ObjectRangeAttack {
+                id,
+                direction: dir,
+                target: None,
+                location: self.objects[&id].location,
+                magic: 0,
+            },
+        ));
+    }
+
+    fn monster_attack_element(&self, id: ObjectId) -> u8 {
+        let def = &self.data.monsters[&self.objects[&id].monster_ref().def];
+        let mut best = (element::NONE, 0);
+        for element in 1..=7 {
+            let value = def.stat(43 + i32::from(element));
+            if value > best.1 {
+                best = (element, value);
+            }
+        }
+        best.0
+    }
+
+    /// Face the target, broadcast the swing and start the attack timers.
+    pub(super) fn face_and_swing(
+        &mut self,
+        id: ObjectId,
+        dir: Direction,
+        ranged_at: Option<ObjectId>,
+    ) {
+        self.begin_monster_attack(id, dir);
         match ranged_at {
             Some(t) => self.events.push((
                 id,
@@ -1005,7 +1531,6 @@ impl World {
                 },
             )),
         }
-        let _ = loc;
     }
 
     /// Hostile, living objects within `radius` of `centre` on the monster's map.
@@ -1015,7 +1540,7 @@ impl World {
             .objects
             .iter()
             .map(|o| &self.objects[o])
-            .filter(|o| o.location.distance(centre) <= radius && me.hostile_to(o))
+            .filter(|o| o.location.distance(centre) <= radius && self.monster_hostile_to(id, o))
             .map(|o| o.id)
             .collect()
     }
@@ -1058,7 +1583,14 @@ impl World {
     /// Zircon `LineAttack(n)`: the first object in each of the `n` cells
     /// along the facing direction is struck after 400 ms.
     fn monster_line_attack(&mut self, id: ObjectId, dir: Direction, n: i32) {
-        self.face_and_swing(id, dir, None);
+        let jinchon = matches!(self.monster_ai(id), 78 | 127);
+        let element = if jinchon {
+            self.monster_range_swing(id, dir);
+            self.monster_attack_element(id)
+        } else {
+            self.face_and_swing(id, dir, None);
+            element::NONE
+        };
         let (map, loc) = {
             let o = &self.objects[&id];
             (o.map, o.location)
@@ -1069,9 +1601,9 @@ impl World {
                 .objects_at(cell)
                 .iter()
                 .copied()
-                .find(|v| self.objects[&id].hostile_to(&self.objects[v]));
+                .find(|v| self.monster_hostile_to(id, &self.objects[v]));
             if let Some(v) = victim {
-                self.push_monster_hit(id, v, 400, true, element::NONE);
+                self.push_monster_hit(id, v, 400, true, element);
             }
         }
     }
@@ -1103,6 +1635,22 @@ impl World {
             let slow = slow_ms(o);
             o.attack_time = now + ad + slow;
             o.action_time = now + ad.saturating_sub(100).min(md.max(1)) + slow;
+        }
+        if matches!(self.monster_ai(id), 41 | 85)
+            && matches!(
+                spell,
+                Spell::Aoe {
+                    magic: magic_type::MONSTER_SPLASH,
+                    ..
+                }
+            )
+        {
+            self.face_and_swing(id, dir, Some(t));
+            let affinity = self.monster_attack_element(id);
+            for victim in self.hostiles_within(id, tloc, 2) {
+                self.push_monster_hit(id, victim, 400, true, affinity);
+            }
+            return;
         }
         let stats = self.objects[&id].stats;
         let dc = self.roll_dc(stats);
@@ -1310,7 +1858,7 @@ impl World {
             ServerMessage::ObjectMagic {
                 id,
                 direction: dir,
-                location: tloc,
+                location: loc,
                 magic,
                 targets,
                 locations,
@@ -1346,11 +1894,15 @@ impl World {
                 let Some(target) = self.objects.get(&v) else {
                     continue;
                 };
-                if target.dead || v == s.caster || !self.objects[&s.caster].hostile_to(target) {
+                if target.dead || v == s.caster || !self.monster_hostile_to(s.caster, target) {
                     continue;
                 }
                 let tstats = target.stats;
-                let mr = self.roll_range(tstats.min_mr, tstats.max_mr);
+                let mr = if has_poison(target, poison_kind::MAGIC_WEAKNESS) {
+                    0
+                } else {
+                    self.roll_range(tstats.min_mr, tstats.max_mr)
+                };
                 let power = s.power * scale / 100 - mr;
                 if power > 0 {
                     self.damage(v, s.caster, power, s.element, true);
@@ -1373,6 +1925,14 @@ impl World {
         let o = &self.objects[&id];
         let m = o.monster_ref();
         !o.dead
+            && (m.companion.is_some()
+                || m.owner.is_none_or(|owner| {
+                    self.objects.get(&owner).is_some_and(|o| {
+                        o.player().is_some_and(|p| {
+                            matches!(p.pet_mode, pet_mode::BOTH | pet_mode::MOVE | pet_mode::PVP)
+                        })
+                    })
+                }))
             && m.move_delay > 0
             && self.now >= o.action_time
             && self.now >= o.move_time
@@ -1388,15 +1948,91 @@ impl World {
             })
     }
 
+    /// Skeleton, Jin Skeleton, Shinsu, Infernal Soldier and Undead Soul are
+    /// Taoist summons. Tamed wild monsters retain their original search AI.
+    pub(super) fn is_reactive_summon(&self, id: ObjectId) -> bool {
+        self.objects
+            .get(&id)
+            .and_then(|o| o.monster())
+            .is_some_and(|m| {
+                m.owner.is_some() && matches!(self.monster_flag(id), 1 | 2 | 3 | 4 | 9)
+            })
+    }
+
     pub(super) fn monster_can_attack(&self, id: ObjectId) -> bool {
         let o = &self.objects[&id];
         let m = o.monster_ref();
         !o.dead
+            && self.monster_can_attack_mode(id)
             && m.attack_delay > 0
             && self.now >= o.action_time
             && self.now >= o.attack_time
             && !has_poison(o, poison_kind::FEAR)
             && !has_poison(o, poison_kind::SILENCED)
+    }
+
+    fn monster_can_attack_mode(&self, id: ObjectId) -> bool {
+        self.objects[&id].monster_ref().owner.is_none_or(|owner| {
+            self.objects.get(&owner).is_some_and(|o| {
+                o.player().is_some_and(|p| {
+                    matches!(
+                        p.pet_mode,
+                        pet_mode::BOTH | pet_mode::ATTACK | pet_mode::PVP
+                    )
+                })
+            })
+        })
+    }
+
+    /// Owner settings and both safe zones govern a pet's player and pet targets.
+    pub(super) fn monster_hostile_to(&self, id: ObjectId, target: &Object) -> bool {
+        let me = &self.objects[&id];
+        let Some(owner) = me.monster().and_then(|m| m.owner) else {
+            return me.hostile_to(target);
+        };
+        let Some(player) = self.objects.get(&owner).and_then(|o| o.player()) else {
+            return false;
+        };
+        if matches!(player.pet_mode, pet_mode::MOVE | pet_mode::NONE) || target.dead {
+            return false;
+        }
+        let (other_id, other, target_safe) = if let Some(m) = target.monster() {
+            if player.pet_mode == pet_mode::PVP {
+                return false;
+            }
+            let Some(other_id) = m.owner else {
+                return me.hostile_to(target);
+            };
+            if m.guard || m.castle.is_some() || m.companion.is_some() || m.room_door.is_some() {
+                return false;
+            }
+            let Some(other) = self.objects.get(&other_id).and_then(|o| o.player()) else {
+                return false;
+            };
+            (
+                other_id,
+                other,
+                self.in_safe_zone(target.map, target.location),
+            )
+        } else if let Some(other) = target.player() {
+            (target.id, other, target.in_safe_zone)
+        } else {
+            return false;
+        };
+        if other_id == owner || self.in_safe_zone(me.map, me.location) || target_safe {
+            return false;
+        }
+        match player.attack_mode {
+            attack_mode::PEACE => false,
+            attack_mode::GROUP => player.group.is_none() || player.group != other.group,
+            attack_mode::GUILD => player.guild.is_none() || player.guild != other.guild,
+            attack_mode::WAR_RED_BROWN => {
+                other.brown
+                    || other.pk_points >= super::pvp::RED_POINT
+                    || super::pvp::at_war(player, other)
+            }
+            _ => true,
+        }
     }
 
     pub(super) fn monster_walk(&mut self, id: ObjectId, dir: Direction) -> bool {
@@ -1452,6 +2088,17 @@ impl World {
         let ai = self.monster_ai(id);
         let prof = self.ai_profile(ai);
         let loc = self.objects[&id].location;
+        if ai == 101 {
+            if let Some(def) = self
+                .data
+                .monsters
+                .values()
+                .find(|d| d.flag == 170)
+                .map(|d| d.index)
+            {
+                self.create_monster(def, self.objects[&id].map, loc, None, None, 0);
+            }
+        }
         if prof.suicide_range > 0 {
             let victims = self.hostiles_within(id, loc, prof.suicide_range);
             for v in victims {
@@ -1475,11 +2122,15 @@ impl World {
     }
 
     /// Zircon `UnTame`: back to the wild at a tenth of its health.
-    /// Zircon `Shinsu.Process`: with a target the window is extended to 10 s
-    /// ahead; the mode flips on (visible, 2 s pause) when a window is due and
-    /// off (hidden, 2 s pause) when it lapses. Returns whether it may fight.
+    /// Zircon `Shinsu.Process`: after one second the idle small form appears.
+    /// A target opens a 10 s fighting window in big form; without a target it
+    /// returns to the visible small form. Only the big form may attack.
     fn process_mode_window(&mut self, id: ObjectId, now: u64) {
         let o = self.objects.get_mut(&id).unwrap();
+        let m = o.monster_mut().unwrap();
+        if m.hidden && now >= m.hide_check {
+            m.hidden = false;
+        }
         if now < o.action_time {
             return;
         }
@@ -1487,14 +2138,23 @@ impl World {
         if m.target.is_some() {
             m.mode_time = now + 10_000;
         }
+        let mut mode = None;
         if !m.mode && now < m.mode_time {
             m.mode = true;
-            m.hidden = false;
+            mode = Some(true);
             o.action_time = now + 2000;
         } else if m.mode && now > m.mode_time {
             m.mode = false;
-            m.hidden = true;
+            mode = Some(false);
             o.action_time = now + 2000;
+        }
+        if let Some(big) = mode {
+            if let Appearance::Monster { image, .. } = &mut o.appearance {
+                *image = if big { 99 } else { 100 };
+            }
+            let appearance = o.appearance.clone();
+            self.events
+                .push((id, ServerMessage::ObjectAppearance { id, appearance }));
         }
     }
 
@@ -1767,7 +2427,7 @@ impl World {
             // on a random cell.
             let victims: Vec<ObjectId> = self
                 .on_map(map)
-                .filter(|o| self.objects[&id].hostile_to(o))
+                .filter(|o| self.monster_hostile_to(id, o))
                 .map(|o| o.id)
                 .collect();
             let (w, h) = {
@@ -1798,7 +2458,7 @@ impl World {
         if t.dead {
             return;
         }
-        let hostile = self.objects[&caster].hostile_to(t);
+        let hostile = self.monster_hostile_to(caster, t);
         if hostile {
             let (clevel, tlevel) = (
                 self.level_of(&self.objects[&caster]),
@@ -1848,15 +2508,7 @@ impl World {
         } else {
             let o = self.objects.get_mut(&target).unwrap();
             o.poisons.retain(|p| p.kind == poison_kind::PARASITE);
-            if o.poisons.is_empty() {
-                self.events.push((
-                    target,
-                    ServerMessage::ObjectPoisoned {
-                        id: target,
-                        poisoned: false,
-                    },
-                ));
-            }
+            self.send_poison_status(target);
         }
     }
 
@@ -1934,7 +2586,11 @@ impl World {
                 if !self.maps[&map].file.is_walkable(cell.x, cell.y) {
                     continue;
                 }
-                let delay = 4000 + self.rng.random_range(0..2000);
+                let delay = if self.monster_ai(caster) == 127 {
+                    2500 + self.rng.random_range(0..5000)
+                } else {
+                    4500
+                };
                 let sid = self.spawn_spell(
                     map,
                     cell,
@@ -2116,4 +2772,577 @@ impl World {
 /// Whether the object carries a poison of `kind`.
 pub(super) fn has_poison(o: &Object, kind: u16) -> bool {
     o.poisons.iter().any(|p| p.kind == kind)
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+
+    fn setup() -> Option<(World, ObjectId, i32, Point)> {
+        let assets = std::path::PathBuf::from(std::env::var_os("ZIRCON_ASSETS")?);
+        let data = crate::data::GameData::load(assets.join("../Database/System.db")).unwrap();
+        let mut world = World::new(data, assets.join("Map"), None).with_seed(0x5A1C0);
+        let player = world
+            .add_player(1, 1, &crate::accounts::test_character("BossTester"))
+            .unwrap();
+        let map = world.objects[&player].map;
+        world.test_clear_monsters(map);
+        let loc = world
+            .test_quiet_cell(map, world.objects[&player].location)
+            .unwrap();
+        world.teleport(player, loc);
+        Some((world, player, map, loc))
+    }
+
+    #[test]
+    fn monster_cast_keeps_caster_location_and_separate_targets() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let caster_loc = loc.step(Direction::Up, 3);
+        for ai in [16, 36, 38] {
+            let caster = world.test_spawn_ai(ai, map, caster_loc).unwrap();
+            let spell = world.ai_profile(ai).spell.unwrap();
+            world.monster_cast(caster, player, spell);
+            assert!(world.events.iter().any(|(_, m)| matches!(m,
+                ServerMessage::ObjectMagic { id, location, targets, .. }
+                if *id == caster && *location == caster_loc && targets.contains(&player))));
+            assert_eq!(world.objects[&caster].location, caster_loc);
+            world.remove_object(caster);
+        }
+    }
+
+    #[test]
+    fn redmoon_hits_everyone_around_caster_even_with_adjacent_target() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let second = world
+            .add_player(2, 2, &crate::accounts::test_character("SecondTarget"))
+            .unwrap();
+        let caster_loc = loc.step(Direction::Up, 1);
+        world.teleport(second, caster_loc.step(Direction::Up, 40));
+        let caster = world.test_spawn_ai(19, map, caster_loc).unwrap();
+        let profile = world.ai_profile(19);
+        world.monster_attack_shape(caster, player, &profile);
+        for target in [player, second] {
+            assert!(world.pending_hits.iter().any(|h| h.attacker == caster
+                && h.target == Some(target)
+                && h.time == world.now + 500));
+        }
+    }
+
+    #[test]
+    fn banyo_cannot_blink_during_attack_cooldown() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let caster = world
+            .test_spawn_ai(71, map, loc.step(Direction::Up, 3))
+            .unwrap();
+        world.objects.get_mut(&caster).unwrap().attack_time = 100_000;
+        let profile = world.ai_profile(71);
+        world.now = 2_000;
+        world.process_target(caster, player, &profile);
+        assert_eq!(world.objects[&caster].monster_ref().blink_time, 0);
+    }
+
+    #[test]
+    fn bosses_replenish_minions_and_dragon_queen_spawns_lord_on_death() {
+        let Some((mut world, _, map, loc)) = setup() else {
+            return;
+        };
+        for (ai, count, interval) in [
+            (74, 5, 45_000),
+            (77, 5, 30_000),
+            (101, 10, 15_000),
+            (102, 10, 15_000),
+            (122, 10, 20_000),
+        ] {
+            let boss = world
+                .test_spawn_ai(ai, map, loc.step(Direction::Up, 5))
+                .unwrap();
+            world.process_boss_minions(boss, ai);
+            assert_eq!(world.objects[&boss].monster_ref().minions.len(), count);
+            let first = world.objects[&boss].monster_ref().minions[0];
+            world.remove_object(first);
+            world.now += interval;
+            world.process_boss_minions(boss, ai);
+            assert_eq!(world.objects[&boss].monster_ref().minions.len(), count);
+            if ai == 101 {
+                world.monster_death_effects(boss);
+                assert!(world.on_map(map).any(|o| o.monster().is_some_and(|m| world
+                    .data
+                    .monsters[&m.def]
+                    .flag
+                    == 170)
+                    && o.location == world.objects[&boss].location));
+            }
+            let minions = world.objects[&boss].monster_ref().minions.clone();
+            for minion in minions {
+                world.remove_object(minion);
+            }
+            world.remove_object(boss);
+        }
+    }
+
+    #[test]
+    fn necromancer_weakness_consumes_attack_and_removes_spell_resistance() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let necromancer = world
+            .test_spawn_ai(59, map, loc.step(Direction::Up, 2))
+            .unwrap();
+        world.now = 1;
+        let profile = world.ai_profile(59);
+        world.process_target(necromancer, player, &profile);
+        assert!(world.objects[&necromancer].attack_time > world.now);
+        assert!(has_poison(
+            &world.objects[&player],
+            poison_kind::MAGIC_WEAKNESS
+        ));
+        let hp = world.objects[&player].hp;
+        let player_stats = &mut world.objects.get_mut(&player).unwrap().stats;
+        player_stats.min_mr = 10_000;
+        player_stats.max_mr = 10_000;
+        world.pending_monster_spells.push(PendingMonsterSpell {
+            time: world.now,
+            caster: necromancer,
+            targets: vec![player],
+            cells: Vec::new(),
+            power: 10,
+            element: element::LIGHTNING,
+            map,
+        });
+        world.process_monster_spells();
+        assert!(world.objects[&player].hp < hp);
+    }
+
+    #[test]
+    fn jinchon_cloud_cast_consumes_attack_and_melee_has_alternate_shapes() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = world
+            .test_spawn_ai(78, map, loc.step(Direction::Up, 1))
+            .unwrap();
+        let profile = world.ai_profile(78);
+        world.now = 1;
+        world.events.clear();
+        world.process_target(boss, player, &profile);
+        assert!(world.events.iter().any(
+            |(_, m)| matches!(m, ServerMessage::ObjectMagic { id, magic: 0, .. } if *id == boss)
+        ));
+        assert!(world.objects[&boss].attack_time > world.now);
+        assert!(!world.pending_hits.iter().any(|h| h.attacker == boss));
+        let mut saw_melee = false;
+        let mut saw_line = false;
+        for _ in 0..40 {
+            world.events.clear();
+            world.pending_hits.clear();
+            world.monster_attack_shape(boss, player, &profile);
+            if world
+                .events
+                .iter()
+                .any(|(_, m)| matches!(m, ServerMessage::ObjectAttack { id, .. } if *id == boss))
+            {
+                saw_melee = true;
+                assert_eq!(
+                    world
+                        .pending_hits
+                        .iter()
+                        .filter(|h| h.attacker == boss)
+                        .count(),
+                    1
+                );
+            }
+            saw_line |= world.events.iter().any(|(_, m)| matches!(m, ServerMessage::ObjectRangeAttack { id, target: None, .. } if *id == boss));
+        }
+        assert!(saw_melee && saw_line);
+    }
+
+    #[test]
+    fn dragon_queen_chases_in_range_and_only_splashes_near_targets() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss_loc = loc.step(Direction::Up, 5);
+        let boss = world.test_spawn_ai(101, map, boss_loc).unwrap();
+        let profile = world.ai_profile(101);
+        world.objects.get_mut(&boss).unwrap().attack_time = 100_000;
+        world.now = 1;
+        world.process_target(boss, player, &profile);
+        assert_ne!(world.objects[&boss].location, boss_loc);
+        world.teleport_object(boss, boss_loc);
+        for _ in 0..40 {
+            world.events.clear();
+            world.pending_hits.clear();
+            world.monster_attack_shape(boss, player, &profile);
+            assert!(world
+                .events
+                .iter()
+                .any(|(_, m)| matches!(m, ServerMessage::ObjectAttack { id, .. } if *id == boss)));
+            assert_eq!(world.pending_hits.len(), 1);
+            assert_eq!(
+                world.pending_hits[0].element,
+                world.monster_attack_element(boss)
+            );
+        }
+        world.teleport_object(boss, loc.step(Direction::Up, 2));
+        let mut saw_splash = false;
+        for _ in 0..40 {
+            world.events.clear();
+            world.pending_hits.clear();
+            world.monster_attack_shape(boss, player, &profile);
+            saw_splash |= world.events.iter().any(|(_, m)| matches!(m, ServerMessage::ObjectRangeAttack { id, target: None, .. } if *id == boss));
+            assert!(world
+                .pending_hits
+                .iter()
+                .all(|h| h.element == world.monster_attack_element(boss)));
+        }
+        assert!(saw_splash);
+    }
+
+    fn spawn_test_numa(world: &mut World, map: i32, loc: Point) -> ObjectId {
+        let mut def = world
+            .data
+            .monsters
+            .values()
+            .filter(|d| d.ai == 0)
+            .min_by_key(|d| d.index)
+            .unwrap()
+            .clone();
+        def.index = 100_137;
+        def.ai = 137;
+        def.image = 196;
+        def.attack_delay = 1000;
+        def.move_delay = 700;
+        world.data.monsters.insert(def.index, def);
+        let boss = world.test_spawn_ai(137, map, loc).unwrap();
+        world.objects.get_mut(&boss).unwrap().stats.min_dc = 100;
+        world.objects.get_mut(&boss).unwrap().stats.max_dc = 100;
+        boss
+    }
+
+    #[test]
+    fn numa_teleport_waits_half_second_and_tracks_target() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss_loc = loc.step(Direction::Up, 6);
+        let boss = spawn_test_numa(&mut world, map, boss_loc);
+        world.process_numa_target(boss, player);
+        assert_eq!(world.objects[&boss].location, boss_loc);
+        assert_eq!(world.objects[&boss].monster_ref().blink_time, 6000);
+        world.now = 499;
+        world.process_numa_action(boss);
+        assert_eq!(world.objects[&boss].location, boss_loc);
+        let moved_target = loc.step(Direction::Right, 2);
+        world.teleport(player, moved_target);
+        world.now = 500;
+        world.process_monster(boss);
+        assert_eq!(world.objects[&boss].location.distance(moved_target), 1);
+        assert!(world.objects[&boss].monster_ref().numa_action.is_none());
+    }
+
+    #[test]
+    fn numa_pull_waits_then_deals_half_dc_and_pulls_three_cells() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let direction = Direction::ALL
+            .into_iter()
+            .find(|d| {
+                (1..=4).all(|n| {
+                    let p = loc.step(*d, n);
+                    world.maps[&map].file.is_walkable(p.x, p.y)
+                        && !world.cell_blocked(map, p, false)
+                })
+            })
+            .unwrap();
+        let boss = spawn_test_numa(&mut world, map, loc.step(direction, 4));
+        let victim = world.objects.get_mut(&player).unwrap();
+        victim.hp = 1000;
+        victim.max_hp = 1000;
+        victim.stats = CombatStats::ZERO;
+        world.process_numa_target(boss, player);
+        assert_eq!(world.objects[&boss].monster_ref().cadence_time, 10000);
+        world.now = 399;
+        world.process_numa_action(boss);
+        assert_eq!(world.objects[&player].hp, 1000);
+        assert_eq!(world.objects[&player].location, loc);
+        world.now = 400;
+        world.process_numa_action(boss);
+        assert_eq!(world.objects[&player].hp, 950);
+        assert_eq!(world.objects[&player].location, loc.step(direction, 3));
+    }
+
+    #[test]
+    fn numa_pull_respects_endurance_without_skipping_damage() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = spawn_test_numa(&mut world, map, loc.step(Direction::Up, 4));
+        let victim = world.objects.get_mut(&player).unwrap();
+        victim.hp = 1000;
+        victim.max_hp = 1000;
+        victim.stats = CombatStats::ZERO;
+        world.buff_add(player, buff_type::ENDURANCE, 10000, BuffStats::default());
+        world.process_numa_target(boss, player);
+        world.now = 400;
+        world.process_numa_action(boss);
+        assert!(world.objects[&player].hp < 1000);
+        assert_eq!(world.objects[&player].location, loc);
+    }
+
+    #[test]
+    fn numa_sweep_hits_front_area_and_not_behind() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let second = world
+            .add_player(2, 2, &crate::accounts::test_character("NumaFront"))
+            .unwrap();
+        let behind = world
+            .add_player(3, 3, &crate::accounts::test_character("NumaBehind"))
+            .unwrap();
+        let boss = spawn_test_numa(&mut world, map, loc.step(Direction::Up, 1));
+        world.teleport(second, loc.step(Direction::Right, 1));
+        world.teleport(behind, loc.step(Direction::Up, 3));
+        world.process_numa_target(boss, player);
+        for target in [player, second] {
+            assert!(world.pending_hits.iter().any(|h| h.attacker == boss
+                && h.target == Some(target)
+                && h.time == 400
+                && h.power == 100));
+        }
+        assert!(!world
+            .pending_hits
+            .iter()
+            .any(|h| h.attacker == boss && h.target == Some(behind)));
+    }
+
+    #[test]
+    fn numa_delayed_actions_reject_missing_or_out_of_range_targets() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = spawn_test_numa(&mut world, map, loc.step(Direction::Up, 4));
+        world.process_numa_target(boss, player);
+        world.teleport(player, loc.step(Direction::Down, 3));
+        let (hp, at) = (world.objects[&player].hp, world.objects[&player].location);
+        world.now = 400;
+        world.process_numa_action(boss);
+        assert_eq!(world.objects[&player].hp, hp);
+        assert_eq!(world.objects[&player].location, at);
+        world.now = 2000;
+        world.process_numa_target(boss, player);
+        let boss_loc = world.objects[&boss].location;
+        world.remove_object(player);
+        world.now = 2500;
+        world.process_numa_action(boss);
+        assert_eq!(world.objects[&boss].location, boss_loc);
+    }
+
+    #[test]
+    fn zuma_guardian_wakes_king_and_king_waits_two_seconds() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let guardian = world
+            .test_spawn_ai(21, map, loc.step(Direction::Up, 1))
+            .unwrap();
+        let king = world
+            .test_spawn_ai(22, map, loc.step(Direction::Up, 7))
+            .unwrap();
+        let profile = world.ai_profile(21);
+        assert!(!world.process_hidden(guardian, &profile.hidden.unwrap(), &profile));
+        assert!(!world.objects[&king].monster_ref().hidden);
+        assert_eq!(world.objects[&king].monster_ref().target, Some(player));
+        assert_eq!(world.objects[&king].action_time, world.now + 2000);
+    }
+
+    #[test]
+    fn emperor_splash_is_physical_ranged_attack() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = world
+            .test_spawn_ai(41, map, loc.step(Direction::Up, 5))
+            .unwrap();
+        world.monster_cast(
+            boss,
+            player,
+            Spell::Aoe {
+                radius: 2,
+                magic: magic_type::MONSTER_SPLASH,
+                element: element::NONE,
+                at_self: false,
+                scale: 100,
+            },
+        );
+        assert!(world.events.iter().any(|(_, m)| matches!(m, ServerMessage::ObjectRangeAttack { id, target: Some(t), .. } if *id == boss && *t == player)));
+        assert!(world.pending_monster_spells.is_empty());
+        assert!(world.pending_hits.iter().any(|h| h.attacker == boss
+            && h.target == Some(player)
+            && h.time == world.now + 400
+            && h.element == world.monster_attack_element(boss)));
+    }
+
+    #[test]
+    fn redmoon_attacks_target_on_its_own_cell() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = world.test_spawn_ai(19, map, loc).unwrap();
+        let profile = world.ai_profile(19);
+        world.process_target(boss, player, &profile);
+        assert!(world
+            .pending_hits
+            .iter()
+            .any(|h| h.attacker == boss && h.target == Some(player)));
+        assert_eq!(world.objects[&boss].direction, Direction::Up);
+    }
+
+    #[test]
+    fn sama_guardians_and_bosses_actually_cast_their_kits() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        for ai in 107..=114 {
+            let boss = world
+                .test_spawn_ai(ai, map, loc.step(Direction::Up, 5))
+                .unwrap();
+            let profile = world.ai_profile(ai);
+            assert_eq!(profile.attack_range, 2);
+            world.objects.get_mut(&boss).unwrap().move_time = u64::MAX;
+            world.events.clear();
+            for _ in 0..50 {
+                world.now += 5000;
+                world.process_target(boss, player, &profile);
+            }
+            assert!(
+                world.events.iter().any(
+                    |(_, m)| matches!(m, ServerMessage::ObjectMagic { id, .. } if *id == boss)
+                ),
+                "AI {ai} never cast"
+            );
+            world.remove_object(boss);
+        }
+    }
+
+    #[test]
+    fn dragon_lord_targets_multiple_separated_players() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let second = world
+            .add_player(2, 2, &crate::accounts::test_character("LordSecondTarget"))
+            .unwrap();
+        world.teleport(second, loc.step(Direction::Right, 6));
+        let boss = world
+            .test_spawn_ai(102, map, loc.step(Direction::Up, 5))
+            .unwrap();
+        let profile = world.ai_profile(102);
+        for _ in 0..30 {
+            world.monster_attack_shape(boss, player, &profile);
+        }
+        for target in [player, second] {
+            assert!(world.pending_hits.iter().any(|h| h.attacker == boss
+                && h.target == Some(target)
+                && h.time == world.now + 1000));
+        }
+    }
+
+    #[test]
+    fn jinchon_death_cloud_bursts_twice_for_fixed_physical_damage() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = world
+            .test_spawn_ai(78, map, loc.step(Direction::Up, 5))
+            .unwrap();
+        world.death_cloud(boss, map, loc);
+        let at = world
+            .objects
+            .values()
+            .find_map(|o| match &o.kind {
+                Kind::Spell(s) if s.effect == spell_effect::DEATH_CLOUD && o.location == loc => {
+                    Some(s.tick_time)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(at, world.now + 4500);
+        world.now = at;
+        world.process_spells();
+        let hits: Vec<_> = world
+            .pending_hits
+            .iter()
+            .filter(|h| h.target == Some(player))
+            .collect();
+        assert_eq!(hits.len(), 2);
+        assert!(hits
+            .iter()
+            .all(|h| h.power == 4000 && h.element == element::NONE && !h.raw));
+    }
+
+    #[test]
+    fn removed_stray_minion_can_remain_in_tick_snapshot() {
+        let Some((mut world, _, map, loc)) = setup() else {
+            return;
+        };
+        let boss = world
+            .test_spawn_ai(101, map, loc.step(Direction::Up, 5))
+            .unwrap();
+        world.process_boss_minions(boss, 101);
+        let minion = world.objects[&boss].monster_ref().minions[0];
+        world.teleport_object(minion, loc.step(Direction::Down, 25));
+        world.now = 15_000;
+        world.process_boss_minions(boss, 101);
+        assert!(!world.objects.contains_key(&minion));
+        // Tick snapshots IDs before bosses remove strays.
+        world.process_monster(minion);
+        world.tick(15_001);
+    }
+
+    #[test]
+    fn ni_jae_can_apply_both_green_poison_and_paralysis() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = world
+            .test_spawn_ai(77, map, loc.step(Direction::Up, 2))
+            .unwrap();
+        for _ in 0..100 {
+            world.monster_hit_poison(boss, player);
+        }
+        assert!(has_poison(&world.objects[&player], poison_kind::GREEN));
+        assert!(has_poison(&world.objects[&player], poison_kind::PARALYSIS));
+    }
+
+    #[test]
+    fn sama_prophet_spawns_sorcerer_and_protection_ends_after_removal() {
+        let Some((mut world, player, map, loc)) = setup() else {
+            return;
+        };
+        let boss = world
+            .test_spawn_ai(115, map, loc.step(Direction::Up, 5))
+            .unwrap();
+        let minions = world.objects[&boss].monster_ref().minions.clone();
+        assert_eq!(minions.len(), 1);
+        assert_eq!(world.monster_flag(minions[0]), 190);
+        assert_eq!(world.test_damage(boss, player, 100), 0);
+        world.teleport_object(minions[0], loc.step(Direction::Down, 25));
+        world.process_boss_minions(boss, 115);
+        assert!(
+            world.objects[&minions[0]]
+                .location
+                .distance(world.objects[&boss].location.step(Direction::DownLeft, 2))
+                <= 1
+        );
+        world.remove_object(minions[0]);
+        assert!(world.test_damage(boss, player, 100) > 0);
+    }
 }

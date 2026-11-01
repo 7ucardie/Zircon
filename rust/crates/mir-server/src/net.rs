@@ -86,7 +86,15 @@ pub async fn listen(
     let gate = Arc::new(Gate::default());
     let mut next_conn: ConnId = 1;
     loop {
-        let (stream, peer) = listener.accept().await?;
+        // EMFILE / ECONNABORTED are transient: log, back off, keep serving.
+        let (stream, peer) = match listener.accept().await {
+            Ok(accepted) => accepted,
+            Err(e) => {
+                tracing::warn!("accept failed: {e}");
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
         if !gate.admit(peer.ip()) {
             tracing::warn!(%peer, "connection refused: limit reached");
             drop(stream);
@@ -171,6 +179,9 @@ async fn handle(
         }
     }
     .await;
+    if let Err(error) = &result {
+        tracing::warn!(conn, %peer, %error, "connection ended");
+    }
     let _ = inbound.send(Inbound::Disconnected { conn });
     writer_task.abort();
     result

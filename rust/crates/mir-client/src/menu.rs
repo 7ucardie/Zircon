@@ -27,9 +27,11 @@ pub enum Window {
     Ranking,
     Friends,
     Market,
+    Map,
     /// Owns its open flag on `Game`, so the toggle is relayed as a request.
     Fortune,
     ChatOptions,
+    Settings,
 }
 
 /// What the player asked for by clicking the HUD or the menu.
@@ -56,8 +58,9 @@ const PANEL_BUTTONS: [(u32, f32, Option<Window>, &str, &str); 8] = [
 
 /// The key list shown by the help window. Kept beside the real bindings in
 /// `game/input.rs`; both follow Zircon's `KeyBindAction` defaults.
-const KEYS: [(&str, &str); 29] = [
+const KEYS: [(&str, &str); 35] = [
     ("Q", "Character"),
+    ("D", "Appearance and discipline"),
     ("W", "Inventory"),
     ("E", "Skills"),
     ("J", "Quest log"),
@@ -73,6 +76,7 @@ const KEYS: [(&str, &str); 29] = [
     ("V", "Cycle the minimap"),
     ("X", "Big map"),
     ("K", "Fortune checker"),
+    ("I", "Dungeon codex"),
     ("O", "Chat options"),
     ("N", "Menu"),
     ("H", "Help"),
@@ -80,12 +84,16 @@ const KEYS: [(&str, &str); 29] = [
     ("M", "Mount or dismount"),
     ("T", "Ask the player in front to trade"),
     ("Ctrl+H", "Attack mode"),
+    ("Ctrl+A", "Pet mode"),
     ("Alt+Q", "Leave the game"),
     ("Tab", "Pick up"),
-    ("1-9, 0", "Use a belt slot"),
-    ("F1-F11", "Cast a skill"),
+    ("B", "Harvest a nearby corpse"),
+    ("1-9, 0 twice", "Use a belt slot"),
+    ("F1-F12", "Cast a skill"),
+    ("Cmd/Opt+1..0,-,=", "Mac skill slots"),
     ("Enter", "Chat, Escape closes it"),
-    ("`", "Debug line, F12 screenshot"),
+    ("`", "Debug line"),
+    ("Ctrl+Alt+S", "Screenshot"),
 ];
 
 /// Auto potion (Zircon `AutoPotionDialog`): drink from a belt slot when a
@@ -147,8 +155,9 @@ enum MenuEntry {
 }
 
 /// Menu rows: action, label, key hint.
-const MENU_ENTRIES: [(MenuEntry, &str, &str); 13] = [
+const MENU_ENTRIES: [(MenuEntry, &str, &str); 15] = [
     (MenuEntry::Help, "Help", "H"),
+    (MenuEntry::Toggle(Window::Map), "Map", "X"),
     (MenuEntry::Toggle(Window::Guild), "Guild", "G"),
     (MenuEntry::Toggle(Window::Storage), "Storage", "S"),
     (MenuEntry::Toggle(Window::Companion), "Companion", "U"),
@@ -160,6 +169,7 @@ const MENU_ENTRIES: [(MenuEntry, &str, &str); 13] = [
     (MenuEntry::DropFilter, "Drop filter", ""),
     (MenuEntry::Toggle(Window::Fortune), "Fortune checker", "K"),
     (MenuEntry::Toggle(Window::ChatOptions), "Chat options", "O"),
+    (MenuEntry::Toggle(Window::Settings), "Settings", ""),
     (MenuEntry::Leave, "Leave game", "Alt+Q"),
 ];
 

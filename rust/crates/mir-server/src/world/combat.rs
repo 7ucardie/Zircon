@@ -16,7 +16,7 @@ impl World {
         let Some(o) = self.objects.get_mut(&id) else {
             return;
         };
-        if o.dead || self.now < o.action_time || self.now < o.attack_time {
+        if o.dead || paralysed(o) || self.now < o.action_time || self.now < o.attack_time {
             let (loc, dir) = (o.location, o.direction);
             self.send_to(
                 id,
@@ -233,6 +233,10 @@ impl World {
                 }
             }
         }
+        if self.dragon_blood_attack(id, attack_magic) {
+            valid = Some(magic_type::DRAGON_BLOOD);
+            magics.push(magic_type::DRAGON_BLOOD);
+        }
         for (m, on) in toggles {
             self.send_to(id, ServerMessage::MagicToggle { magic: m, on });
         }
@@ -420,11 +424,21 @@ impl World {
     }
 
     pub(super) fn roll_dc(&mut self, s: CombatStats) -> i32 {
-        if s.min_dc >= s.max_dc {
-            s.max_dc
-        } else {
-            self.rng.random_range(s.min_dc..=s.max_dc)
+        self.roll_lucky(s.min_dc, s.max_dc, s.luck)
+    }
+
+    /// Zircon `MapObject.GetDC/GetMC/GetSC`: luck favours range endpoints.
+    pub(super) fn roll_lucky(&mut self, min: i32, max: i32, luck: i32) -> i32 {
+        if min >= max {
+            return max;
         }
+        if luck > 0 && self.rng.random_range(0..10) < luck {
+            return max;
+        }
+        if luck < 0 && luck < -self.rng.random_range(0..10) {
+            return min;
+        }
+        self.rng.random_range(min.max(0)..=max)
     }
 
     pub(super) fn roll_ac(&mut self, s: CombatStats) -> i32 {
@@ -446,6 +460,10 @@ impl World {
             self.pending_hits = later;
             due
         };
+        self.resolve_hit_batch(due);
+    }
+
+    pub(super) fn resolve_hit_batch(&mut self, due: Vec<PendingHit>) {
         for hit in due {
             let Some(attacker) = self.objects.get(&hit.attacker) else {
                 continue;
@@ -455,6 +473,7 @@ impl World {
             }
             let attacker_stats = attacker.stats;
             let attacker_is_player = attacker.is_player();
+            let attacker_is_monster = attacker.is_monster();
             let targets: Vec<ObjectId> = match hit.target {
                 Some(t) => vec![t],
                 None => self
@@ -470,7 +489,11 @@ impl World {
                 if target.dead || tid == hit.attacker {
                     continue;
                 }
-                if !self.objects[&hit.attacker].hostile_to(target) {
+                if attacker_is_monster {
+                    if !self.monster_hostile_to(hit.attacker, target) {
+                        continue;
+                    }
+                } else if !self.objects[&hit.attacker].hostile_to(target) {
                     continue;
                 }
                 if hit.target.is_some()
@@ -483,6 +506,7 @@ impl World {
                     continue; // target walked away before the swing landed
                 }
                 let tstats = target.stats;
+                let target_is_player = target.is_player();
                 if hit.raw {
                     // Blade Storm's second half: damage was settled already.
                     self.damage(tid, hit.attacker, hit.power, element::NONE, false);
@@ -673,6 +697,14 @@ impl World {
                     if !has_poison(&self.objects[&tid], poison_kind::MAGIC_WEAKNESS) {
                         power -= self.roll_range(tstats.min_mr, tstats.max_mr);
                     }
+                    let index = usize::from(hit.element).min(7);
+                    let attack = attacker_stats.element_attack[index];
+                    power += if target_is_player && attack > 0 {
+                        self.rng.random_range(0..=attack) * 2
+                    } else {
+                        attack * 2
+                    };
+                    power -= power * tstats.element_resist[index] / 10;
                 } else if lotus.is_none() && !hit.magics.contains(&magic_type::MASSACRE) {
                     let mut ac = self.roll_ac(tstats);
                     // Defensive Mastery: the defender rolls max AC by chance.
@@ -684,19 +716,33 @@ impl World {
                         ac = tstats.max_ac;
                     }
                     ac -= ac * resolution_pct / 100;
-                    power -= ac;
+                    power = (power - ac).max(0);
+                    let physical = tstats.element_resist[0];
+                    power -= power * physical / if physical > 0 { 10 } else { 5 };
+                    for index in 1..=7 {
+                        let attack = attacker_stats.element_attack[index];
+                        let resist = tstats.element_resist[index];
+                        power += attack;
+                        power -= attack * resist * if resist > 0 { 2 } else { 3 } / 10;
+                    }
                 }
                 if power <= 0 {
                     continue;
                 }
                 if attacker_is_player {
-                    // CriticalChance 1 (+ Concentration), CriticalDamage 0.
-                    let crit: i32 = 1 + self.objects[&hit.attacker]
-                        .player()
-                        .map(|p| p.buffs.iter().map(|b| b.stats.crit).sum::<i32>())
-                        .unwrap_or(0);
+                    let crit: i32 = attacker_stats.critical_chance
+                        + self.objects[&hit.attacker]
+                            .player()
+                            .map(|p| p.buffs.iter().map(|b| b.stats.crit).sum::<i32>())
+                            .unwrap_or(0);
                     if self.rng.random_range(0..100) < crit {
-                        power *= 2;
+                        if self.objects[&tid].is_player() {
+                            power = power.saturating_mul(13) / 10;
+                        } else {
+                            power = power.saturating_mul(
+                                200_i32.saturating_add(attacker_stats.critical_damage),
+                            ) / 100;
+                        }
                     }
                 }
                 // Blade Storm: half now, half 300 ms later.
@@ -720,7 +766,12 @@ impl World {
                     self.monster_hit_poison(hit.attacker, tid);
                 }
                 if dealt > 0 && attacker_is_player {
-                    self.melee_landed(hit.attacker, tid, dealt);
+                    self.melee_landed(
+                        hit.attacker,
+                        tid,
+                        dealt,
+                        hit.magics.contains(&magic_type::DRAGON_BLOOD),
+                    );
                 }
                 // Offensive Blow: shove the target Level + 3 cells; a
                 // successful shove also paralyses and silences for 3 s.
@@ -784,6 +835,19 @@ impl World {
     /// to poison with the monster's SC as value.
     pub(super) fn monster_hit_poison(&mut self, attacker: ObjectId, target: ObjectId) {
         let ai = self.data.monsters[&self.objects[&attacker].monster_ref().def].ai;
+        // Lord Ni Jae rolls paralysis separately from its green poison.
+        if matches!(ai, 13 | 77) && self.rng.random_range(0..10) == 0 {
+            self.apply_poison(
+                target,
+                Poison {
+                    kind: poison_kind::PARALYSIS,
+                    value: 0,
+                    ticks_left: 0,
+                    next_tick: self.now + 5000,
+                    owner: Some(attacker),
+                },
+            );
+        }
         let Some(hp) = self.ai_profile(ai).hit_poison else {
             return;
         };
@@ -791,7 +855,7 @@ impl World {
             return;
         }
         let stats = self.objects[&attacker].stats;
-        let value = self.roll_range(stats.min_sc, stats.max_sc);
+        let value = self.roll_lucky(stats.min_sc, stats.max_sc, stats.luck);
         let timed = !matches!(
             hp.kind,
             poison_kind::GREEN | poison_kind::RED | poison_kind::HELL_FIRE
@@ -830,6 +894,25 @@ impl World {
         elem: u8,
         magic: bool,
     ) -> i32 {
+        if self.objects[&attacker]
+            .monster()
+            .is_some_and(|m| m.owner.is_some())
+            && !self.monster_hostile_to(attacker, &self.objects[&target])
+        {
+            return 0;
+        }
+        if self.objects[&target]
+            .player()
+            .is_some_and(|p| p.gm_mode || p.superman || p.observer)
+        {
+            return 0;
+        }
+        if self.objects[&target]
+            .monster()
+            .is_some_and(|m| m.mirror_element.is_some() || m.room_door.is_some())
+        {
+            return 0;
+        }
         let now = self.now;
         // Monster class rules: untouchable guards and statues, 1-damage
         // trees, class-based mitigation.
@@ -871,6 +954,16 @@ impl World {
             Kind::Monster(m) => Some((self.data.monsters[&m.def].ai, m.hidden)),
             _ => None,
         }) {
+            if matches!(ai, 115 | 116)
+                && self.on_map(self.objects[&target].map).any(|o| {
+                    o.monster().is_some_and(|m| {
+                        let flag = self.data.monsters[&m.def].flag;
+                        flag == 191 || (ai == 115 && flag == 190)
+                    })
+                })
+            {
+                return 0;
+            }
             let prof = self.ai_profile(ai);
             if prof.invulnerable && (prof.guard || hidden || prof.hidden.is_none()) {
                 return 0;
@@ -902,8 +995,18 @@ impl World {
             if p.buffs.iter().any(|b| b.stats.invincible) {
                 return 0;
             }
-            let evasion: i32 = p.buffs.iter().map(|b| b.stats.evasion).sum();
-            if elem != element::NONE && evasion > 0 && self.rng.random_range(0..100) <= evasion {
+            let stats = self.objects[&target].stats;
+            let chance = if elem == element::NONE {
+                stats.block_chance
+            } else {
+                stats.evasion_chance + p.buffs.iter().map(|b| b.stats.evasion).sum::<i32>()
+            };
+            let sides = if self.objects[&attacker].player().is_some() {
+                200
+            } else {
+                100
+            };
+            if self.rng.random_range(0..sides) <= chance {
                 return 0;
             }
             let immunity = if elem == element::NONE {
@@ -1017,7 +1120,7 @@ impl World {
                 .unwrap_or(0);
             if judgement > 0 && self.rng.random_range(0..100) < judgement {
                 let ts = self.objects[&target].stats;
-                let bolt = self.roll_range(ts.min_mc, ts.max_mc) / 5;
+                let bolt = self.roll_lucky(ts.min_mc, ts.max_mc, ts.luck) / 5;
                 if bolt > 0 {
                     let aloc = self.objects[&attacker].location;
                     self.events.push((
@@ -1044,16 +1147,42 @@ impl World {
             }
         }
         let credit = self.objects[&attacker].side().unwrap_or(attacker);
-        // Idle pets of the attacker join in (Zircon `Pets[i].Target = ob`).
-        if self.objects[&target].is_monster() {
+        // Idle pets of the attacker join fights allowed by their current mode.
+        if self.objects[&target].is_monster() || self.objects[&target].is_player() {
             let pets: Vec<ObjectId> = self.objects[&attacker]
                 .player()
                 .map(|p| p.pets.clone())
                 .unwrap_or_default();
             for pet in pets {
+                if !self.objects.contains_key(&pet)
+                    || !self.monster_hostile_to(pet, &self.objects[&target])
+                {
+                    continue;
+                }
                 if let Some(m) = self.objects.get_mut(&pet).and_then(|o| o.monster_mut()) {
                     if m.target.is_none() {
                         m.target = Some(target);
+                    }
+                }
+            }
+        }
+        // Taoist summons also defend their owner after a hostile hit.
+        if self.objects[&target].is_player()
+            && (self.objects[&attacker].is_monster() || self.objects[&attacker].is_player())
+        {
+            let pets = self.objects[&target]
+                .player()
+                .map(|p| p.pets.clone())
+                .unwrap_or_default();
+            for pet in pets {
+                if !self.is_reactive_summon(pet)
+                    || !self.monster_hostile_to(pet, &self.objects[&attacker])
+                {
+                    continue;
+                }
+                if let Some(m) = self.objects.get_mut(&pet).and_then(|o| o.monster_mut()) {
+                    if m.target.is_none() {
+                        m.target = Some(attacker);
                     }
                 }
             }
@@ -1148,7 +1277,7 @@ impl World {
         if is_player {
             self.check_brown(attacker, target);
             if power > 0 {
-                self.frost_store(target, power);
+                self.frost_store(target, attacker, power);
                 self.channel_cancel(target);
             }
         }
@@ -1184,6 +1313,8 @@ impl World {
             let exp = m.experience / 2f64.powi(m.revives_left);
             (exp, m.exp_owner, m.spawn, m.owner, m.revives_left)
         };
+        // The reward owner may have disconnected before the monster died.
+        let owner = owner.filter(|owner| self.objects.contains_key(owner));
         if revives > 0 {
             // The ghost gets up again in 3-7 s; no drops until its last death.
             let revive_at = self.now + 3000 + self.rng.random_range(0..5000);
@@ -1194,7 +1325,7 @@ impl World {
             self.events.push((id, ServerMessage::ObjectDie { id }));
             if let Some(owner) = owner {
                 if self.objects.get(&owner).is_some_and(|o| !o.dead) {
-                    self.gain_experience(owner, exp as u64);
+                    self.gain_combat_experience(owner, exp as u64);
                 }
             }
             return;
@@ -1222,6 +1353,9 @@ impl World {
             // Zircon `YieldReward`: group members on the map within view
             // range share drops; the living ones split the experience
             // (+6% per member) by level.
+            let growth = self.data.monsters[&def]
+                .stat(stat::GROWTH_LEVEL)
+                .clamp(0, 3);
             let sharers = self.group_sharers(owner, map, loc);
             let alive: Vec<ObjectId> = sharers
                 .iter()
@@ -1231,7 +1365,8 @@ impl World {
             if alive.is_empty() {
                 let o = &self.objects[&owner];
                 if !o.dead && o.map == map && o.location.distance(loc) <= MAX_VIEW_RANGE {
-                    self.gain_experience(owner, exp as u64);
+                    self.gain_combat_experience(owner, exp as u64);
+                    self.gain_discipline_experience(owner, growth);
                 }
             } else {
                 let total: i64 = alive
@@ -1244,7 +1379,8 @@ impl World {
                 }
                 for m in alive {
                     let level = self.objects[&m].player().unwrap().level as f64;
-                    self.gain_experience(m, (shared * level / total.max(1) as f64) as u64);
+                    self.gain_combat_experience(m, (shared * level / total.max(1) as f64) as u64);
+                    self.gain_discipline_experience(m, growth);
                 }
             }
             self.quest_kill_progress(owner, def, map);
@@ -1258,6 +1394,15 @@ impl World {
             }
         } else {
             self.drop_loot(id, None, 1);
+        }
+        self.legacy_event_monster_died(id, owner);
+        self.world_event_boss_died(id, owner);
+        if self.needs_harvest(id) {
+            if let Some(m) = self.objects.get_mut(&id).and_then(|o| o.monster_mut()) {
+                if !m.harvest_drops.is_empty() {
+                    m.dead_time += super::harvest::HARVEST_DURATION;
+                }
+            }
         }
     }
 

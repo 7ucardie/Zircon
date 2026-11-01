@@ -107,7 +107,7 @@ pub fn decode(data: &[u8], width: u32, height: u32, dxt5: bool) -> Vec<u8> {
     let bw = width.div_ceil(4);
     let bh = height.div_ceil(4);
     let block_size = if dxt5 { 16 } else { 8 };
-    let mut out = vec![0u8; (width * height * 4) as usize];
+    let mut out = vec![0u8; width as usize * height as usize * 4];
     let mut pixels = [[0u8; 4]; 16];
     for by in 0..bh {
         for bx in 0..bw {

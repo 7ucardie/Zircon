@@ -42,6 +42,16 @@ impl Previews {
             .as_ref()
     }
 
+    pub fn begin_frame(&mut self) {
+        if self.textures.len() > 2048 {
+            self.textures.clear();
+        }
+    }
+
+    pub fn count(&mut self, id: u16) -> usize {
+        self.library(id).map(|l| l.len()).unwrap_or(0)
+    }
+
     /// Texture for one image, decoded once. Returns the handle and the
     /// unpadded sprite size.
     pub fn texture(&mut self, ctx: &egui::Context, lib: u16, index: u32) -> Option<Sprite> {
@@ -95,7 +105,7 @@ impl Previews {
 }
 
 /// Asset packs differ in file-name case (`Storeitems.Zl`); find the real path.
-fn resolve_case_insensitive(root: &Path, rel: &str) -> Option<PathBuf> {
+pub(crate) fn resolve_case_insensitive(root: &Path, rel: &str) -> Option<PathBuf> {
     let mut cur = root.to_path_buf();
     for part in rel.split('/') {
         let direct = cur.join(part);

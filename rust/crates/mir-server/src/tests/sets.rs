@@ -80,6 +80,16 @@ fn equip(bag: &mut Bag, slot: usize, info: i32) {
         max_durability: 100,
         added: Vec::new(),
         level: 0,
+        refinable: false,
+        non_refinable: false,
+        bound: false,
+        worthless: false,
+        locked: false,
+        special_repair_until: 0,
+        weapon_experience_tenths: 0,
+        accessory_experience: 0,
+        colour: 0,
+        expires_at: None,
     });
 }
 

@@ -27,6 +27,9 @@ impl World {
         if self.gate_blocks_cell(map, p) {
             return true;
         }
+        if self.room_door_blocks_cell(map, p) {
+            return true;
+        }
         m.objects_at(p).iter().any(|id| {
             let o = &self.objects[id];
             o.blocking() && !(grace && o.cell_time > self.now)
@@ -44,6 +47,23 @@ impl World {
         m.add_to_cell(id, to);
         if self.objects[&id].player().is_some() {
             self.refresh_safe_zone(id);
+            self.npc_session(id);
+        }
+        // Fire walls burn on entry as well as on their independent two-second ticks.
+        if from != to {
+            let walls: Vec<_> = self.maps[&map]
+                .objects_at(to)
+                .iter()
+                .filter_map(|sid| match &self.objects[sid].kind {
+                    Kind::Spell(s) if s.effect == spell_effect::FIRE_WALL => {
+                        Some((s.owner, s.magic))
+                    }
+                    _ => None,
+                })
+                .collect();
+            for (owner, magic) in walls {
+                self.firewall_hit(owner, id, magic);
+            }
         }
     }
 
@@ -53,7 +73,7 @@ impl World {
         let Some(o) = self.objects.get_mut(&id) else {
             return;
         };
-        if o.dead || self.now < o.action_time {
+        if o.dead || paralysed(o) || self.now < o.action_time {
             let (loc, dir) = (o.location, o.direction);
             self.send_to(
                 id,
@@ -85,9 +105,10 @@ impl World {
             (true, false) => 2,
             _ => 1,
         };
-        let ok = !o.dead && self.now >= o.action_time && self.now >= o.move_time && {
-            (1..=distance).all(|i| !self.cell_blocked(map, from.step(direction, i), true))
-        };
+        let ok =
+            !o.dead && !paralysed(o) && self.now >= o.action_time && self.now >= o.move_time && {
+                (1..=distance).all(|i| !self.cell_blocked(map, from.step(direction, i), true))
+            };
         if !ok {
             let dir = o.direction;
             self.send_to(

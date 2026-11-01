@@ -1,6 +1,6 @@
 [package]
 name = "mir-client"
-description = "Game client for the Rust Zircon game (winit + wgpu)"
+description = "Game client for ZirconRust (winit + wgpu)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -21,3 +21,8 @@ pollster = "0.4"
 guillotiere = "0.7"
 png = "0.18"
 rodio = { version = "0.22", default-features = false, features = ["wav", "playback"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.4"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSApplication", "NSImage", "NSResponder"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSData"] }

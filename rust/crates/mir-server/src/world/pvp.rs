@@ -4,7 +4,7 @@
 //! the name turns red and guards attack.
 
 use super::*;
-use mir_proto::{attack_mode, ChatKind};
+use mir_proto::{attack_mode, pet_mode, ChatKind};
 
 /// Zircon `Config.RedPoint`, `BrownDuration`, `PKPointRate`, `PKPointTickRate`.
 pub const RED_POINT: i32 = 200;
@@ -47,6 +47,17 @@ impl World {
         };
         p.attack_mode = mode;
         self.send_to(id, ServerMessage::AttackMode { mode });
+    }
+
+    pub fn set_pet_mode(&mut self, id: ObjectId, mode: u8) {
+        if mode > pet_mode::NONE {
+            return;
+        }
+        let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
+            return;
+        };
+        p.pet_mode = mode;
+        self.send_to(id, ServerMessage::PetMode { mode });
     }
 
     /// Recompute `Object.in_safe_zone` after a move or map change.

@@ -12,7 +12,11 @@
 pub mod dxt;
 pub mod map;
 pub mod mirdb;
+pub mod monster_animation;
 pub mod monster_table;
+pub mod navigation;
+pub mod room_door;
+pub mod wearable_animation;
 pub mod zl;
 
 pub use map::MapFile;
@@ -191,7 +195,7 @@ pub fn save_with_backup(
     let backup = if path.exists() {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
+            .map(|d| d.as_nanos())
             .unwrap_or(0);
         let name = format!(
             "{}.bak-{stamp}",

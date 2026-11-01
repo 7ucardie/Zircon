@@ -4,6 +4,9 @@
 //! mir-server [--assets DIR] [--db FILE] [--port N] [--map FILE] [--inspect]
 //!   ZIRCON_ASSETS  client root containing Map/ (default ~/zircon-assets/Client)
 //!   ZIRCON_DB      System.db path (default <assets>/../Database/System.db)
+//!   ZIRCON_DROP_SPECIALS  1 enables random +1 stats on equipment drops (default 0)
+//!   ZIRCON_EXPERIENCE_MULTIPLIER  positive XP rate (default 1)
+//!   ZIRCON_INVENTORY_TAB_PRICE / ZIRCON_STORAGE_TAB_PRICE  Game Gold (100 / 200)
 //! ```
 
 use std::collections::HashMap;
@@ -23,6 +26,9 @@ use tracing_subscriber::EnvFilter;
 use mir_server::data::GameData;
 use mir_server::net::{self, Inbound};
 use mir_server::world::{ConnId, Outgoing, World};
+
+mod gm_admin;
+mod stripe_grant;
 
 const TICK: Duration = Duration::from_millis(50);
 
@@ -94,7 +100,46 @@ fn main() -> anyhow::Result<()> {
         base_stats = data.base_stats.len(),
         "game data loaded"
     );
-    let mut world = World::new(data, args.assets.join("Map"), args.map.clone());
+    let map_dir = std::env::var_os("ZIRCON_MAP_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| args.assets.join("Map"));
+    let mut world = World::new(data, map_dir, args.map.clone());
+    world.drop_specials = match std::env::var("ZIRCON_DROP_SPECIALS") {
+        Ok(value) if value == "1" => true,
+        Ok(value) if value == "0" => false,
+        Ok(value) => anyhow::bail!("ZIRCON_DROP_SPECIALS must be 0 or 1, got {value}"),
+        Err(std::env::VarError::NotPresent) => false,
+        Err(error) => return Err(error.into()),
+    };
+    let xp_rate = match std::env::var("ZIRCON_EXPERIENCE_MULTIPLIER") {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => "1".into(),
+        Err(error) => return Err(error.into()),
+    };
+    world.experience_multiplier = xp_rate
+        .parse::<f64>()
+        .ok()
+        .filter(|rate| rate.is_finite() && *rate > 0.0)
+        .ok_or_else(|| {
+            anyhow::anyhow!("ZIRCON_EXPERIENCE_MULTIPLIER must be positive and finite")
+        })?;
+    for (name, price) in [
+        ("ZIRCON_INVENTORY_TAB_PRICE", &mut world.inventory_tab_price),
+        ("ZIRCON_STORAGE_TAB_PRICE", &mut world.storage_tab_price),
+    ] {
+        if let Ok(value) = std::env::var(name) {
+            *price = value
+                .parse()
+                .ok()
+                .filter(|value| *value > 0)
+                .ok_or_else(|| anyhow::anyhow!("{name} must be a positive integer"))?;
+        }
+    }
+    tracing::info!(
+        drop_specials = world.drop_specials,
+        experience_multiplier = world.experience_multiplier,
+        "server rates"
+    );
     world.set_store_dir(&args.data);
 
     if args.inspect {
@@ -147,6 +192,10 @@ fn main() -> anyhow::Result<()> {
     });
 
     let mut accounts = Accounts::load(args.data.join("accounts.json"))?;
+    let (payment_tx, mut payment_rx) = mpsc::unbounded_channel();
+    if let Ok(secret) = std::env::var("ZIRCON_STRIPE_GRANT_SECRET") {
+        stripe_grant::listen(secret, payment_tx)?;
+    }
     let mut sessions = Sessions {
         conns: HashMap::new(),
         state: HashMap::new(),
@@ -184,6 +233,10 @@ fn main() -> anyhow::Result<()> {
                 ev => handle_inbound(&mut world, &mut accounts, &mut sessions, ev),
             }
         }
+        while let Ok(payment) = payment_rx.try_recv() {
+            let result = stripe_grant::apply(&mut world, &mut accounts, &sessions, payment.grant);
+            let _ = payment.response.send(result);
+        }
         for character in world.take_divorced() {
             accounts.clear_partner(character);
         }
@@ -194,8 +247,10 @@ fn main() -> anyhow::Result<()> {
             let stale: Vec<ConnId> = sessions
                 .since
                 .iter()
-                .filter(|(c, t)| {
-                    matches!(sessions.state.get(c), Some(Stage::New)) && t.elapsed() > HELLO_TIMEOUT
+                .filter(|(c, t)| match sessions.state.get(c) {
+                    Some(Stage::New) => t.elapsed() > HELLO_TIMEOUT,
+                    Some(Stage::Connected) => t.elapsed() > LOGIN_TIMEOUT,
+                    _ => false,
                 })
                 .map(|(c, _)| *c)
                 .collect();
@@ -246,6 +301,9 @@ const SAVE_INTERVAL: Duration = Duration::from_secs(30);
 const MAX_MESSAGES_PER_TICK: u32 = 50;
 /// A connection must send `Hello` within this long.
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+/// Said hello but never logged in: the slot goes back to the gate so idle
+/// unauthenticated sockets cannot hold all `MAX_CONNECTIONS`.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 const DB_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 fn db_modified(path: &PathBuf) -> Option<std::time::SystemTime> {
@@ -419,12 +477,18 @@ fn valid(msg: &ClientMessage) -> bool {
                 && message.len() <= 1200
                 && items.len() <= 5
         }
-        ClientMessage::FriendAdd { name } | ClientMessage::BlockAdd { name } => name.len() <= NAME,
-        ClientMessage::NpcSell { slots } => slots.len() <= 64,
+        ClientMessage::FriendAdd { name }
+        | ClientMessage::BlockAdd { name }
+        | ClientMessage::NameChange { name } => name.len() <= NAME,
+        ClientMessage::NpcSell { items } => items.len() <= 64,
+        ClientMessage::NpcRepair { items, .. } => items.len() <= 55,
         // Zircon caps the seller's note at 150 characters; the name box is
         // an item name, so the same limit as a character name is plenty.
         ClientMessage::MarketConsign { message, .. } => message.len() <= 600,
         ClientMessage::MarketSearch { name, .. } => name.len() <= 128,
+        // One purchase can never exceed a stack, and the server clamps it
+        // anyway; this only keeps a silly number off the wire.
+        ClientMessage::MarketStoreBuy { count, .. } => *count <= 10_000,
         _ => true,
     }
 }
@@ -594,11 +658,15 @@ fn handle_message(
             match world.add_player(conn, account, &rec) {
                 Ok(object) => {
                     tracing::info!(conn, account, name = rec.name, ?object, "entered world");
+                    if let Some(acc) = accounts.account(account) {
+                        world.set_chat_bans(object, acc.chat_ban_until, acc.global_ban_until);
+                    }
                     let (storage, size) = accounts
                         .account(account)
                         .map(|a| (a.storage.clone(), a.storage_size))
                         .unwrap_or_default();
                     world.set_storage(object, &storage, size);
+                    world.send_tab_prices(object);
                     let (drops, fortunes) = accounts
                         .account(account)
                         .map(|a| (a.drops.clone(), a.fortunes.clone()))
@@ -645,6 +713,9 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::Move { direction, run }) => {
             world.player_move(object, direction, run)
         }
+        (Stage::InGame { object, .. }, ClientMessage::RoomDoorToggle { id }) => {
+            world.player_toggle_room_door(object, id)
+        }
         (
             Stage::InGame { object, .. },
             ClientMessage::Attack {
@@ -683,11 +754,37 @@ fn handle_message(
             world.belt_link(object, slot, info, item)
         }
         (Stage::InGame { object, .. }, ClientMessage::TownRevive) => world.town_revive(object),
+        (Stage::InGame { object, .. }, ClientMessage::ItemLock { grid, slot, locked }) => {
+            world.item_lock(object, grid, slot, locked)
+        }
         (Stage::InGame { object, .. }, ClientMessage::ItemDrop { slot, count }) => {
             world.item_drop(object, slot, count)
         }
+        (
+            Stage::InGame {
+                account,
+                character,
+                object,
+            },
+            ClientMessage::BuyTab { storage },
+        ) => {
+            if world.buy_tab(object, storage) {
+                if let Some(rec) = accounts.character_mut(account, character) {
+                    world.snapshot(object, rec);
+                    accounts.mark_dirty();
+                }
+                save_storage(world, accounts, account, object);
+                if let Err(error) = accounts.save_if_dirty() {
+                    tracing::error!("saving tab purchase failed: {error:#}");
+                }
+            }
+        }
         (Stage::InGame { object, .. }, ClientMessage::PickUp) => world.pick_up(object),
-        (Stage::InGame { object, .. }, ClientMessage::Chat { text }) => world.chat(object, text),
+        (Stage::InGame { object, .. }, ClientMessage::Chat { text }) => {
+            if !gm_admin::handle(world, accounts, sessions, conn, object, &text) {
+                world.chat(object, text);
+            }
+        }
         (Stage::InGame { object, .. }, ClientMessage::GroupSwitch { allow }) => {
             world.group_switch(object, allow)
         }
@@ -703,6 +800,12 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::AttackMode { mode }) => {
             world.set_attack_mode(object, mode)
         }
+        (Stage::InGame { object, .. }, ClientMessage::PetMode { mode }) => {
+            world.set_pet_mode(object, mode)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::Wardrobe { slot, item }) => {
+            world.set_wardrobe_slot(object, slot as usize, item)
+        }
         (
             Stage::InGame { object, .. },
             ClientMessage::FishingCast {
@@ -714,6 +817,9 @@ fn handle_message(
         ) => world.fishing_cast(object, state, direction, float, caught),
         (Stage::InGame { object, .. }, ClientMessage::Mining { direction }) => {
             world.mining(object, direction)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::Harvest { direction }) => {
+            world.harvest(object, direction)
         }
         (Stage::InGame { object, .. }, ClientMessage::GuildCreate { name, members }) => {
             world.guild_create(object, name, members)
@@ -773,6 +879,38 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::MailOpened { index }) => {
             world.mail_opened(object, index)
         }
+        (Stage::InGame { object, .. }, ClientMessage::HairChange { hair, colour }) => {
+            world.hair_change(object, hair, colour)
+        }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::GenderChange {
+                gender,
+                hair,
+                colour,
+            },
+        ) => world.gender_change(object, gender, hair, colour),
+        (Stage::InGame { object, .. }, ClientMessage::ArmourDye { colour }) => {
+            world.armour_dye(object, colour)
+        }
+        (
+            Stage::InGame {
+                object,
+                account,
+                character,
+            },
+            ClientMessage::NameChange { name },
+        ) => {
+            let holder = accounts.find_character_full(&name);
+            world.name_change(object, name, holder);
+            if let Some(rec) = accounts.character_mut(account, character) {
+                world.snapshot(object, rec);
+                accounts.mark_dirty();
+            }
+        }
+        (Stage::InGame { object, .. }, ClientMessage::IncreaseDiscipline) => {
+            world.increase_discipline(object)
+        }
         (Stage::InGame { object, .. }, ClientMessage::FriendAdd { name }) => {
             let who = accounts.find_character_full(&name);
             world.friend_add(object, who, name)
@@ -800,19 +938,17 @@ fn handle_message(
         ) => {
             // The roster lives in the account store, not the world, because
             // offline characters rank too.
-            let rows = accounts
+            world.rank_request(object, ranking_rows(accounts), class, online_only, start)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::RankSearch { name }) => {
+            world.rank_search(object, ranking_rows(accounts), &name)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::RankInspect { character }) => {
+            let record = accounts
                 .all_characters()
-                .map(|c| mir_server::world::ranking::RankRow {
-                    character: c.id,
-                    name: c.name.clone(),
-                    class: c.class,
-                    level: c.level,
-                    experience: c.experience,
-                    max_experience: mir_server::data::GameData::max_experience(c.level),
-                    rebirth: c.rebirth,
-                })
-                .collect();
-            world.rank_request(object, rows, class, online_only, start)
+                .find(|row| row.id == character)
+                .cloned();
+            world.rank_inspect(object, record)
         }
         (
             Stage::InGame { object, .. },
@@ -840,6 +976,23 @@ fn handle_message(
         }
         (
             Stage::InGame { object, .. },
+            ClientMessage::MarketStoreBuy {
+                index,
+                count,
+                hunt_gold,
+            },
+        ) => {
+            let highest = world
+                .objects
+                .get(&object)
+                .and_then(|o| o.player())
+                .and_then(|p| accounts.account(p.account))
+                .map(|a| a.characters.iter().map(|c| c.level).max().unwrap_or(0))
+                .unwrap_or(0);
+            world.store_buy_for_account(object, index, count, hunt_gold, highest);
+        }
+        (
+            Stage::InGame { object, .. },
             ClientMessage::NpcRefine {
                 refine_type,
                 quality,
@@ -848,9 +1001,41 @@ fn handle_message(
                 specials,
             },
         ) => world.npc_refine(object, refine_type, quality, ores, items, specials),
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::NpcWeaponCraft {
+                base,
+                materials,
+                class,
+            },
+        ) => {
+            world.npc_weapon_craft(object, base, materials, class);
+        }
         (Stage::InGame { object, .. }, ClientMessage::NpcRefineRetrieve { index }) => {
             world.npc_refine_retrieve(object, index)
         }
+        (Stage::InGame { object, .. }, ClientMessage::NpcAccessoryLevel { target, materials }) => {
+            world.npc_accessory_level(object, target, materials)
+        }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::NpcAccessoryUpgrade {
+                target,
+                refine_type,
+            },
+        ) => world.npc_accessory_upgrade(object, target, refine_type),
+        (Stage::InGame { object, .. }, ClientMessage::NpcAccessoryReset { target }) => {
+            world.npc_accessory_reset(object, target)
+        }
+        (
+            Stage::InGame { object, .. },
+            ClientMessage::NpcAccessoryRefine {
+                target,
+                ore,
+                materials,
+                refine_type,
+            },
+        ) => world.npc_accessory_refine(object, target, ore, materials, refine_type),
         (Stage::InGame { object, .. }, ClientMessage::CompanionUnlock { index }) => {
             world.companion_unlock(object, index)
         }
@@ -868,6 +1053,24 @@ fn handle_message(
         }
         (Stage::InGame { object, .. }, ClientMessage::CompanionBagTake { index, slot }) => {
             world.companion_bag_take(object, index, slot)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::PickUpItem { id }) => {
+            world.pick_up_item(object, id)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionBagEquip { slot }) => {
+            world.companion_bag_equip(object, slot)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionBagUnequip) => {
+            world.companion_bag_unequip(object)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionFoodEquip { slot }) => {
+            world.companion_food_equip(object, slot)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionFoodTake) => {
+            world.companion_food_take(object)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::CompanionSkillToggle { level }) => {
+            world.companion_skill_toggle(object, level)
         }
         (Stage::InGame { object, .. }, ClientMessage::MailGetItem { index, slot }) => {
             world.mail_get_item(object, index, slot)
@@ -904,8 +1107,11 @@ fn handle_message(
         (Stage::InGame { object, .. }, ClientMessage::NpcBuy { info, count }) => {
             world.npc_buy(object, info, count)
         }
-        (Stage::InGame { object, .. }, ClientMessage::NpcSell { slots }) => {
-            world.npc_sell(object, slots)
+        (Stage::InGame { object, .. }, ClientMessage::NpcSell { items }) => {
+            world.npc_sell(object, items)
+        }
+        (Stage::InGame { object, .. }, ClientMessage::NpcRepair { items, special }) => {
+            world.npc_repair(object, items, special)
         }
         (Stage::InGame { object, .. }, ClientMessage::NpcClose) => world.npc_close(object),
         (Stage::InGame { object, .. }, ClientMessage::FortuneCheck { item }) => {
@@ -930,6 +1136,21 @@ fn handle_message(
 }
 
 /// Print what a new warrior would get, then exit. Useful without a client.
+fn ranking_rows(accounts: &Accounts) -> Vec<mir_server::world::ranking::RankRow> {
+    accounts
+        .all_characters()
+        .map(|c| mir_server::world::ranking::RankRow {
+            character: c.id,
+            name: c.name.clone(),
+            class: c.class,
+            level: c.level,
+            experience: c.experience,
+            max_experience: GameData::max_experience(c.level),
+            rebirth: c.rebirth,
+        })
+        .collect()
+}
+
 fn inspect(world: &mut World) -> anyhow::Result<()> {
     let id = world.add_player(0, 0, &test_character("Inspector"))?;
     let o = &world.objects[&id];

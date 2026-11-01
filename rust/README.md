@@ -1,4 +1,4 @@
-# Zircon in Rust
+# ZirconRust
 
 A purpose-built Rust client and server for Legend of Mir 3, reading the
 original Zircon assets (`.Zl` sprite libraries, `.map` maps, `System.db`).
@@ -26,6 +26,20 @@ Not in the repository. Extract the Zircon client package and database so that:
 
 Override the location with `ZIRCON_ASSETS=/path/to/Client` (and `ZIRCON_DB`).
 
+Server startup rates: `ZIRCON_DROP_SPECIALS=1` enables a 1-in-15 chance
+(1-in-30 for non-common equipment) to roll added stats on dropped weapons,
+armour, shields, helmets, jewellery, or shoes, including signed elemental
+resistances. Default is `0` (off).
+`ZIRCON_EXPERIENCE_MULTIPLIER=2` doubles all earned experience; default is `1`.
+Set both before starting the server. Invalid values stop startup.
+The Inventory and Storage windows can each unlock one extra tab with Game Gold.
+The default costs are 100 and 200 Game Gold respectively; set
+`ZIRCON_INVENTORY_TAB_PRICE` and `ZIRCON_STORAGE_TAB_PRICE` to positive integers
+before server startup to change them. Inventory tabs belong to the character;
+storage tabs belong to the account. A local, Stripe test-mode checkout can
+credit Game Gold; see [Stripe test checkout](docs/STRIPE_TEST_CHECKOUT.md).
+Live checkout remains disabled pending merchant and production work.
+
 ## Run
 
 ```
@@ -34,10 +48,19 @@ cargo run -p mir-server              # listens on 0.0.0.0:7000
 cargo run -p mir-client              # connects to 127.0.0.1:7000
 ```
 
+On macOS, `./scripts/build_mac_app.sh` builds `target/debug/ZirconRust.app` with a
+Finder/Dock icon; open that app to play without a terminal. Pass `--release`
+for `target/release/ZirconRust.app`. Resize the window freely, or start with
+`cargo run -p mir-client -- --size 1920x1080` (also accepts ultrawide sizes).
+Set `ZIRCON_WINDOW_SIZE=1920x1080` to size the app when launched from Finder.
+
 The client opens on the login screen: create an account, log in, create a
 character (class, gender, hair) and start the game. Accounts and characters
 are stored by the server in `data/accounts.json` (Argon2 password hashes),
 override the directory with `--data DIR` or `ZIRCON_DATA`.
+
+For a public Linux VPS, see the [OVHcloud deployment guide](docs/OVHCLOUD_DEPLOY.md)
+for single-host scripts and a three-host manual-failover setup.
 
 Controls in the world: hold left mouse to walk, right mouse to run, click an
 adjacent monster to attack, click an NPC to talk (you walk over), click a
@@ -47,13 +70,19 @@ and, with nothing open, asks whether to leave. In the bag, right-click uses or e
 (or sells it while a shop is open); in the character window right-click
 unequips. Helmets and shields show on the character. The belt above the HUD
 (toggle with `Z`) has ten slots on keys `1`-`9` and `0`: pick up a bag item
-and click a slot (or hover the item and press the key) to link it, press the
-key or right-click the slot to use it, left-click a linked slot to clear it.
+and click a slot (or hover the item and press the key) to link it. Press a
+number key twice within 450 ms, or left-click the belt slot once, to use it;
+right-click a linked slot to clear it. Modified number keys never use belt
+items.
 Potions heal at once and every consumable starts the item cooldown shown on
 the belt (Zircon's `Durability` in ms, 250 ms floor). Shop lists scroll with
 the wheel. When you die a Revive button returns you to town at once; the
 server forces it after ten minutes. The backquote key toggles the debug line,
-`F12` saves a screenshot.
+`Ctrl+Alt+S` saves a screenshot. `F1`–`F12` bind or cast skills; on macOS,
+`Cmd` or `Option` with `1`–`0`, `-`, and `=` uses the same twelve slots.
+You can also click a spell-bar icon to cast it.
+Heals, shields, buffs and summons can be cast while walking or running, but
+casting remains blocked while mounted.
 
 The minimap sits under the buff icons in the top-right corner and draws
 `MapInfo.MiniMap` from the `MiniMap` library, the same image Zircon uses, so
@@ -65,8 +94,11 @@ full size, centred on screen and titled with the map name, closed again by
 `X`, `Esc` or its close button. Both windows dot everything you can see:
 you in lime with a white pip, group mates lime, your partner pink, guild
 mates sky blue, other players white, monsters red, your own pets orange and
-NPCs yellow. A map whose `MiniMap` column is 0 ships no image, and the
-window then says so instead of drawing one.
+NPCs yellow. If `MiniMap` is 0 or its image is unavailable, both windows show
+a walkability overview at two pixels per cell. This includes generated maps
+and editor Test walk sessions. Floor is tan, blocked terrain is dark, and
+the usual object dots track your position and nearby creatures. The overview
+is cached when the map loads and discarded when leaving it.
 
 Chat follows Zircon's prefixes: `Enter` opens the chat bar, `Enter` sends
 and `Esc` closes it. Plain text talks to players in view range (with a
@@ -77,6 +109,38 @@ Typing `/`, `!` or `@` with the bar closed opens it with that prefix
 already in place, and `/` on its own reuses the last name you whispered
 (Zircon's `LastPM`); the arrow keys walk back through the lines you have
 sent, and the target of the line being typed is shown beside the bar.
+Characters with a saved server-side GM grant can type `@help` for the 33
+classic admin commands. `@move map-file [x y]` travels between maps;
+`@move x y` moves on the current map, and `@monster name [count]` spawns mobs
+(`@spawn` is an alias). `@moblocation <id or name>` lists live monster
+coordinates on loaded maps, plus saved spawn maps and area sizes. Event-only
+spawns are marked. Its `@move` examples land beside live monsters or safely
+on a spawn map. Account commands include `@ban`, `@chatban`, `@globalban`
+and `@kick`. The command grant is checked on the server; a
+client cannot grant itself GM access. On Rust, `@reboot` performs the
+classic affected-listing cleanup, `@gcollect` is unnecessary, and
+`@clearipblocks` reports that no persistent IP block list exists. Game Gold
+is currently stored per character, so its GM commands follow that model.
+Item IDs, types, and inventory sprite indices from the installed database are in
+[docs/item_ids.csv](docs/item_ids.csv). The atlas exporter below regenerates it
+with item pictures.
+Character levels reach 1000. Beyond the source experience table's level 100,
+each level adds the table's final 12-trillion XP step. Beyond the database's
+level-90 base stats, HP and MP follow the final ten-level trend; each class's
+primary maximum attack stat also gains one point per level.
+Monster IDs, levels and boss flags are in [docs/monster_ids.csv](docs/monster_ids.csv).
+Regenerate with `cargo run -q -p mir-server --example monster_ids -- /path/to/System.db > docs/monster_ids.csv`.
+
+World boss hunts rotate every two UTC hours through five event-only boss
+respawns linked by the installed database's legacy `EventInfo`, `EventTarget`
+and `EventAction` rows. Defeat the announced boss before the slot ends for
+normal boss drops and 100,000 Gold per nearby living group member. Type
+`@event` as any player for the current map, location and time remaining.
+Completed slots and pending Gold grants persist in `world_event.json` under
+the server data directory. A character's paid-slot marker saves with Gold in
+`accounts.json`, so a restart replays only unpaid grants. An unfinished hunt
+resumes with a new boss location after restart. This
+short hunt uses the source bosses, not the old multi-stage seal counters.
 
 The log above the bar is Zircon's `ChatTab`: it keeps 250 lines, wraps
 them to the panel, scrolls with the wheel, and has tabs (All, Local,
@@ -120,6 +184,9 @@ according to the mode. Hitting an innocent player turns your name brown
 for a minute; killing one adds 50 PK points (yellow name at 50, red at
 200, one point fades per minute) and red names are attacked by guards.
 See `docs/research/pvp.md` for what the C# does beyond that.
+Pet modes cycle with `Ctrl+A`: Move + Attack, Move, Attack, PvP, None. The
+active attack and pet modes appear above the HUD and the pet choice is saved
+with the character.
 
 Guilds (`G`) follow Zircon's `PlayerObject.Social`: founding one costs
 7,500,000 gold plus 1,000,000 per member slot (the window buys ten) and
@@ -199,12 +266,23 @@ durability, spell power or an element) and a quality (Rush to Precise,
 waiting one minute to one day), right-click black iron ore (up to five),
 common jewellery (three) and a refine special (one) in the bag to add them,
 and press Refine to pay 50,000 gold and send the equipped weapon into the
-furnace. The chance is 60% minus 5% per previous refine, plus 1% per 2,000
+furnace. The chance is 60% minus 5% per weapon level, plus 1% per 2,000
 ore durability and per 6 jewellery levels and 25% per superior item, under
 a ceiling of 90% adjusted by quality. A RefineRetrieve page lists the
-weapons and hands them back once ready: a success adds the stat (shown in
-the tooltip as refined) and a level, a failure returns the weapon as it
-was. Pending refines persist with the character.
+weapons and hands them back once ready: a success adds a bonus tagged with
+the Refine source. Both outcomes clear readiness. Combat experience advances
+weapon level and unlocks the next refine using C#'s weapon experience table;
+quests and experience consumables also advance it. Pickaxes and permanently
+non-refinable weapons do not gain this progress. The tooltip and Refine
+button reflect readiness. Pending refines persist with the character. Oil Of
+Benediction raises or lowers equipped weapon Luck using Zircon's original
+rates (or consumes the oil with no change). Accessory pages now support
+combining matching rings, bracelets and necklaces for experience; upgrading
+ready accessories; resetting Refine-source stats for 1,000,000 gold; and
+Corundum refining for 50,000 gold. Corundum refining can destroy the target.
+Right-click bag items to select them in each accessory page. The supplied
+asset database has no Corundum-specific NPC page, so that action also appears
+on the existing accessory upgrade page.
 
 Companions come from a CompanionManage page (`docs/research/refining-
 companions.md`): adopt one of the `CompanionInfo` looks for its price with
@@ -216,7 +294,10 @@ falls behind, and picks up your own drops within eight cells into its bag
 a minute and levels up, and it loses one hunger a minute outside safe
 zones, refusing to gather when starving until fed with a consumable that
 has the companion hunger stat. `U` opens the companion window with its
-level, hunger and bag; Take moves an item into yours.
+level, hunger and bag; Take moves an item into yours. Companions earn skill
+bonuses at levels 3, 5, 7, 10, 11, 13 and 15. Arm a learned level in that
+window or type `@EnableLevelN`, then use the matching Elixir Of Regret to
+reroll it. The safety toggle resets on login; the new bonus persists.
 
 What exists in the world: real spawns with Zircon's drop tables (1 in N per
 row), ground items that only the killer can take for two minutes, gold, the
@@ -224,7 +305,7 @@ row), ground items that only the killer can take for two minutes, gold, the
 prices, and every map exit from `MovementInfo` (with level requirements).
 
 Skills: learn them from books (right-click in the bag), open the skill window
-with `E`, hover a skill and press `F1`-`F11` to bind it, then press the key to
+with `E`, hover a skill and press `F1`-`F12` to bind it, then press the key to
 cast. Implemented with Zircon's power, cost, cooldown, skill-experience rules
 and the original effect sprites:
 
@@ -333,11 +414,8 @@ warrior if needed; `ZIRCON_OPEN_CREATE=1` opens the character creation dialog;
 `ZIRCON_OPEN_WINDOWS=1` opens the bag and character windows on entry;
 `ZIRCON_OPEN=storage,group,guild,mail,quests,inventory,character,skills,`
 `companion,menu,help,exit,currency,autopotion,dropfilter,bigmap,nominimap,`
-`ranking,friends,blocked,market,marketconsign`
-opens any set of windows; server side `ZIRCON_DAY_TIME=0.1` pins the
-
-`fortune,chatoptions`
-opens any set of windows; `ZIRCON_DEV_SEARCH=<text>` prefills the fortune
+`ranking,friends,blocked,market,marketconsign,marketstore,fortune,chatoptions,characterservices`
+opens any set of windows. `ZIRCON_DEV_SEARCH=<text>` prefills the fortune
 window's search box so a screenshot has rows; server side
 `ZIRCON_DEV_TIMER=<seconds>` starts a HUD countdown on entry and
 `ZIRCON_DEV_FORTUNES=<n>` pre-checks the first `n` droppable items with
@@ -391,10 +469,15 @@ its key. Zircon's cash shop button (index 122, `GameStore`) has no window
 here, so it is not drawn.
 
 `N` or the last icon opens the menu (Zircon's `MenuDialog`): Help, Guild,
-Storage, Companion, Currency, Auto potion, Drop filter and Leave game.
-Zircon's Settings and Ranking rows are missing because neither window
-exists yet; Currency, Auto potion and Drop filter are reached from the menu
-here rather than from the places the C# client puts them.
+Storage, Companion, Currency, Ranking, Settings, Auto potion, Drop filter and
+Leave game. Settings persists five sound-channel levels and mute beside the
+client executable in `client-settings.json`; active audio updates immediately.
+`ZIRCON_MUTE` and `ZIRCON_VOLUME` remain explicit environment overrides.
+Settings also offers resolution presets from 800x600 to 3840x2160. A new size
+applies immediately; Save keeps it for the next launch. `--size` and
+`ZIRCON_WINDOW_SIZE` override the saved size.
+Currency, Auto potion and Drop filter are reached from the menu here rather
+than from the places the C# client puts them.
 
 `H` opens the key list (Zircon binds `H` to `HelpWindow`; `F1` is a spell
 key in this client, as it is in Zircon). The list is built from the real
@@ -412,10 +495,13 @@ short for it. The client now follows Zircon's `KeyBindAction` defaults:
 | `N` `H` `A` | menu, help, auto potion |
 | `M` `T` | mount or dismount, ask to trade |
 | `Ctrl+H` | attack mode |
+| `Ctrl+A` | pet mode |
 | `Alt+Q` | leave the game |
 | `Tab` | pick up |
-| `1`-`9` `0` | use a belt slot |
-| `F1`-`F11` | cast a skill |
+| `B` | harvest a nearby corpse (or hold left mouse over an adjacent corpse) |
+| `D` | character appearance changes and discipline training |
+| `1`-`9` `0` twice | use a belt slot |
+| `F1`-`F12` | cast a skill (Mac: `Cmd` or `Option` with `1`-`0`, `-`, `=`) |
 
 `Alt+Q`, the menu's Leave game row, or `Esc` with nothing open asks the
 question Zircon's `ExitDialog` asks: Character list logs out to the
@@ -460,8 +546,8 @@ screenshotted without a second account.
 ### Market place
 
 `C` opens the market place (Zircon `MarketPlaceDialog`, which binds the same
-key), also reachable from the menu. It has the two tabs of the player auction
-house:
+key), also reachable from the menu. It has three tabs: two for the player
+auction house, and the Store.
 
 - **Search** browses everything on sale, nine rows a page like Zircon, with a
   name box, an item-type filter and a sort (newest, oldest, highest price,
@@ -487,15 +573,58 @@ they are in a safe zone with room, and by mail otherwise, so a full bag never
 eats a purchase. Listings live in `market.json` beside `mail.json` and
 `guilds.json`, and a part-bought listing shrinks rather than vanishing.
 
-Zircon's third tab, the game-gold Store (`MarketPlaceStoreBuy`, game gold and
-hunt gold), is a cash shop rather than part of the auction house and is not
-built.
+### The Store tab
+
+The third tab is the in-game store (Zircon `MarketPlaceStoreBuy`), a cash
+shop rather than part of the auction house: its stock is the `StoreInfo`
+table, 92 rows in this pack, it never runs out, and it is paid for in **game
+gold** or **hunt gold** rather than the gold carried in the bag. Both are
+ordinary `CurrencyInfo` rows (types 1 and 2), so the existing currency
+system holds them.
+
+The tag list beside the name box is built from the data, exactly as Zircon
+builds its drop-down: every `Filter` column is split on commas and trimmed,
+and the distinct tags are sorted with "All" first. In this pack that yields
+Assassin, Companion, Consumable, Function, Lazy, Mount, Permanent, Refine,
+Rose, Storage, Taoist, Temporary, Torch, Warrior and Wizard. Sorting offers
+A-Z, highest price and lowest price; Zircon's fourth option, Favourite, is a
+`TODO` in its own client and sorts nothing, so it is left out.
+
+Two rules are easy to misread in the C# and are worth stating:
+
+- A **zero `HuntGoldPrice` means the row costs its `Price` in hunt gold**,
+  not that hunt gold is refused. Every row in this pack has a zero there, so
+  without this rule the whole store would be free for hunt gold.
+- **Room is checked before money.** A full bag answers "not enough space"
+  and costs nothing.
+
+`Duration` is a lifetime in seconds: the pack uses it on the five temporary
+mounts (7 days) and the two roses (3.5 days). A bought item carries the
+resulting expiry, its tooltip counts down, and anything past its time is
+swept on entry and once per second while online, including equipment and storage.
+Transfers preserve expiry, dye, durability and added stats; stacks with different
+properties stay separate. Store purchases are `Worthless` and `Locked`.
+They are also `Bound` when paid with hunt gold or when the account's highest
+character level is below 40. Bound items cannot be mailed, consigned or traded;
+manual ground drops remain private to that account even after the usual share
+timeout. Locked items cannot be dropped or sold; Ctrl+right-click an inventory
+item to toggle its lock. Worthless items cannot be sold to NPCs even after
+unlocking. Tooltips show these instance flags along with bonuses and expiry.
+Flags persist through saves/transfers and distinguish otherwise identical stacks.
+Client and server must both use protocol **5**; older saves default flags off.
+Refinement readiness and the permanent NonRefinable flag remain separate.
+
+The store is sent whole on entry rather than searched per keystroke, because
+the table is static and small; the window filters and sorts its own copy.
 
 `ZIRCON_DEV_MARKET=<n>` seeds `n` listings on an empty market so the board is
 not blank in a screenshot; every fifth one is put on the first account, so a
 dev login also sees the owner colouring and its own consignments.
-`ZIRCON_OPEN=market` and `ZIRCON_OPEN=marketconsign` open the window on the
-Search and Consign tabs.
+`ZIRCON_DEV_GAMEGOLD=<n>` and `ZIRCON_DEV_HUNTGOLD=<n>` stock the two store
+currencies, which nothing else grants yet, so the Buy button can be
+exercised. `ZIRCON_OPEN=market`, `marketconsign` and `marketstore` open the
+window on each tab, and on the Store tab `ZIRCON_STORE_TAG=Mount` and
+`ZIRCON_STORE_HUNT=1` preset the filter and the currency.
 
 Auto potion (`A`) drinks from a belt slot when a pool drops under its
 percentage: health is checked first, then mana, and the drink goes through
@@ -543,6 +672,8 @@ night, twilight or full light; blood red while dead) and additive light
 blobs are added for lit objects (torch light from equipment, a minimum
 glow around your own character, NPCs, fire walls and other fields), then
 the target is multiplied over the world before names and UI are drawn.
+The Candle has light stat 15; the Bright Candle has 25. Equipping either
+updates the client's light immediately.
 The server broadcasts the daylight (`ZIRCON_DAY_CYCLE` game days per real
 day, default 12).
 
@@ -587,6 +718,38 @@ description")`) or cancel (`npc.navigate("")`) the page. Scripts see
 `take_gold`, `give_item`, `take_item`, `message`; they run sandboxed
 (no io/os) and errors fail the check. See `docs/research/fame-lua.md`.
 
+## Character services and discipline
+
+`D` opens character services; right-clicking a Hair Change, Gender Change,
+Armour Dye or Name Change item in the bag also opens it. Each successful
+change consumes one matching usable item. Hair styles and colours are
+validated by class and gender; armour must be removed before changing
+gender, and assassins cannot dye armour. Dyes use the original armour
+overlay and hair sprites. Renames take effect in account lookups immediately;
+all changes persist with the character and items.
+
+The same window shows the discipline level, focus pool and requirements for
+the next level. Training checks level, gold and accumulated discipline
+experience, charges gold, and grants an eligible discipline-school magic
+when one exists in the data. Focus regenerates alongside mana. This asset
+pack has four discipline levels and no discipline-school magics.
+`ZIRCON_OPEN=characterservices` opens the window for a screenshot;
+`ZIRCON_DEV_DISCIPLINE=1` on the server grants the first discipline level.
+
+## Harvesting
+
+Chickens and the other harvesting AI classes keep their rolled loot on the
+corpse. Stand next to it and hold left mouse over the body, or press `B` to
+harvest nearby. Chickens take three swings; deer and pigs take four. Loot
+belongs to the account that earned it; a full bag leaves the uncollected
+items on the corpse for a later attempt. Group members retain their own
+shares. After harvesting, viewers with no share left see bones, including
+when they leave and re-enter view. Loot-bearing corpses remain for five
+extra minutes, ending when all shares have been collected.
+Server-side `ZIRCON_DEV_HARVEST=1` creates a loot-bearing chicken corpse
+beside the player; client-side `ZIRCON_AUTO_HARVEST=1` walks to a nearby
+corpse and harvests it for visual checks. See `docs/research/harvesting.md` for the C# rules.
+
 ## Equipment sets
 
 Wearing every piece of a set (Zircon `SetInfo`) grants its bonus stats. A
@@ -610,10 +773,36 @@ not, and the item tooltip shows the same for the set an item belongs to.
 a complete two-piece set for a screenshot; dropping one of the two shows the
 incomplete state.
 
-The weapon-craft roll table (`WeaponCraftStatInfo`, 110 rows) is loaded and
-its weighted pick is implemented, but the NPC flow that spends it
-(`NPCWeaponCraft`, dialog type 14, with its own six-slot ingredient window)
-is not built. See "Where the rules come from".
+Visit the **Weapon Smith** in Lost Land and choose **Craft Weapon**. Open
+inventory and right-click a Weapon Template (or an unequipped weapon), then
+up to six colour ingredients. Click a linked slot to remove it, choose the
+output/stat class, and press **Craft**. Templates cost 1,000,000 gold;
+rerolling common/superior/elite weapons costs 30/60/80 million gold.
+Each ingredient's shape determines how many weighted stat rolls it grants.
+Zero ingredients are allowed and grant no new bonuses. Rerolling preserves
+enhancement bonuses, replaces other added bonuses and sets weapon level to 1. Identity, durability,
+dye and expiry survive rerolling. Spirit Blades cannot be used.
+
+The server validates the open NPC, distance, item identities, distinct slots,
+colours, capacity and gold before consuming anything. Protocol version **4**
+requires rebuilding client and server together. Bonuses retain their source
+(Added, Refine, Enhancement, Other or legacy unknown), including when multiple
+sources affect the same stat. Rerolling keeps Enhancement entries, clears
+refinement readiness and preserves the separate permanent NonRefinable flag.
+A rerolled eligible weapon can earn readiness again through combat.
+
+Old saves containing `[stat, amount]` pairs load as legacy bonuses without
+changing their values; their unknown provenance cannot be reconstructed.
+Old saves lacking readiness fields retain their previous permission to refine.
+New saves preserve sources, both refinement flags and fractional weapon
+experience through inventory transfers, storage, mail and market persistence.
+
+For a populated screenshot, `ZIRCON_CRAFT_PREVIEW=1` selects a template and
+colour ingredients already in inventory when the crafting page first opens;
+it does not submit a craft. Use `ZIRCON_CRAFT_PREVIEW=weapon` to select an
+existing weapon instead. Combine with `ZIRCON_AUTO_NPC="Weapon Smith"`
+and `ZIRCON_AUTO_NPC_BUTTON=1` while near the smith. See "Where the rules come
+from" for the reference implementation.
 
 ## Quests
 
@@ -686,6 +875,353 @@ an edited potion heals for the new amount on its next use without a restart.
 `ZIRCON_EDITOR_COLLECTION`, `ZIRCON_EDITOR_FILTER`, `ZIRCON_EDITOR_ROW` and
 `ZIRCON_EDITOR_VALIDATE` automate a visual check.
 
+The **Regions** tab adds a walkability overview with region overlays. Search for
+a map by name, file or index; use Fit, Zoom and scroll to navigate. Select a
+region from the list or click its cells (small overlapping regions take
+priority). **New region** creates a named empty region; **Add rectangle**
+adds only walkable cells and **Erase rectangle** removes cells. Each gesture
+is one undo step. The panel lists shared-region uses and links to their rows.
+
+Choose a monster, count and delay to add a spawn group; **Make safe zone**
+uses the selected region for both its area and bind area. These changes use
+the existing Save/Undo/Validate workflow. Restart the server to apply new
+placements or changed region shapes on maps already loaded into memory;
+existing hot reload does not rebuild those placement caches. Tile painting is
+available separately in the **Tiles** tab.
+
+`ZIRCON_EDITOR_MAP=605 ZIRCON_EDITOR_REGION=1711` opens the Lost Land overview
+with the Weapon Smith region selected, useful with `ZIRCON_SCREENSHOT`.
+Always pass `--db /path/to/copy/System.db` when experimenting on a copy.
+
+**Procedural cave drafts:** in Tiles, open a cave source map (for example
+`D102.map` from the shipped pack), set an even size between 32 and 256, then
+expand **Generate cave draft**, choose a seed and generate. Select the monster
+for eight spawns. The editor shows the safe zone and paired portal locations;
+**Test walk** runs the cave and its content in an isolated server. Validation
+rejects disconnected floor and blocked/unreachable placements before map save,
+export or testing.
+
+**Export map + database snapshot** writes to a new folder whose parent already
+exists. It includes `Map/GeneratedCave.map` (or a unique suffixed name), a
+`.cave.json` placement sidecar, `System.db`, and launch instructions. This is a
+full database snapshot, not a database overlay. Keep the sidecar beside the map
+to restore generator placements when reopening it. Save map writes the map and
+sidecar; export is needed to write the corresponding database records. To view
+bundle regions, open its database with `ZIRCON_MAP_DIR=<bundle>/Map`.
+
+**Organic cave** samples intact floor patches, then extracts complete wall/rock
+formations and decorations from the source map. It groups touching sprites,
+includes all animation frames, and copies their full layers and collision.
+Oversized structures and ambiguous tall strips are skipped. Placements that
+cut off a passage are rolled back; larger formations get priority over small
+decorations. A seed reproduces the same result with the same source and assets.
+Exposed blocked cells receive matching Wood wall art in a private 258-frame
+library; the source formations remain intact. Save keeps a `.wood.zl` sidecar,
+and export includes the private `Client` library required by the native game.
+
+For a complete authored perimeter, choose **Enclosed chamber** instead. Open a
+compact closed source such as `D1006.map`, click **Fit source artwork**, then
+generate. This mode preserves the entire chamber and all frame extents, including
+walls extending beyond their anchor cells. It refuses disconnected sources,
+walkable map edges, and undersized canvases. The seed varies placement within
+the canvas; it does not invent a new chamber outline. Spawns, the safe zone and
+paired portals are generated inside the preserved chamber. The mode is retained
+in the placement sidecar; older sidecars still load as organic drafts.
+
+**Rooms + corridors** creates seeded dungeons with 2–12 separate rooms
+and passages 2, 4 or 6 cells wide. It partitions the canvas, connects every room,
+then reuses source floor patches and complete decorations. Art placement cannot
+block corridor cells or room centres. Blue outlines label rooms in the editor.
+Room bounds, passage cells, width and seed persist in the sidecar; painting a
+passage blocked prevents save, export and Test walk until repaired. If a small
+canvas cannot fit the requested room count, enlarge it or request fewer rooms.
+Exposed blocked cells receive Wood wall art, and passable room-to-corridor
+crossings receive threshold art. Save, reopen, export, and Test walk carry the
+private library with the map.
+
+Generated maps now have a collision-based minimap and large-map overview.
+Their exits show pulsing blue teleport beacons in the world and cyan markers
+in both map windows. Export, Save map and Test walk write a `.navigation.json`
+sidecar alongside the map. Keep it with the map when distributing a bundle;
+older bundles gain markers by reopening and saving/exporting in Tiles. Invalid
+or stale marker metadata is ignored with a client log warning. The server's
+movement records still control travel; regenerate metadata when changing exits.
+The beacons reuse the shipped teleport animation through the existing effect
+renderer. Illustrated minimap art remains open. The game renderer is unchanged.
+For visual checks,
+`ZIRCON_TILE_ZOOM=0.35` shows an overview; `ZIRCON_TILE_CENTER=x,y` overrides the
+test position on reopened caves.
+
+**Monster stat drafts:** in Tables, select a `MonsterInfo` row and expand
+**Generate monster stat draft** below its sprite preview. Enter a new name and
+target level, then **Preview stats** to inspect the proposed combat stats and
+experience. **Create new monster** adds a new monster and its stat rows; one
+Undo removes both. Save the database, then select the new monster in Regions
+or in a generated map's spawn controls. Drafts retain the source appearance,
+AI and movement/attack timing. Configure drops separately and playtest the
+estimates before using them in progression.
+The estimator groups references by AI and boss status, interpolates per-level
+medians where samples bracket the requested levels, and labels fields using a
+level-ratio fallback. Scaling is capped between 1/16 and 16; min/max pairs share
+a factor. A changed database invalidates the preview and requires previewing
+again before creation.
+
+**Equipment drafts:** in ItemInfo, expand **Draft equipment variant**. Choose
+a name and target minimum level, then preview the core stat budget and individual
+changes before creating. Comparable items share slot, class requirement and
+rarity. The estimator interpolates observed median budgets when possible, or
+labels its bounded level-ratio fallback (¼–4). It preserves artwork, price,
+durability, special/negative stats and restrictions. Budgets are comparison
+estimates, not measured combat power. Minimum-level weapons, armour and combat
+accessories are supported; other requirement types and ambiguous duplicate
+source stats are rejected. Creation allocates new item/stat IDs atomically;
+stale previews fail, and one Undo restores both tables even after saving. New
+variants disable automatic starting-item grants.
+The new item can then be selected in loot or shop goods.
+`ZIRCON_EDITOR_ITEM_DRAFT=1` previews the selected source automatically for QA;
+`ZIRCON_EDITOR_ITEM_LEVEL` chooses the target (default 30).
+
+**Monster sprite variants:** expand **Sprite variant export** in MonsterInfo.
+Preview any of the shape's 1000 animation slots, multiply RGB colour and resize
+50–200%, then export to a new folder outside the original assets. The complete
+`.Zl` library is written with other shapes retained byte-for-byte; the selected
+shape preserves empty slots, shadow/overlay surfaces and scaled anchor offsets.
+DXT re-encoding is lossy. Use the exported library in a separate asset pack.
+This replaces an existing Image mapping, so every monster sharing that image
+uses the variant; allocation of independent image IDs is still future work.
+`ZIRCON_EDITOR_SPRITE_VARIANT=1` opens the panel for screenshots.
+
+**Drop templates:** select a monster with no drops and expand **Apply drop
+template** in its details. Donors are ranked by boss status, nearby level and
+AI. Choose a donor, preview its items, base one-in odds and randomized quantity
+ranges. Select individual rows or use the Consumables, Equipment, Materials
+and Other category buttons, then **Apply selected drops**. The tool copies
+only those rows in their authored order without scaling their
+odds, preserves the donor, and supports one-step Undo. Save the database before
+testing or exporting. It refuses an existing target loot table and stale
+previews. DropSet and EasterEvent conditions are preserved and shown in the
+preview. Disabled and PartOnly rows are
+identified in the preview; PartOnly rows do not produce ordinary loot. Group
+sharing and account drop progress can affect the actual yield.
+
+**Multi-donor loot drafts:** use **Add selected to loot draft**, switch donors,
+and add more selections for the same target. Review donor names, quantity
+ranges, odds and conditions in the queue; **Remove** drops individual entries.
+**Apply queued loot** writes the whole recipe atomically with one Undo, including
+after saving. Repeated items from different source rows remain separate rolls;
+the same source row cannot be queued twice. Database edits invalidate a queued
+draft. **Discard queued loot** starts over. The queue stays in memory until
+applied and is not included in database saves; closing warns about pending
+entries, and reload requires applying or discarding them first.
+
+**Tier + biome materials:** choose the tier donor in the main drop-template
+picker, then expand **Tier + biome materials** and choose a material donor.
+Only monsters with material drops appear in that picker, with material-row
+counts. **Draft tier + materials** queues the tier donor's non-material rows
+followed by the material donor's material rows, retaining order within each
+group. Review/remove rows before applying. The same donor can fill both roles
+without duplicating rows. Donor ranking suggests nearby levels and matching
+boss status; choose biome membership yourself. Authored odds and conditions
+stay unchanged, so this is a starting template, not automatic reward balancing.
+Apply or discard an existing queue before drafting another.
+
+**Base loot yield comparison:** selected donor rows and queued recipes show
+average item units per 100 independent base rolls, grouped by item ID. Ungated
+rows and extra mask/event-gated yield occupy separate columns. The latter
+assumes every gate is satisfied; it is not an event-frequency prediction.
+Disabled and PartOnly rows contribute no units. Repeated-item expectations add
+for display without merging the underlying rolls. Quantity means match the
+server's randomized amount rule, including its minimum-one clamp. Account drop
+progress, group sharing and harvest timing affect actual results; these figures
+are a comparison aid, not guaranteed rewards or an automatic balance score.
+
+**Conditional loot:** a spawn's `RespawnInfo.DropSet` must contain every bit
+required by the drop row's `DropSet`. A zero requirement permits every spawn.
+Easter rows require a monster marked at spawn: set `EasterEventChance` to a
+positive one-in chance and start the server with `ZIRCON_EASTER_EVENT_END`
+set to a future UTC Unix timestamp in seconds. Unset, invalid or expired
+deadlines disable marking; chance 0 also disables it. Eligibility is fixed
+when each monster spawns, so marked monsters retain it after the event ends.
+Generated maps expose these values under **Spawn loot conditions** and retain
+them through save, export and Test walk. Test walk inherits the event deadline
+from the editor environment. Reloaded spawn settings affect future spawns.
+
+The **Tiles** tab edits `.map` files. Open a map or make a blank one, select
+Back/Middle/Front, choose a thumbnail, then use Pencil or Rectangle. Erase
+changes only that layer. Pick tile copies an existing selection; Copy area
+and Stamp copy all cell properties, aligned to the back layer's 2×2 grid.
+Collision and Light have their own brushes. Animation frame/blend settings
+are stored with middle/front tiles. Grid and blocked-cell overlays help
+check placement. Learn neighbour patterns from the current map to enable a
+local adjacency-matching brush using tiles already observed in that library.
+
+**Reusable wall pieces** saves copied areas as named Wall, Corner, Doorway or
+Formation files. Copy an area, choose **Use copied area**, then **Save new file**
+to a new `.json` path. Load it on another map and select **Place piece / run**.
+Pieces retain all layers, animation, light, collision and opaque cell data;
+the file references your existing asset libraries. Even dimensions of 2–64 cells
+per side preserve the back grid. Existing piece files are never overwritten.
+
+Set **Repeats** to build a wall run with an even X/Y step. The complete run must
+fit, including tall artwork; conflicting overlaps and invalid generated-map
+placements are refused before editing. One Undo restores the entire run.
+Selections and joins are authored manually: a Doorway label does not create an
+opening. Include surrounding ground/collision and inspect joins in Test Walk.
+The **Wood wall perimeter** generator below assembles a checked source-specific
+wall ring. **Wood connected rooms** adds two rooms joined by a physical floor
+passage. Arbitrary perimeter synthesis and movable door objects remain separate
+work.
+
+A checked source example is D1006 cells `(10,8)` through `(11,17)` inclusive:
+a complete northwest wall strip. Two repeats with step `(2,-2)` reproduce the
+adjoining wall positions without changing the source collision mask.
+`ZIRCON_WALL_PIECE=/path/to/piece.json` opens the panel with a saved piece;
+`ZIRCON_WALL_REPEATS=2` previews repeat controls without placing anything.
+
+**Connections** adds explicit walkable openings to a piece. Choose North, East,
+South or West, an offset counted from the top/left, an inward inset, an opening
+width and a compatibility profile. Inset zero selects the outer edge; larger
+values locate a recessed edge inside an irregular assembly. The sketch marks floor green and openings gold. Validation
+requires covered, walkable edge and inward cells, uncovered space immediately
+outside, and a route between all declared openings.
+This records an existing opening; it does not cut a doorway into blocked cells.
+
+Under **Join another piece**, load a second file, select one connection on each
+piece and choose **Build joined piece**. Opposite directions, equal widths and
+exactly matching profiles are required. The editor translates the second piece
+without rotating artwork and refuses offsets that misalign the back tiles. The
+result becomes a new piece to inspect, place and save; the open map and source
+files are unchanged until you explicitly place/save it. Joined connections are
+consumed; unused connections retain their positions, including recessed edges.
+A later piece can fill that recess. Covered-cell overlaps and joins that seal
+an unused opening are refused; empty padding may overlap.
+Combined pieces are limited to 64 cells per side. Matching profiles express
+an author's compatibility choice, not an automatic visual seam guarantee.
+
+Offset joins keep uncovered padding transparent during placement, including
+after save/load. Coverage always preserves complete 2x2 back tiles.
+
+Piece files now save as version 3 with connection insets and coverage. Version 1
+files still load without connections; version 2 connections default to inset zero. `ZIRCON_JOIN_PIECE=/path/to/other.json` preloads
+the adjoining file for visual checks. Existing files are never overwritten.
+
+**Piece kit browser** loads checked Wood north/south kits or a separate palace
+doorway. Choose **Use piece**, then **Find compatible joins** to discover valid
+connections across the loaded pieces. Each result passes the full composition
+checks; **Build** checks it again before making the joined piece available for
+placement. Searches run on request, with at most 16 source pieces and 256 matching
+connection pairs. Specific profiles distinguish Wood NW, Wood NE and palace
+doorway connections; matching profiles still require visual review in Test Walk.
+
+The five-piece Wood north kit contains D1006's convex north corner, its two
+approaches, an authored NE bend and terminal wall body. It assembles to 14x14
+cells at source position (14,2). The three-piece Wood south kit retains the
+south corner and adjoining walls with their complete tall decoration; it
+assembles to 14x24 cells at (20,26), including the complete circular floor
+motif and neighboring animated decoration. Both restore the original source map
+byte-for-byte when placed there. Distinct profiles constrain the authored NE
+bend sequence; it is not a repeatable diagonal wall strip. The north terminal
+body is the last selected wall segment, not a physical wall endcap. The south
+decorated pieces preserve one authored group when assembled.
+The palace doorway comes from `0_000` and retains
+both wall ends, the carpeted threshold and neighboring tall artwork. They are
+separate themes, not a complete interchangeable wall/corner/doorway kit.
+Built-in captures check source fingerprints and reject selections that cut any
+sprite, including artwork anchored outside the selected cells.
+
+Under **Kit folder**, load direct `.json` children or save the current kit to a
+new folder. Loading uses filename order, rejects any malformed piece, and limits
+the directory to 128 entries. Export validates all pieces before creating the
+folder, writes fixed `piece-01.json` names, and never overwrites existing paths.
+Files reference installed artwork; they do not copy asset libraries. An I/O
+failure can leave a partial new folder, which is reported explicitly.
+**Add current piece to kit** stores an independent copy with the edited name,
+type and connections, up to 16 entries. **Remove** drops a catalogue entry;
+**↑** and **↓** reorder entries. These changes invalidate earlier join results.
+Export preserves the displayed order. Save to a new folder to retain kit edits.
+
+**Assemble whole kit** starts with the first catalogue entry and uses each entry
+once. Each step must have exactly one legal next join across the unused entries;
+ambiguous or disconnected kits fail without replacing the current piece. The
+whole operation allows at most 256 discovery trials plus 15 chosen-join
+revalidations. Success produces a new piece ready for placement; the
+map changes only when you place it. Reorder the catalogue to choose its starting
+piece, or use manual joins when the next connection is ambiguous. Remaining
+connections may stay open; successful assembly does not establish a perimeter.
+`ZIRCON_BUILTIN_KIT=wood-corner`, `wood-south-corner` or `palace-doorway`
+preloads a built-in kit; `wood-corner` keeps its existing name for the north kit.
+`ZIRCON_PIECE_CATALOGUE=/path/to/folder` preloads a saved kit instead.
+Add `ZIRCON_ASSEMBLE_KIT=1` to assemble the loaded built-in or folder catalogue
+on startup; combining it with `ZIRCON_WALL_PIECE` is an error because both select
+the current piece.
+The browser also loads **Wood entry**, **Wood wall bodies** and **Wood perimeter
+corners**, plus the **Wood wall junction**; automation names are `wood-entry`,
+`wood-wall-bodies`, `wood-perimeter-corners` and `wood-wall-junction`. The D10032 entry is a complete room/corridor junction
+with shaped ownership, not a compact doorway sprite. Its separate profiles do
+not yet connect it automatically into the generated ring. The D1008 wall junction
+preserves a real physical passage in a 20×32 shaped group. Four checked wall
+seams connect it to the diagonal bodies; all four need surrounding geometry.
+It is available for authoring and is not automatically inserted into the ring.
+
+**Wood wall perimeter** in the cave generator assembles four checked D1008
+corners and repeated diagonal wall bodies into a new closed room. Choose NW and
+NE repeat counts from 3–10; the recipe derives SE as NW+2 and SW as NE, closes
+all seams simultaneously, and fills unowned interior blocks with source floor.
+Exterior cells remain blocked. All 64 supported count combinations pass the
+source-backed generation checks. This differs from **Enclosed chamber**, which
+copies a complete authored source chamber. `ZIRCON_CAVE_MODE=wood-perimeter`
+selects the new mode on startup.
+
+**Wood connected rooms** uses six convex and two concave corners to enclose
+two rooms and a real 6×4 floor passage between them. NW and NE counts each
+accept 3–6; all 16 combinations pass source-backed enclosure, connectivity and
+passage checks. `ZIRCON_CAVE_MODE=wood-connected` selects this mode. The passage
+works independently of teleport triggers; this recipe does not insert a movable
+door object or the separate authored junction group.
+
+Saved `wall_repeats` and `wall_rooms` metadata restore the mode and counts.
+Enclosed-layout validation rejects any walkable map-border cell, including a
+connected breach introduced by later collision edits. Arbitrary BSP and organic
+perimeter art still need separate recipes.
+
+The local stdio [MCP authoring](docs/MCP_AUTHORING.md) server supports map,
+database, item, monster, and sprite tools. Its `create_world` MCP prompt accepts
+a natural-language brief and guides an MCP host's AI through the tool calls;
+the `world_from_brief` tool directly creates a simple chamber, organic cave, or
+2–12-room Wood dungeon with one named installed monster. The server does not
+include a separate language model. `world_generate` gives
+organic and room dungeons full Wood wall art, while `world_branch` assembles a
+bounded graph of up to 12 rooms. The sprite editor and `sprite_auto_motion`
+can design cloth motion from one drawn polygon. `sprite_pose_from_reference`
+transfers complete hand-drawn body poses from an original armour appearance. See
+[SPRITE_AUTHORING.md](docs/SPRITE_AUTHORING.md) for its scope and examples.
+Equipped weapon, helmet and shield art now has editable family projects;
+`equipment_publish` allocates a new private Shape. The `design_sprite_motion`
+MCP prompt guides a host AI through drawing and importing original pose frames.
+Every required direction needs visual review before publication.
+
+Map undo/save are separate from database undo/save; Cmd+S/Cmd+Z act on the
+selected workspace. Maps save with backups and refuse to overwrite a file
+changed externally since opening it. Opening another map requires saving or
+discarding edits, and closing warns about unsaved map or database changes.
+**Register saved map in database** adds a MapInfo record; save the database in
+Tables and keep the map file in the server's map directory.
+
+Right-click a walkable cell, then **Test walk in game**. It launches the built
+client/server beside the editor against temporary copies of the current map
+and database, with disposable saves. Both the server and client catalogue use
+that database snapshot, so new items and changed tooltips appear immediately. It uses daylight so edits are visible;
+the game supplies the final lighting and screen blending. Test sessions stop
+when the editor closes; Stop test game ends one earlier. Logs/snapshots stay
+in the displayed temporary folder. Build the workspace first.
+
+For visual automation, use `ZIRCON_EDITOR_TILE_MAP=/path/to/copy.map` and
+`ZIRCON_TILE_CENTER=164,223`. `ZIRCON_EDITOR_TEST_WALK=1` starts the test session;
+`ZIRCON_TILE_TEST_SCREENSHOT=/tmp/game.png:5` captures its client. Set the
+editor's own `ZIRCON_SCREENSHOT` delay longer than the game screenshot delay.
+The launcher uses `ZIRCON_MAP_DIR` to give client and server an isolated Map
+folder while reusing the original sprite/sound assets.
+
 Underneath, `mir-formats` writes as well as reads: `MirDb::save`,
 `MapFile::save` and `ZlBuilder::save` re-encode `System.db`, `.map` and `.Zl`
 files (the shipped files round-trip byte for byte in the tests) and leave a
@@ -732,3 +1268,57 @@ Timings, formulas and formats were transcribed from the C# code:
 `LibraryCore/MirDB/*` (`System.db`), `ServerLibrary/Models/PlayerObject*.cs`
 and `MonsterObject.cs` (movement, combat, AI). `tools/gen_monster_table.py`
 regenerates the monster sprite table from `Client/Models/MonsterObject.cs`.
+
+## Original sprite authoring
+
+The first PNG/sprite-sheet authoring workflow is complete, with editor animation
+preview, shared runtime contracts, eight additional MCP tools and private asset
+publication. The Jade Beetle demo creates a new ring and an eight-direction
+monster, then spawns it in a generated map. See [SPRITE_AUTHORING.md](docs/SPRITE_AUTHORING.md)
+for usage and [sprite_demo.py](scripts/sprite_demo.py) for reproducible generation.
+
+## Live GM MCP
+
+Build `cargo build -p mir-server --bin mir-game-mcp` and register the resulting
+`target/debug/mir-game-mcp` as a local stdio MCP server. Supply
+`ZIRCON_MCP_EMAIL`, `ZIRCON_MCP_PASSWORD`, and `ZIRCON_MCP_CHARACTER` through the
+MCP host's private environment; `ZIRCON_MCP_PORT` defaults to 7000. The
+`gm_command` tool accepts existing `@` commands and returns server replies.
+Set `ZIRCON_MCP_LOG` to the server log to enable the bounded, read-only
+`log_tail` tool. The `triage_issue` MCP prompt guides a connected coding agent
+through logs, game diagnostics, a first evidence-based verdict, duplicate search,
+and issue filing or fixing in `7ucardie/ZirconRust`. The MCP host must also have
+repository and GitHub access; the game bridge does not host an AI model or hold
+GitHub credentials. Issue text and logs are evidence, not instructions.
+It connects only to `127.0.0.1` and uses normal account and GM checks. Use a
+dedicated GM account if you also want to play on your main account; the game
+rejects simultaneous logins to one account. Never commit MCP credentials.
+
+## Public Dungeon Atlas
+
+`docs/dungeon_dashboard.html` and `docs/atlas/` are a read-only snapshot of
+the default `System.db` and map collision data. No accounts or live character
+data enter the export. `examples/dungeon_atlas.rs` regenerates map thumbnails,
+monster population shares, and default item drop odds. `examples/item_catalog.rs`
+regenerates the item CSV and inventory pictures:
+
+```sh
+cargo run -p mir-server --example dungeon_atlas -- "$HOME/zircon-assets/Database/System.db" "$HOME/zircon-assets/Client/Map" docs/atlas
+cargo run -p mir-server --example item_catalog -- "$HOME/zircon-assets/Database/System.db" "$HOME/zircon-assets/Client/Data/Storeitems.Zl" docs
+```
+
+The [Pages workflow](../.github/workflows/dungeon-pages.yml) publishes only
+the dashboard, CSV and atlas snapshot in `7ucardie/ZirconRust`. Set that repo's
+Pages source to GitHub Actions before the first deployment. Map IDs shown in
+the dashboard are file codes such as `D001`; numeric database indices remain
+in the detail panel.
+
+Press **I** in-game for the offline Dungeon Codex. It embeds the same default
+atlas map previews, monster populations, and drop odds; it does not query live
+server drops. Keep `crates/mir-client/src/dungeon_codex_maps.rs` in sync when re-exporting
+maps. The client test checks that every dungeon has a matching preview.
+
+Press **Y** for the Wardrobe. Pick armour from your bag or equipment to use
+its appearance without changing stats; **Reset** returns to equipped armour.
+The chosen look is saved and visible to other players. Type `@event` in chat
+for the current rotating boss hunt and its reward.

@@ -1,0 +1,16 @@
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: zircon-server:ovh
+    user: "${ZIRCON_UID:?}:${ZIRCON_GID:?}"
+    ports:
+      - "7000:7000"
+    volumes:
+      - ${ZIRCON_ASSETS_DIR:?}:/assets:ro
+      - ${ZIRCON_DATA_DIR:?}:/data
+    environment:
+      RUST_LOG: info
+      ZIRCON_DATA: /data
+    restart: unless-stopped

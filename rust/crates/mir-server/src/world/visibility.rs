@@ -4,6 +4,9 @@ impl World {
     /// Zircon `CanBeSeenBy`: everyone sees everyone for now; invisibility
     /// and cloak plug in here.
     pub(super) fn can_see(&self, viewer: &Object, target: &Object) -> bool {
+        if target.player().is_some_and(|p| p.observer) && viewer.id != target.id {
+            return false;
+        }
         if matches!(&target.kind, Kind::Monster(m) if m.hidden) {
             return false;
         }
@@ -36,6 +39,9 @@ impl World {
     /// Zircon `ShouldAttackTarget` extras: monsters ignore invisible and
     /// transparent players, and cloaked ones beyond two cells.
     pub(super) fn monster_may_target(&self, monster: &Object, target: &Object) -> bool {
+        if target.player().is_some_and(|p| p.gm_mode || p.observer) {
+            return false;
+        }
         if target.has_buff(buff_type::INVISIBILITY) || target.has_buff(buff_type::TRANSPARENCY) {
             return false;
         }
@@ -133,7 +139,7 @@ impl World {
                     match &o.kind {
                         Kind::Item(i) => {
                             i.owner.is_none_or(|a| a == account)
-                                || now >= i.spawn_time + DROP_SHARE_AFTER
+                                || (!i.item.bound && now >= i.spawn_time + DROP_SHARE_AFTER)
                         }
                         _ => self.can_see(&self.objects[&pid], o),
                     }
@@ -145,9 +151,32 @@ impl World {
                     .push(Outgoing::To(conn, ServerMessage::ObjectRemove { id: *id }));
             }
             for id in now_visible.difference(&old) {
-                let state = self.objects[id].state();
+                let mut state = self.objects[id].state();
+                // Zircon `GetInfoPacket`: a harvestable corpse is bones to
+                // everyone it owes nothing, so only the killer sees a body
+                // still worth swinging at.
+                if let mir_proto::Appearance::Monster { skeleton, .. } = &mut state.appearance {
+                    *skeleton = self.is_skeleton_for(*id, account);
+                }
                 self.outgoing
                     .push(Outgoing::To(conn, ServerMessage::ObjectShow(state)));
+                let kinds = self.objects[id]
+                    .poisons
+                    .iter()
+                    .fold(0, |flags, p| flags | p.kind);
+                if kinds != 0 {
+                    self.outgoing.push(Outgoing::To(
+                        conn,
+                        ServerMessage::ObjectPoisoned { id: *id, kinds },
+                    ));
+                }
+                if matches!(&self.objects[id].kind, Kind::Npc(_)) {
+                    let marker = self.npc_quest_marker(pid, *id);
+                    self.outgoing.push(Outgoing::To(
+                        conn,
+                        ServerMessage::NpcQuestMarker { id: *id, marker },
+                    ));
+                }
             }
             self.objects.get_mut(&pid).unwrap().visible = now_visible;
         }
@@ -168,10 +197,17 @@ impl World {
                 ServerMessage::ObjectMove { .. }
                     | ServerMessage::ObjectTurn { .. }
                     | ServerMessage::ObjectAttack { .. }
+                    | ServerMessage::ObjectHarvest { .. }
             );
             for (pid, conn) in &players {
                 let sees =
                     *pid == subject && echo_self || self.objects[pid].visible.contains(&subject);
+                if matches!(msg, ServerMessage::ObjectHarvested { .. }) {
+                    let account = self.objects[pid].player().unwrap().account;
+                    if !self.is_skeleton_for(subject, account) {
+                        continue;
+                    }
+                }
                 if sees {
                     self.outgoing.push(Outgoing::To(*conn, msg.clone()));
                 }

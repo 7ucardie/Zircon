@@ -43,6 +43,16 @@ impl World {
     }
 
     pub(super) fn buff_remove(&mut self, id: ObjectId, kind: u16) {
+        if kind == buff_type::SOUL_RESONANCE
+            && self
+                .objects
+                .get(&id)
+                .and_then(|o| o.player())
+                .is_some_and(|p| p.soul_link.is_some())
+        {
+            self.soul_resonance_remove(id);
+            return;
+        }
         let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
             return;
         };
@@ -203,26 +213,38 @@ impl World {
         let Some(o) = self.objects.get_mut(&target) else {
             return;
         };
+        if o.dead || self.rng.random_range(0..100) < o.stats.poison_resistance {
+            return;
+        }
         // Zircon: Endurance makes players immune to every poison.
         if o.has_buff(buff_type::ENDURANCE) {
             return;
         }
+        let newly_stunned = o.is_player()
+            && poison.kind == poison_kind::PARALYSIS
+            && !o.poisons.iter().any(|p| p.kind == poison_kind::PARALYSIS);
+        let before = o.poisons.iter().fold(0, |flags, p| flags | p.kind);
         if let Some(existing) = o.poisons.iter().position(|p| p.kind == poison.kind) {
             if o.poisons[existing].value > poison.value {
                 return;
             }
             o.poisons.remove(existing);
         }
-        let was = !o.poisons.is_empty();
         o.poisons.push(poison);
-        if !was {
-            self.events.push((
+        let kinds = o.poisons.iter().fold(0, |flags, p| flags | p.kind);
+        if kinds != before {
+            self.events
+                .push((target, ServerMessage::ObjectPoisoned { id: target, kinds }));
+        }
+        if newly_stunned {
+            self.send_to(
                 target,
-                ServerMessage::ObjectPoisoned {
-                    id: target,
-                    poisoned: true,
+                ServerMessage::Say {
+                    id: None,
+                    kind: mir_proto::ChatKind::System,
+                    text: "You are stunned.".into(),
                 },
-            ));
+            );
         }
     }
 
@@ -236,11 +258,42 @@ impl World {
             .collect();
         let mut spreads: Vec<(ObjectId, ObjectId, i32)> = Vec::new();
         for id in ids {
-            let (damage, owner, cleared) = {
+            let before = self.objects[&id]
+                .poisons
+                .iter()
+                .fold(0, |flags, p| flags | p.kind);
+            let (boss, lethal) = {
+                let o = &self.objects[&id];
+                let ordinary = o.monster().is_some_and(|m| {
+                    m.owner.is_none()
+                        && !m.guard
+                        && m.castle.is_none()
+                        && m.room_door.is_none()
+                        && !self.data.monsters[&m.def].is_boss
+                });
+                let boss = o
+                    .monster()
+                    .is_some_and(|m| self.data.monsters[&m.def].is_boss);
+                let lethal = o
+                    .poisons
+                    .iter()
+                    .map(|p| {
+                        ordinary
+                            && p.kind == poison_kind::GREEN
+                            && p.value > 0
+                            && p.owner
+                                .and_then(|owner| self.objects.get(&owner))
+                                .is_some_and(Object::is_player)
+                    })
+                    .collect::<Vec<_>>();
+                (boss, lethal)
+            };
+            let (damage, owner, lethal_owner) = {
                 let o = self.objects.get_mut(&id).unwrap();
                 let mut damage = 0;
                 let mut owner = None;
-                for p in o.poisons.iter_mut() {
+                let mut lethal_owner = None;
+                for (p, can_kill) in o.poisons.iter_mut().zip(lethal) {
                     if now < p.next_tick {
                         continue;
                     }
@@ -262,16 +315,19 @@ impl World {
                     ) {
                         damage += p.value;
                         owner = p.owner;
+                        if can_kill {
+                            lethal_owner = p.owner;
+                        }
                     }
                 }
                 o.poisons.retain(|p| p.ticks_left >= 0);
-                let cleared = o.poisons.is_empty();
-                if o.dead {
+                if o.dead || boss {
                     damage = 0;
                 }
-                // Poison never kills (Zircon `CanKill = false`).
-                damage = damage.min(o.hp - 1).max(0);
-                (damage, owner, cleared)
+                // ZirconRust: a player's green poison can finish ordinary
+                // monsters. C# defaults every Poison.CanKill to false.
+                damage = damage.min(o.hp - i32::from(lethal_owner.is_none())).max(0);
+                (damage, owner, lethal_owner)
             };
             if damage > 0 {
                 let attacker = owner.unwrap_or(id);
@@ -285,20 +341,38 @@ impl World {
                         m.target = Some(attacker);
                     }
                 }
+                if hp <= 0 {
+                    let killer = lethal_owner.expect("only player green poison is lethal");
+                    self.objects
+                        .get_mut(&id)
+                        .unwrap()
+                        .monster_mut()
+                        .unwrap()
+                        .exp_owner
+                        .get_or_insert(killer);
+                    self.monster_die(id, killer);
+                }
             }
-            if cleared {
-                self.events.push((
-                    id,
-                    ServerMessage::ObjectPoisoned {
-                        id,
-                        poisoned: false,
-                    },
-                ));
+            let kinds = self.objects[&id]
+                .poisons
+                .iter()
+                .fold(0, |flags, p| flags | p.kind);
+            if kinds != before {
+                self.events
+                    .push((id, ServerMessage::ObjectPoisoned { id, kinds }));
             }
         }
         // Infection: Parasite ticks spread to a neighbour of the victim.
         for (victim, owner, value) in spreads {
             self.infection_spread(victim, owner, value);
+        }
+    }
+
+    pub(super) fn send_poison_status(&mut self, id: ObjectId) {
+        if let Some(o) = self.objects.get(&id) {
+            let kinds = o.poisons.iter().fold(0, |flags, p| flags | p.kind);
+            self.events
+                .push((id, ServerMessage::ObjectPoisoned { id, kinds }));
         }
     }
 

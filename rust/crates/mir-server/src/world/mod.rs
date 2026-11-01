@@ -108,6 +108,9 @@ pub const DROP_DURATION: u64 = 60 * 60_000;
 pub const DROP_SHARE_AFTER: u64 = 120_000;
 pub const DROP_DISTANCE: i32 = 5;
 pub const PICKUP_RADIUS: i32 = 1;
+/// Element index 0 is physical; 1..=7 match `mir_proto::element`.
+pub(super) const ELEMENT_ATTACK_STATS: [i32; 8] = [0, 20, 22, 24, 26, 28, 30, 32];
+pub(super) const ELEMENT_RESIST_STATS: [i32; 8] = [118, 21, 23, 25, 27, 29, 31, 33];
 
 pub type ConnId = u64;
 
@@ -126,6 +129,18 @@ pub struct CombatStats {
     pub max_mc: i32,
     pub min_sc: i32,
     pub max_sc: i32,
+    pub luck: i32,
+    pub critical_chance: i32,
+    pub critical_damage: i32,
+    pub paralysis_chance: i32,
+    pub slow_chance: i32,
+    pub silence_chance: i32,
+    pub block_chance: i32,
+    pub evasion_chance: i32,
+    pub poison_resistance: i32,
+    pub pickup_radius: i32,
+    pub element_attack: [i32; 8],
+    pub element_resist: [i32; 8],
 }
 
 impl CombatStats {
@@ -142,6 +157,18 @@ impl CombatStats {
         max_mc: 0,
         min_sc: 0,
         max_sc: 0,
+        luck: 0,
+        critical_chance: 0,
+        critical_damage: 0,
+        paralysis_chance: 0,
+        slow_chance: 0,
+        silence_chance: 0,
+        block_chance: 0,
+        evasion_chance: 0,
+        poison_resistance: 0,
+        pickup_radius: 1,
+        element_attack: [0; 8],
+        element_resist: [0; 8],
     };
 }
 
@@ -197,6 +224,7 @@ pub struct BuffStats {
     pub life_steal: i32,
     /// Damage banked by Frost Bite.
     pub frost: i32,
+    pub frost_chance: i32,
 }
 
 /// A timed buff on a player (Zircon `BuffInfo`).
@@ -249,21 +277,49 @@ pub struct PlayerData {
     pub class: Class,
     pub gender: Gender,
     pub hair: u8,
+    /// Zircon `Character.HairColour`, packed ARGB.
+    pub hair_colour: u32,
+    /// Cosmetic armour look, chosen while the matching item was owned.
+    pub wardrobe_item: Option<i32>,
+    pub wardrobe_helmet: Option<i32>,
+    pub wardrobe_weapon: Option<i32>,
+    pub wardrobe_shoes: Option<i32>,
     /// Account character id, for persistence.
     pub character: u32,
+    pub gm: bool,
+    pub gm_mode: bool,
+    pub superman: bool,
+    pub observer: bool,
+    pub chat_ban_until: u64,
+    pub global_ban_until: u64,
     pub level: i32,
     pub experience: u64,
+    pub experience_fraction: f64,
     pub max_mp: i32,
     pub mp: i32,
+    /// Zircon `CurrentFP` and `Stat.Focus`: the focus pool a discipline
+    /// grants. Both stay 0 until the player takes discipline level 1.
+    pub fp: i32,
+    pub max_fp: i32,
+    /// Zircon `UserDiscipline`: the level taken (0 = none) and the
+    /// experience banked towards the next.
+    pub discipline: i32,
+    pub discipline_experience: i64,
     pub revive_time: u64,
     pub bind_region: i32,
     pub regen_time: u64,
     pub bag: Bag,
+    pub event_rewards: Vec<u64>,
     pub next_item_id: u32,
     pub attack_speed: i64,
     pub max_bag: i32,
     pub max_wear: i32,
     pub max_hand: i32,
+    pub comfort: i32,
+    pub drop_rate: i32,
+    pub companion_collection: bool,
+    /// C# `CompanionLevelLockN`: session-only confirmation gates.
+    pub companion_reroll_enabled: u8,
     /// Open NPC dialog: (npc object, page index).
     pub npc: Option<(ObjectId, i32)>,
     pub magics: Vec<UserMagic>,
@@ -303,10 +359,13 @@ pub struct PlayerData {
     pub group: Option<u32>,
     /// Zircon `AttackMode` (`attack_mode::*`).
     pub attack_mode: u8,
+    /// Zircon `PetMode` (`pet_mode::*`).
+    pub pet_mode: u8,
     /// Zircon `Stat.PKPoint`; `pk_tick` is the next decay time.
     pub pk_points: i32,
     /// Zircon `Character.Fame`: held `FameInfo` index (0 = none).
     pub fame: i32,
+    pub hermit_stats: BTreeMap<i32, i32>,
     pub pk_tick: u64,
     /// Zircon brown buff: end time and current state (kept in sync each tick).
     pub brown_until: u64,
@@ -376,25 +435,52 @@ pub struct NpcStore {
 
 impl NpcStore {
     fn load(path: PathBuf) -> NpcStore {
-        let mut store: NpcStore = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let mut store: NpcStore = load_json(&path);
         store.path = Some(path);
         store
     }
 
     fn save(&self) {
         if let Some(p) = &self.path {
-            if let Ok(json) = serde_json::to_vec_pretty(self) {
-                let _ = std::fs::write(p, json);
-            }
+            save_json(p, self);
         }
+    }
+}
+
+/// Shared persistence for the JSON side stores (guilds, mail, market,
+/// social, NPC). A missing file is an empty store; a corrupt one refuses
+/// startup instead of silently becoming empty and being saved over.
+pub(super) fn load_json<T: Default + serde::de::DeserializeOwned>(path: &std::path::Path) -> T {
+    match std::fs::read(path) {
+        Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            panic!(
+                "{}: cannot parse: {e}; fix or move the file",
+                path.display()
+            )
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => T::default(),
+        Err(e) => panic!("{}: {e}", path.display()),
+    }
+}
+
+/// Temp file + rename, so a crash mid-write never leaves a truncated store.
+pub(super) fn save_json<T: serde::Serialize>(path: &std::path::Path, value: &T) {
+    let result = (|| -> std::io::Result<()> {
+        let json = serde_json::to_vec_pretty(value)?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, json)?;
+        std::fs::rename(&tmp, path)
+    })();
+    if let Err(e) = result {
+        tracing::error!(path = %path.display(), "save failed: {e}");
     }
 }
 
 #[derive(Debug)]
 pub struct MonsterData {
+    /// Spawn-time loot eligibility, retained through database reloads.
+    pub drop_set: i32,
+    pub easter_event: bool,
     pub def: i32,
     pub spawn: Option<(i32, usize)>,
     pub target: Option<ObjectId>,
@@ -433,6 +519,8 @@ pub struct MonsterData {
     pub stage: i32,
     /// Timed summons (mirror images, tornadoes, cursed dolls) vanish then.
     pub despawn_at: Option<u64>,
+    /// Equipped focus affinity captured when a Mirror Image is created.
+    pub mirror_element: Option<u8>,
     /// Cursed doll: the victim that suffers what the doll suffers.
     pub link: Option<ObjectId>,
     /// Chain: tethered to a leader until the time.
@@ -443,6 +531,9 @@ pub struct MonsterData {
     pub revive_at: u64,
     /// Timed class behaviours (weakness curse, death clouds, gate sweeps).
     pub cadence_time: u64,
+    /// Next periodic boss minion replenishment, independent of combat/curses.
+    pub minion_time: u64,
+    pub numa_action: Option<(u64, monster_ai::NumaAction)>,
     /// Shinsu: fighting window on/off and when it ends.
     pub mode: bool,
     pub mode_time: u64,
@@ -463,6 +554,16 @@ pub struct MonsterData {
     pub companion: Option<u32>,
     /// Castle guard, gate or flag.
     pub castle: Option<castle_parts::CastleRole>,
+    pub room_door: Option<room_doors::RoomDoorRole>,
+    /// Zircon `HarvestCount`: swings still to land before this corpse gives
+    /// up its drops. 0 on a corpse that holds drops means the next swing
+    /// pays out.
+    pub harvest_count: i32,
+    pub harvested: bool,
+    /// Zircon `MonsterObject.Drops`: what each account is owed, held on the
+    /// corpse instead of dropped on the floor. Empty on a monster that does
+    /// not need harvesting.
+    pub harvest_drops: BTreeMap<u32, Vec<UserItem>>,
 }
 
 #[derive(Debug)]
@@ -533,6 +634,14 @@ impl Object {
             _ => None,
         }
     }
+    /// The monster half, or None for anything else. `monster_ref` panics;
+    /// this is for code that holds an id of unknown kind.
+    pub fn monster(&self) -> Option<&MonsterData> {
+        match &self.kind {
+            Kind::Monster(m) => Some(m),
+            _ => None,
+        }
+    }
     pub fn monster_mut(&mut self) -> Option<&mut MonsterData> {
         match &mut self.kind {
             Kind::Monster(m) => Some(m),
@@ -549,6 +658,11 @@ impl Object {
         matches!(self.kind, Kind::Spell(_))
     }
     pub fn blocking(&self) -> bool {
+        if let Kind::Monster(m) = &self.kind {
+            if let Some(door) = &m.room_door {
+                return door.closed;
+            }
+        }
         // An open castle gate is a doorway, not a body.
         if let Kind::Monster(m) = &self.kind {
             if let Some(castle_parts::CastleRole::Gate { closed, .. }) = &m.castle {
@@ -568,8 +682,13 @@ impl Object {
     /// Zircon `CanAttackTarget`: players and their pets fight wild
     /// monsters, wild monsters fight players and pets, guards fight wild
     /// monsters and red players, and players fight players by attack mode
-    /// outside safe zones (pets never target players here).
+    /// outside safe zones. Pet modes use `World::monster_hostile_to`.
     pub fn hostile_to(&self, other: &Object) -> bool {
+        if matches!(&self.kind, Kind::Monster(m) if m.room_door.is_some())
+            || matches!(&other.kind, Kind::Monster(m) if m.room_door.is_some())
+        {
+            return false;
+        }
         if other.dead || other.is_item() || other.is_spell() || matches!(other.kind, Kind::Npc(_)) {
             return false;
         }
@@ -630,6 +749,7 @@ impl Object {
             hp: self.hp,
             max_hp: self.max_hp,
             dead: self.dead,
+            room_door: matches!(&self.kind, Kind::Monster(m) if m.room_door.is_some()),
         }
     }
 }
@@ -736,6 +856,14 @@ pub struct World {
     players: BTreeSet<ObjectId>,
     next_id: u32,
     pub now: u64,
+    /// Startup options; defaults preserve existing drop and XP behavior.
+    pub drop_specials: bool,
+    pub experience_multiplier: f64,
+    pub inventory_tab_price: u32,
+    pub storage_tab_price: u32,
+    /// Monotonic event deadline; configured with ZIRCON_EASTER_EVENT_END (UTC Unix seconds).
+    pub easter_event_until: u64,
+    rotating_event: world_events::WorldEventState,
     /// Seeded from `ZIRCON_SEED` when set (tests), otherwise from the OS.
     rng: rand::rngs::StdRng,
     pending_hits: Vec<PendingHit>,
@@ -751,6 +879,7 @@ pub struct World {
     pending_magics: Vec<PendingMagic>,
     /// Events raised this tick: (subject object, message).
     events: Vec<(ObjectId, ServerMessage)>,
+    next_item_expiry: u64,
     pub outgoing: Vec<Outgoing>,
     /// `ZIRCON_DEV_FISHING`: item every unwalkable cell yields when the
     /// pack has no fishing zones (tackle checks waived).
@@ -785,17 +914,21 @@ pub struct World {
 }
 
 pub mod ai_profile;
+pub mod appearance;
 mod buffs;
 mod castle_parts;
 mod castles;
 mod chat;
 mod combat;
 mod companion;
+pub mod discipline;
 pub mod fame;
 pub mod fortune;
 mod gathering;
+mod gm;
 mod groups;
 pub mod guilds;
+pub mod harvest;
 mod inventory;
 mod lua;
 mod magic;
@@ -815,15 +948,19 @@ mod pvp;
 mod quests;
 pub mod ranking;
 pub mod refine;
+mod room_doors;
 mod skills;
 pub mod social;
 mod spawn;
 mod spells;
 mod storage;
+pub mod store;
 mod test_api;
 pub mod timers;
 mod trade;
 mod visibility;
+pub mod weapon_craft;
+mod world_events;
 
 pub use companion::StoredCompanion;
 pub use refine::StoredRefine;
@@ -863,7 +1000,8 @@ impl World {
         let players: Vec<ObjectId> = self.players().map(|o| o.id).collect();
         for id in players {
             self.refresh_stats(id, false);
-            self.send_player_stats(id);
+            self.send_discipline(id);
+            self.store_login(id);
         }
     }
 
@@ -878,6 +1016,12 @@ impl World {
             players: BTreeSet::new(),
             next_id: 1,
             now: 0,
+            drop_specials: false,
+            experience_multiplier: 1.0,
+            inventory_tab_price: 100,
+            storage_tab_price: 200,
+            easter_event_until: easter_event_deadline(),
+            rotating_event: world_events::WorldEventState::default(),
             rng: match std::env::var("ZIRCON_SEED")
                 .ok()
                 .and_then(|v| v.parse::<u64>().ok())
@@ -894,6 +1038,7 @@ impl World {
             ai_profiles: HashMap::new(),
             pending_magics: Vec::new(),
             events: Vec::new(),
+            next_item_expiry: 0,
             outgoing: Vec::new(),
             groups: BTreeMap::new(),
             guild_store: guilds::GuildStore::default(),
@@ -931,6 +1076,7 @@ impl World {
         self.mail_store = mail::MailStore::load(dir.join("mail.json"));
         self.social_store = social::SocialStore::load(dir.join("social.json"));
         self.market_store = market::MarketStore::load(dir.join("market.json"));
+        self.rotating_event = world_events::WorldEventState::load(dir.join("world_event.json"));
         // ZIRCON_DEV_MARKET=<n> seeds a board of n listings for screenshots.
         if self.market_store.listings.is_empty() {
             if let Some(n) = std::env::var("ZIRCON_DEV_MARKET")
@@ -970,7 +1116,23 @@ impl World {
 
         // Player timers: regen and revive.
         let players: Vec<ObjectId> = self.players().map(|o| o.id).collect();
+        if now >= self.next_item_expiry {
+            self.next_item_expiry = now.saturating_add(1000);
+            for id in &players {
+                self.expire_items(*id);
+            }
+        }
         for id in &players {
+            if self.objects[id].player().is_some_and(|p| p.superman) {
+                let o = self.objects.get_mut(id).unwrap();
+                let changed = o.hp != o.max_hp || o.player().is_some_and(|p| p.mp != p.max_mp);
+                o.hp = o.max_hp;
+                let p = o.player_mut().unwrap();
+                p.mp = p.max_mp;
+                if changed {
+                    self.send_player_stats(*id);
+                }
+            }
             let (dead, revive_time, regen_due) = {
                 let o = &self.objects[id];
                 let p = o.player().unwrap();
@@ -987,7 +1149,7 @@ impl World {
             if regen_due {
                 let o = self.objects.get_mut(id).unwrap();
                 let p = o.player_mut().unwrap();
-                p.regen_time = now + REGEN_DELAY;
+                p.regen_time = now + (15_000_i32 - p.comfort.clamp(0, 20) * 650) as u64;
                 let mut rate = if p.class == Class::Wizard { 0.03 } else { 0.02 };
                 // Rejuvenation: +0.5 % per level above the base.
                 if let Some(m) = p
@@ -997,8 +1159,17 @@ impl World {
                 {
                     rate += (0.5 + m.level as f32 * 0.5) / 100.0;
                 }
-                if p.mp < p.max_mp {
+                // Mana and focus refill at the same rate (Zircon regen);
+                // one stats message covers whichever of them moved.
+                let mana_due = p.mp < p.max_mp;
+                let focus_due = p.fp < p.max_fp;
+                if mana_due {
                     p.mp = (p.mp + (p.max_mp as f32 * rate).max(1.0) as i32).min(p.max_mp);
+                }
+                if focus_due {
+                    p.fp = (p.fp + (p.max_fp as f32 * rate).max(1.0) as i32).min(p.max_fp);
+                }
+                if mana_due || focus_due {
                     let stats = self.player_stats(&self.objects[id]);
                     self.send_to(*id, ServerMessage::StatsChanged(stats));
                 }
@@ -1040,6 +1211,9 @@ impl World {
             .filter(|o| o.is_monster())
             .filter(|o| {
                 o.dead
+                    || o.monster().and_then(|m| m.owner).is_some_and(|owner| {
+                        self.objects.get(&owner).is_some_and(Object::is_player)
+                    })
                     || player_positions
                         .iter()
                         .any(|(m, p)| *m == o.map && p.distance(o.location) <= MAX_VIEW_RANGE + 2)
@@ -1069,6 +1243,7 @@ impl World {
 
         if now >= self.last_spawn_check + 1000 {
             self.last_spawn_check = now;
+            self.process_world_events_at(crate::accounts::now_secs());
             let maps: Vec<i32> = self.maps.keys().copied().collect();
             for m in maps {
                 self.do_spawns(m);
@@ -1136,4 +1311,25 @@ impl World {
             self.send_to(id, ServerMessage::DayChanged { day_time: next });
         }
     }
+}
+
+/// Convert an explicit wall-clock deadline once; gameplay uses the world's monotonic clock.
+fn easter_event_deadline() -> u64 {
+    let end = match std::env::var("ZIRCON_EASTER_EVENT_END") {
+        Ok(value) => match value.parse::<u64>() {
+            Ok(end) => end,
+            Err(_) => {
+                tracing::warn!("ZIRCON_EASTER_EVENT_END must be UTC Unix seconds; event disabled");
+                return 0;
+            }
+        },
+        Err(_) => return 0,
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    (u128::from(end) * 1000)
+        .saturating_sub(now)
+        .min(u128::from(u64::MAX)) as u64
 }

@@ -14,6 +14,7 @@ use std::path::PathBuf;
 
 use crate::chat_panel::{default_tabs, Category, ChatPanel, Tab};
 use crate::ui::{Button, Ctx, Rect, TextBox, GOLD};
+use crate::windows::WindowLayout;
 
 /// Where the tab layout is saved. Beside the executable, so a checkout can
 /// be moved without losing it and nothing writes outside the project.
@@ -62,6 +63,7 @@ pub struct ChatOptions {
     buttons: Vec<Button>,
     /// A line to show under the buttons after Save or Reload.
     notice: Option<(String, u64)>,
+    layout: WindowLayout,
 }
 
 /// One behaviour toggle: its label, and how to read and write it on a tab.
@@ -85,14 +87,19 @@ impl ChatOptions {
         if !self.open {
             return false;
         }
-        let win = Rect::new(
-            (width as f32 - 470.0) / 2.0,
-            (height as f32 - 360.0) / 2.0,
-            470.0,
-            360.0,
+        let win = self.layout.place(
+            "chat_options",
+            Rect::new(
+                (width as f32 - 470.0) / 2.0,
+                (height as f32 - 360.0) / 2.0,
+                470.0,
+                360.0,
+            ),
+            c.input,
+            (width, height),
         );
-        let over = win.contains(c.input.mouse.0, c.input.mouse.1);
-        let closed = c.window(win, "Chat Options", false);
+        let over = win.contains(c.input.mouse.0, c.input.mouse.1) || self.layout.is_dragging();
+        let closed = c.window(win, "Chat Options", false) && !self.layout.is_dragging();
 
         self.selected = self.selected.min(chat.tabs.len().saturating_sub(1));
         self.draw_tab_list(c, chat, win);
@@ -102,6 +109,7 @@ impl ChatOptions {
         if closed {
             self.open = false;
         }
+        self.layout.end_frame(c.input);
         over
     }
 

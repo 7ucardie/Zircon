@@ -1,16 +1,46 @@
 use super::*;
 
+/// Keep the open NPC's quest links in step with the server's quest change.
+fn update_dialog_quest(
+    quests: &mut Vec<mir_proto::NpcQuest>,
+    changed: &mir_proto::UserQuestSummary,
+    def: Option<&crate::items::QuestDef>,
+) {
+    let Some(current) = quests.iter().find(|q| q.quest == changed.quest) else {
+        return;
+    };
+    if changed.completed || (current.state == 0 && def.is_some_and(|d| d.start_npc != d.finish_npc))
+    {
+        quests.retain(|q| q.quest != changed.quest);
+        return;
+    }
+    let Some(def) = def else { return };
+    let ready = def.tasks.iter().all(|task| {
+        changed
+            .tasks
+            .iter()
+            .any(|(index, count)| *index == task.index && *count >= task.amount)
+    });
+    if let Some(current) = quests.iter_mut().find(|q| q.quest == changed.quest) {
+        current.state = if ready { 2 } else { 1 };
+    }
+}
+
 impl Game {
     // ---- network ---------------------------------------------------------------
 
     pub fn handle(&mut self, msg: ServerMessage, now: u64) {
         match msg {
+            ServerMessage::Wardrobe { slot, item } => {
+                self.wardrobe.set_chosen_slot(slot as usize, item)
+            }
             ServerMessage::Welcome {
                 id,
                 map,
                 location,
                 direction,
                 stats,
+                light,
             } => {
                 self.load_map(&map.file, &map.name);
                 self.map_light = map.light;
@@ -28,7 +58,7 @@ impl Game {
                     });
                 let state = ObjectState {
                     id,
-                    light: 0,
+                    light,
                     appearance: Appearance::Player {
                         name,
                         gender,
@@ -36,8 +66,14 @@ impl Game {
                         armour: 0,
                         weapon: None,
                         hair,
+                        hair_colour: 0,
+                        armour_colour: 0,
                         helmet: 0,
                         shield: None,
+                        armour_effect: 0,
+                        emblem_effect: 0,
+                        weapon_effect: 0,
+                        shield_effect: 0,
                         name_color: 0,
                         guild: String::new(),
                         guild_rank: String::new(),
@@ -49,6 +85,7 @@ impl Game {
                     hp: stats.hp,
                     max_hp: stats.max_hp,
                     dead: false,
+                    room_door: false,
                 };
                 self.objects.insert(id, ClientObject::new(&state, now));
                 self.user = Some(id);
@@ -173,6 +210,26 @@ impl Game {
                     sound_table::idx::MINING_STRUCK
                 });
             }
+            ServerMessage::ObjectHarvest { id, direction } => {
+                if let Some(o) = self.objects.get_mut(&id) {
+                    let location = o.queue.back().map(|q| q.location).unwrap_or(o.location);
+                    o.enqueue(Queued {
+                        action: Action::Harvest,
+                        direction,
+                        location,
+                        distance: 0,
+                    });
+                }
+            }
+            // The corpse owes us nothing now, so it is bones from here on.
+            ServerMessage::ObjectHarvested { id } => {
+                if let Some(o) = self.objects.get_mut(&id) {
+                    if let mir_proto::Appearance::Monster { skeleton, .. } = &mut o.appearance {
+                        *skeleton = true;
+                    }
+                    o.refresh_frame();
+                }
+            }
             ServerMessage::ObjectFishing {
                 id,
                 state,
@@ -285,8 +342,25 @@ impl Game {
                         Some(t) => effects::Anchor::Object(t),
                         None => effects::Anchor::Cell(location),
                     };
-                    self.projectiles
-                        .push(effects::monster_projectile(magic, from, to, now));
+                    let image = self.objects.get(&id).and_then(|o| match o.appearance {
+                        Appearance::Monster { image, .. } => Some(image),
+                        _ => None,
+                    });
+                    let destination = target
+                        .and_then(|id| self.objects.get(&id))
+                        .map(|o| o.location)
+                        .unwrap_or(location);
+                    if let Some(effect) = effects::monster_ground_attack(image, destination, now) {
+                        self.effects.push(effect);
+                        return;
+                    }
+                    let from_px = (from.x as f32 * 48.0, from.y as f32 * 32.0);
+                    let to_px = (destination.x as f32 * 48.0, destination.y as f32 * 32.0);
+                    let mut projectile = effects::monster_projectile(image, magic, from, to, now);
+                    projectile.duration =
+                        (to_px.0 - from_px.0).hypot(to_px.1 - from_px.1).max(1.0) as u64;
+                    projectile.dir16 = effects::direction16(from_px, to_px);
+                    self.projectiles.push(projectile);
                 }
             }
             ServerMessage::ObjectMagic {
@@ -298,7 +372,7 @@ impl Game {
                 locations,
                 cast,
             } => {
-                if Some(id) != self.user {
+                if Some(id) != self.user && !magic_type::is_mobile_support_cast(magic) {
                     if let Some(o) = self.objects.get_mut(&id) {
                         o.enqueue(Queued {
                             action: cast_action(magic),
@@ -349,6 +423,9 @@ impl Game {
                 }
             }
             ServerMessage::QuestChanged(q) => {
+                if let Some(dialog) = self.windows.npc.as_mut() {
+                    update_dialog_quest(&mut dialog.quests, &q, self.catalog.quest(q.quest));
+                }
                 let was_done = self
                     .quests
                     .iter()
@@ -379,6 +456,11 @@ impl Game {
                     None => self.quests.push(q),
                 }
                 self.say(text, now);
+            }
+            ServerMessage::NpcQuestMarker { id, marker } => {
+                if let Some(npc) = self.objects.get_mut(&id) {
+                    npc.quest_marker = marker;
+                }
             }
             ServerMessage::QuestCancelled { quest } => self.quests.retain(|q| q.quest != quest),
             ServerMessage::DayChanged { day_time } => self.day_time = day_time,
@@ -495,9 +577,9 @@ impl Game {
                 self.effects
                     .extend(effects::map_effect(effect, location, now));
             }
-            ServerMessage::ObjectPoisoned { id, poisoned } => {
+            ServerMessage::ObjectPoisoned { id, kinds } => {
                 if let Some(o) = self.objects.get_mut(&id) {
-                    o.poisoned = poisoned;
+                    o.set_poison_kinds(kinds, now);
                 }
             }
             ServerMessage::ObjectStruck {
@@ -579,12 +661,15 @@ impl Game {
             }
             ServerMessage::StatsChanged(stats) => self.stats = stats,
             ServerMessage::Inventory {
+                size,
                 inventory,
                 equipment,
                 gold,
                 weights,
             } => {
-                self.inventory = (0..INVENTORY_SIZE).map(|_| None).collect();
+                self.inventory = (0..(size as usize).clamp(INVENTORY_SIZE, MAX_INVENTORY_SIZE))
+                    .map(|_| None)
+                    .collect();
                 self.equipment = (0..EQUIPMENT_SIZE).map(|_| None).collect();
                 for (slot, item) in inventory {
                     if let Some(c) = self.inventory.get_mut(slot as usize) {
@@ -632,12 +717,30 @@ impl Game {
             }
             ServerMessage::WeightsChanged(w) => self.weights = w,
             ServerMessage::ObjectAppearance { id, appearance } => {
+                if Some(id) == self.user {
+                    if let (
+                        Some(character),
+                        Appearance::Player {
+                            name, gender, hair, ..
+                        },
+                    ) = (&mut self.character, &appearance)
+                    {
+                        character.name = name.clone();
+                        character.gender = *gender;
+                        character.hair = *hair;
+                    }
+                }
                 if let Some(o) = self.objects.get_mut(&id) {
                     let was_mounted = o.mounted();
                     o.appearance = appearance;
                     if o.mounted() != was_mounted {
                         o.refresh_frame();
                     }
+                }
+            }
+            ServerMessage::ObjectLight { id, light } => {
+                if let Some(o) = self.objects.get_mut(&id) {
+                    o.light = light;
                 }
             }
             ServerMessage::MarriageInvite { from } => {
@@ -675,11 +778,16 @@ impl Game {
                 self.action_time = 0;
                 self.say(format!("Entered {}.", map.name), now);
             }
+            ServerMessage::SafeZones { cells } => {
+                self.minimap.safe_cells =
+                    Some(cells.into_iter().map(|cell| (cell.x, cell.y)).collect());
+            }
             ServerMessage::NpcResponse {
                 npc,
                 page,
                 say,
                 dialog_type,
+                currency,
                 goods,
                 sell_types,
                 quests,
@@ -689,6 +797,7 @@ impl Game {
                     page,
                     &say,
                     dialog_type,
+                    currency,
                     goods,
                     sell_types,
                     quests,
@@ -700,12 +809,16 @@ impl Game {
             }
             ServerMessage::Chat { text } => self.say(text, now),
             ServerMessage::Storage { size, items } => {
-                self.storage = (0..size).map(|_| None).collect();
+                // Two 100-slot tabs is the most the server ever grants.
+                self.storage = (0..(size as usize).min(200)).map(|_| None).collect();
                 for (slot, item) in items {
                     if let Some(c) = self.storage.get_mut(slot as usize) {
                         *c = Some(item);
                     }
                 }
+            }
+            ServerMessage::TabPrices { inventory, storage } => {
+                self.windows.tab_prices = (inventory, storage);
             }
             ServerMessage::TradeRequest { from } => {
                 self.say_colored(
@@ -764,6 +877,9 @@ impl Game {
                     [255, 200, 120, 255],
                 );
             }
+            ServerMessage::PetMode { mode } => {
+                self.pet_mode = mode;
+            }
             ServerMessage::RefineList(list) => {
                 for r in list {
                     self.refines.retain(|x| x.index != r.index);
@@ -773,6 +889,9 @@ impl Game {
             ServerMessage::RefineRetrieved { index } => self.refines.retain(|r| r.index != index),
             ServerMessage::CompanionShop(offers) => self.companion_shop = offers,
             ServerMessage::Currencies(list) => self.currencies = list,
+            ServerMessage::DisciplineInfo(next) => self.windows.discipline_next = next,
+            // The store arrives whole on entry; the window filters its copy.
+            ServerMessage::StoreStock(stock) => self.windows.market.set_stock(stock),
             ServerMessage::Rankings {
                 class,
                 online_only,
@@ -787,6 +906,15 @@ impl Game {
                     class,
                     online_only,
                 };
+            }
+            ServerMessage::RankSearchResult { entry, start } => {
+                if let Some(character) = self.windows.ranking.search_result(entry, start) {
+                    self.pending_messages
+                        .push(ClientMessage::RankInspect { character });
+                }
+            }
+            ServerMessage::RankInspection(details) => {
+                self.windows.ranking.set_inspection(details);
             }
             ServerMessage::Friends(list) => self.friends = list,
             ServerMessage::Blocks(list) => self.blocks = list,
@@ -1037,6 +1165,9 @@ impl Game {
     pub fn leave_world(&mut self) {
         self.audio.stop_all();
         self.map = None;
+        self.minimap.navigation = None;
+        self.minimap.safe_cells = None;
+        self.portal_markers.clear();
         self.objects.clear();
         self.user = None;
         self.chat.clear();
@@ -1044,6 +1175,7 @@ impl Game {
         self.fortunes.clear();
         self.hovered = None;
         self.windows = WindowState::default();
+        self.belt_key_pending = None;
         self.goal = None;
         self.effects.clear();
         self.projectiles.clear();
@@ -1072,10 +1204,22 @@ impl Game {
     }
 
     pub(super) fn load_map(&mut self, file: &str, name: &str) {
-        let path = self.assets.root().join(format!("Map/{file}.map"));
+        let map_dir = std::env::var_os("ZIRCON_MAP_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| self.assets.root().join("Map"));
+        let path = map_dir.join(format!("{file}.map"));
+        self.minimap.navigation = None;
+        self.minimap.safe_cells = None;
+        self.portal_markers.clear();
         match MapFile::load(&path) {
             Ok(m) => {
                 tracing::info!(map = name, w = m.width, h = m.height, "map loaded");
+                self.minimap.navigation = Some(minimap::NavigationMap::from_map(&m));
+                match mir_formats::navigation::Navigation::load(&path, &m) {
+                    Ok(Some(navigation)) => self.portal_markers = navigation.portals,
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(%e, "Ignoring invalid portal navigation metadata"),
+                }
                 self.map = Some(m);
             }
             Err(e) => {
@@ -1085,5 +1229,66 @@ impl Game {
             }
         }
         self.map_name = name.to_string();
+        self.map_file = file.to_string();
+        if self.dungeon_codex.open {
+            self.dungeon_codex.select_floor(file);
+        }
+    }
+}
+
+#[cfg(test)]
+mod quest_dialog_tests {
+    use super::*;
+    use crate::items::{QuestDef, QuestTaskDef};
+    use mir_proto::{NpcQuest, UserQuestSummary};
+
+    #[test]
+    fn accepting_and_finishing_quest_refreshes_open_npc_links() {
+        let mut def = QuestDef {
+            index: 9,
+            name: "Test quest".into(),
+            progress_text: String::new(),
+            completed_text: String::new(),
+            start_npc: 13,
+            finish_npc: 13,
+            tasks: vec![QuestTaskDef {
+                index: 1,
+                task: 0,
+                item: 0,
+                description: String::new(),
+                amount: 2,
+            }],
+            rewards: Vec::new(),
+        };
+        let offer = || NpcQuest {
+            quest: 9,
+            name: "Test quest".into(),
+            state: 0,
+        };
+        let mut links = vec![offer()];
+        let mut changed = UserQuestSummary {
+            quest: 9,
+            track: true,
+            completed: false,
+            selected_reward: 0,
+            tasks: Vec::new(),
+        };
+        update_dialog_quest(&mut links, &changed, Some(&def));
+        assert_eq!(links[0].state, 1);
+        changed.tasks.push((1, 2));
+        update_dialog_quest(&mut links, &changed, Some(&def));
+        assert_eq!(links[0].state, 2);
+        changed.completed = true;
+        update_dialog_quest(&mut links, &changed, Some(&def));
+        assert!(links.is_empty());
+
+        def.finish_npc = 14;
+        let mut links = vec![offer()];
+        changed.completed = false;
+        update_dialog_quest(&mut links, &changed, Some(&def));
+        assert!(
+            links.is_empty(),
+            "start NPC must stop offering accepted quest"
+        );
     }
 }

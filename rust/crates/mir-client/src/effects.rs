@@ -85,6 +85,7 @@ impl Effect {
 
 #[derive(Debug, Clone)]
 pub struct Projectile {
+    pub blend: Blend,
     pub library: u16,
     pub start: u32,
     pub count: u32,
@@ -195,15 +196,46 @@ pub fn attack_effect(magic: u16, attacker: ObjectId, dir: u8, now: u64) -> Optio
     })
 }
 
-/// A monster's thrown/spat projectile (Zircon draws per-monster art; this
-/// port uses the generic bolt in a neutral tint).
-pub fn monster_projectile(magic: u16, from: Point, to: Anchor, now: u64) -> Projectile {
-    let (library, start, count, color) = match magic {
-        magic_type::PINK_FIRE_BALL => (MAGIC, 1640, 6, FIRE),
-        magic_type::GREEN_SLUDGE_BALL => (MAGIC, 2620, 6, DARK),
+/// Ranged strikes anchored to the victim's ground cell, rather than flying bolts.
+pub fn monster_ground_attack(image: Option<u16>, cell: Point, now: u64) -> Option<Effect> {
+    let mut effect = match image {
+        Some(114) => Effect::at(169, 2230, 6, 100, WHITE, Anchor::Cell(cell), now),
+        Some(149) => Effect::at(170, 600, 10, 100, WHITE, Anchor::Cell(cell), now),
+        _ => return None,
+    };
+    if image == Some(114) {
+        effect.blend = Blend::Alpha;
+    }
+    Some(effect)
+}
+
+/// A monster's thrown/spat projectile, using its reference art when mapped.
+pub fn monster_projectile(
+    image: Option<u16>,
+    magic: u16,
+    from: Point,
+    to: Anchor,
+    now: u64,
+) -> Projectile {
+    let (library, start, count, color) = match (image, magic) {
+        (Some(56), _) => (169, 1240, 1, WHITE),
+        (Some(92 | 96 | 154), _) => (169, 1070, 1, WHITE),
+        (Some(169), _) => (171, 1080, 6, [1.0, 165.0 / 255.0, 0.0, 1.0]),
+        (Some(170), _) => (171, 1080, 6, WHITE),
+        (_, magic_type::PINK_FIRE_BALL) => (MAGIC, 1640, 6, FIRE),
+        (_, magic_type::GREEN_SLUDGE_BALL) => (MAGIC, 2620, 6, DARK),
+        // Zircon `MapObject` Shuriken: `MirProjectile(1270, 3, 100 ms, MagicEx)`,
+        // 16 directions ten frames apart, no blend. Upstream #182 notes two
+        // more shapes at 1440 and 1610 but has not mapped them to items yet.
+        (_, magic_type::SHURIKEN) => (MAGIC_EX, 1270, 3, WHITE),
         _ => (MAGIC, 1640, 6, WHITE),
     };
     Projectile {
+        blend: if matches!(image, Some(56 | 92 | 96 | 154)) || magic == magic_type::SHURIKEN {
+            Blend::Alpha
+        } else {
+            Blend::Screen
+        },
         library,
         start,
         count,
@@ -214,7 +246,11 @@ pub fn monster_projectile(magic: u16, from: Point, to: Anchor, now: u64) -> Proj
         started: now,
         duration: 0,
         dir16: 0,
-        dir_stride: 10,
+        dir_stride: if matches!(image, Some(169 | 170)) {
+            0
+        } else {
+            10
+        },
         explode: None,
         sound: 0,
     }
@@ -263,6 +299,15 @@ pub fn object_effect(kind: u8, id: ObjectId, cell: Point, now: u64) -> Option<Ef
         e::DANCE_OF_SWALLOW => Effect::at(MAGIC_EX4, 2300, 8, 60, WHITE, Anchor::Object(id), now),
         e::HUNDRED_FIST => Effect::at(MAGIC_EX, 1270, 3, 100, WHITE, Anchor::Object(id), now),
         e::ELEMENTAL_SWORD => Effect::at(MAGIC, 1350, 6, 100, WHITE, Anchor::Object(id), now),
+        e::LEVEL_UP => Effect::at(
+            MAGIC_EX,
+            2030,
+            16,
+            100,
+            [0.0, 191.0 / 255.0, 1.0, 1.0],
+            Anchor::Object(id),
+            now,
+        ), // Zircon ObjectLeveled: DeepSkyBlue.
         _ => return None,
     })
 }
@@ -466,6 +511,46 @@ pub fn payload(
         .chain(locations.iter().map(|p| Anchor::Cell(*p)))
         .collect();
     match magic {
+        magic_type::SAMA_PHOENIX_FIRE
+        | magic_type::SAMA_BLACK_ICE
+        | magic_type::SAMA_BLUE_LIGHTNING
+        | magic_type::SAMA_WHITE_WIND => {
+            let (start, color) = match magic {
+                magic_type::SAMA_PHOENIX_FIRE => (4500, FIRE),
+                magic_type::SAMA_BLACK_ICE => (4600, ICE),
+                magic_type::SAMA_BLUE_LIGHTNING => (4700, LIGHTNING),
+                _ => (4800, WIND),
+            };
+            for &cell in locations {
+                out.effects.push(Effect::at(
+                    178,
+                    start,
+                    10,
+                    100,
+                    color,
+                    Anchor::Cell(cell),
+                    now,
+                ));
+            }
+        }
+        magic_type::SAMA_PROPHET_FIRE
+        | magic_type::SAMA_PROPHET_LIGHTNING
+        | magic_type::SAMA_PROPHET_WIND => {
+            let (start, color) = match magic {
+                magic_type::SAMA_PROPHET_FIRE => (5600, FIRE),
+                magic_type::SAMA_PROPHET_LIGHTNING => (5200, LIGHTNING),
+                _ => (5400, WIND),
+            };
+            out.effects.push(Effect::at(
+                178,
+                start,
+                10,
+                100,
+                color,
+                Anchor::Cell(caster_cell),
+                now,
+            ));
+        }
         magic_type::FIRE_BALL
         | magic_type::ICE_BOLT
         | magic_type::FLAMING_DAGGERS
@@ -544,6 +629,7 @@ pub fn payload(
                     caster_cell,
                     a,
                     Projectile {
+                        blend: Blend::Screen,
                         library,
                         start,
                         count,
@@ -606,6 +692,7 @@ pub fn payload(
                     caster_cell,
                     a,
                     Projectile {
+                        blend: Blend::Screen,
                         library: MAGIC,
                         start: 980,
                         count: 3,
@@ -690,6 +777,7 @@ pub fn payload(
                     caster_cell,
                     a,
                     Projectile {
+                        blend: Blend::Screen,
                         library: lib,
                         start,
                         count,
@@ -852,6 +940,7 @@ pub fn payload(
                     caster_cell,
                     a,
                     Projectile {
+                        blend: Blend::Screen,
                         library: lib,
                         start,
                         count,
@@ -934,6 +1023,7 @@ pub fn payload(
                     caster_cell,
                     a,
                     Projectile {
+                        blend: Blend::Screen,
                         library: MAGIC,
                         start: 1640,
                         count: 6,
@@ -1008,6 +1098,7 @@ pub fn payload(
                     caster_cell,
                     a,
                     Projectile {
+                        blend: Blend::Screen,
                         library: MAGIC_EX,
                         start: 1990,
                         count: 5,
@@ -1073,4 +1164,133 @@ pub fn payload(
         _ => {}
     }
     out
+}
+
+#[cfg(test)]
+mod level_up_tests {
+    use super::*;
+
+    #[test]
+    fn griffin_projectiles_and_prophet_fields_use_reference_art() {
+        let from = Point::new(0, 0);
+        for image in [169, 170] {
+            let projectile = monster_projectile(Some(image), 0, from, Anchor::Cell(from), 0);
+            assert_eq!(
+                (
+                    projectile.library,
+                    projectile.start,
+                    projectile.count,
+                    projectile.dir_stride
+                ),
+                (171, 1080, 6, 0)
+            );
+        }
+        for (image, library, start, count) in [(114, 169, 2230, 6), (149, 170, 600, 10)] {
+            let effect = monster_ground_attack(Some(image), from, 0).unwrap();
+            assert_eq!(
+                (effect.library, effect.start, effect.count),
+                (library, start, count)
+            );
+            assert!(matches!(effect.anchor, Anchor::Cell(cell) if cell == from));
+        }
+        for (magic, start) in [
+            (magic_type::SAMA_PROPHET_FIRE, 5600),
+            (magic_type::SAMA_PROPHET_LIGHTNING, 5200),
+            (magic_type::SAMA_PROPHET_WIND, 5400),
+        ] {
+            let effect = payload(magic, from, &[], &[], 0).effects.remove(0);
+            assert_eq!(
+                (effect.library, effect.start, effect.count),
+                (178, start, 10)
+            );
+        }
+    }
+
+    #[test]
+    fn sama_elemental_boss_signatures_use_reference_ground_art() {
+        let cells = [Point::new(10, 10), Point::new(11, 10)];
+        let mut assets = std::env::var_os("ZIRCON_ASSETS").map(crate::assets::Assets::new);
+        for (magic, start) in [
+            (magic_type::SAMA_PHOENIX_FIRE, 4500),
+            (magic_type::SAMA_BLACK_ICE, 4600),
+            (magic_type::SAMA_BLUE_LIGHTNING, 4700),
+            (magic_type::SAMA_WHITE_WIND, 4800),
+        ] {
+            let effects = payload(magic, Point::new(0, 0), &[], &cells, 50).effects;
+            assert_eq!(effects.len(), cells.len());
+            for (effect, cell) in effects.iter().zip(cells) {
+                assert_eq!(
+                    (effect.library, effect.start, effect.count, effect.delay_ms),
+                    (178, start, 10, 100)
+                );
+                assert!(matches!(effect.anchor, Anchor::Cell(actual) if actual == cell));
+                if let Some(assets) = &mut assets {
+                    for frame in start..start + 10 {
+                        assert!(
+                            assets.info(178, frame).is_some(),
+                            "missing Sama signature frame {frame}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn lizard_spines_and_archer_arrows_use_reference_projectiles() {
+        let mut assets = std::env::var_os("ZIRCON_ASSETS").map(crate::assets::Assets::new);
+        for (image, start) in [(56, 1240), (92, 1070), (96, 1070), (154, 1070)] {
+            let mut projectile = monster_projectile(
+                Some(image),
+                0,
+                Point::new(0, 0),
+                Anchor::Cell(Point::new(1, 1)),
+                0,
+            );
+            assert_eq!(
+                (
+                    projectile.library,
+                    projectile.start,
+                    projectile.count,
+                    projectile.dir_stride
+                ),
+                (169, start, 1, 10)
+            );
+            assert!(matches!(projectile.blend, Blend::Alpha));
+            for direction in 0..16 {
+                projectile.dir16 = direction;
+                let frame = projectile.frame(100);
+                assert_eq!(frame, start + u32::from(direction) * 10);
+                if let Some(assets) = &mut assets {
+                    assert!(
+                        assets.info(169, frame).is_some(),
+                        "missing projectile {image} frame {frame}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn level_up_uses_original_magic_ex_frames() {
+        let effect = object_effect(
+            mir_proto::effect::LEVEL_UP,
+            ObjectId(7),
+            Point::new(0, 0),
+            100,
+        )
+        .unwrap();
+        assert_eq!(effect.frame(100), Some(2030));
+        assert_eq!(effect.frame(1_600), Some(2045));
+        assert_eq!(effect.frame(1_700), None);
+        if let Ok(root) = std::env::var("ZIRCON_ASSETS") {
+            let mut assets = crate::assets::Assets::new(root);
+            for frame in 2030..=2045 {
+                assert!(
+                    assets.info(MAGIC_EX, frame).is_some(),
+                    "missing level-up frame {frame}"
+                );
+            }
+        }
+    }
 }

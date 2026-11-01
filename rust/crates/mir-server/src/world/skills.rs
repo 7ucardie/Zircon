@@ -147,13 +147,22 @@ impl World {
     /// Consume `count` talismans from the amulet slot (Zircon `UseAmulet`),
     /// returning the item's holy/dark affinity flags.
     pub(super) fn use_amulet(&mut self, id: ObjectId, count: u32) -> Option<(bool, bool)> {
+        self.use_amulet_shape(id, count, 0)
+    }
+
+    pub(super) fn use_amulet_shape(
+        &mut self,
+        id: ObjectId,
+        count: u32,
+        shape: i32,
+    ) -> Option<(bool, bool)> {
         let (info, have) = {
             let p = self.objects.get(&id)?.player()?;
             let it = p.bag.equipment.get(slot::AMULET)?.as_ref()?;
             (it.info, it.count)
         };
         let def = self.data.items.get(&info)?;
-        if def.item_type != item_type::AMULET || def.shape != 0 || have < count {
+        if def.item_type != item_type::AMULET || def.shape != shape || have < count {
             return None;
         }
         let flags = (def.stat(48) > 0, def.stat(49) > 0);

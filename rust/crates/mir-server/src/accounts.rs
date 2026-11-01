@@ -4,6 +4,7 @@
 //! memory; it is saved on every account-level change and periodically.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -12,7 +13,9 @@ use argon2::password_hash::{
     rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString,
 };
 use argon2::Argon2;
-use mir_proto::{rules, BeltLink, CharacterSummary, Class, Direction, Gender, Point};
+use mir_proto::{
+    rules, BeltLink, CharacterSummary, Class, Direction, Gender, Point, MAX_PLAYER_LEVEL,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::items::StoredItem;
@@ -27,6 +30,9 @@ pub struct CharacterRecord {
     pub hair: u8,
     pub level: i32,
     pub experience: u64,
+    /// Fractional experience carried between awards (C# stores decimal XP).
+    #[serde(default)]
+    pub experience_fraction: f64,
     pub hp: i32,
     pub mp: i32,
     /// Map file stem; empty until the character has entered the world.
@@ -37,9 +43,19 @@ pub struct CharacterRecord {
     pub last_login: u64,
     pub deleted: bool,
     #[serde(default)]
+    pub gm: bool,
+    #[serde(default)]
+    pub caption: Option<String>,
+    #[serde(default)]
     pub items: Vec<StoredItem>,
+    /// Character bag capacity; old records use the base 48 slots.
+    #[serde(default)]
+    pub inventory_size: u8,
     #[serde(default)]
     pub gold: u64,
+    /// Event slots already credited. Saved with Gold to make pending grants idempotent.
+    #[serde(default)]
+    pub event_rewards: Vec<u64>,
     /// Highest item id handed out for this character.
     #[serde(default)]
     pub next_item_id: u32,
@@ -50,6 +66,9 @@ pub struct CharacterRecord {
     /// Zircon `UserCurrency`: (CurrencyInfo index, amount); gold lives in `gold`.
     #[serde(default)]
     pub currencies: Vec<(i32, i64)>,
+    /// Paid Stripe Checkout Session IDs, saved atomically with Game Gold.
+    #[serde(default)]
+    pub stripe_grants: Vec<String>,
     #[serde(default)]
     pub rebirth: i32,
     #[serde(default)]
@@ -59,11 +78,16 @@ pub struct CharacterRecord {
     pub allow_group: bool,
     #[serde(default)]
     pub attack_mode: u8,
+    /// Zircon `Character.PetMode`; old saves default to Move + Attack.
+    #[serde(default)]
+    pub pet_mode: u8,
     #[serde(default)]
     pub pk_points: i32,
     /// Zircon `Character.Fame`: the held `FameInfo` index (0 = none).
     #[serde(default)]
     pub fame: i32,
+    #[serde(default)]
+    pub hermit_stats: Vec<(i32, i32)>,
     /// Zircon `Account.Horse` (per character here).
     #[serde(default)]
     pub horse: u8,
@@ -86,6 +110,24 @@ pub struct CharacterRecord {
     /// `CompanionInfo` indices unlocked with their items.
     #[serde(default)]
     pub companion_unlocks: Vec<i32>,
+    /// Zircon `Character.HairColour`, packed ARGB (0 = the sprite's own).
+    #[serde(default)]
+    pub hair_colour: u32,
+    /// Cosmetic armour ItemInfo index; never contributes item stats.
+    #[serde(default)]
+    pub wardrobe_item: Option<i32>,
+    #[serde(default)]
+    pub wardrobe_helmet: Option<i32>,
+    #[serde(default)]
+    pub wardrobe_weapon: Option<i32>,
+    #[serde(default)]
+    pub wardrobe_shoes: Option<i32>,
+    /// Zircon `UserDiscipline.Level` (0 = no discipline taken) and the
+    /// experience banked towards the next rung.
+    #[serde(default)]
+    pub discipline: i32,
+    #[serde(default)]
+    pub discipline_experience: i64,
 }
 
 /// Zircon `UserQuest` as persisted.
@@ -110,7 +152,7 @@ impl CharacterRecord {
             class: self.class,
             gender: self.gender,
             hair: self.hair,
-            level: self.level.clamp(1, 255) as u8,
+            level: self.level.clamp(1, MAX_PLAYER_LEVEL),
             last_login: self.last_login,
             location: String::new(),
         }
@@ -124,6 +166,13 @@ pub struct AccountRecord {
     pub password_hash: String,
     pub created: u64,
     pub last_login: u64,
+    /// Unix seconds. Zero means no active ban.
+    #[serde(default)]
+    pub banned_until: u64,
+    #[serde(default)]
+    pub chat_ban_until: u64,
+    #[serde(default)]
+    pub global_ban_until: u64,
     pub characters: Vec<CharacterRecord>,
     /// Account storage (Zircon `Account.Items` with storage slots).
     #[serde(default)]
@@ -198,8 +247,14 @@ impl Accounts {
         }
         let tmp = self.path.with_extension("json.tmp");
         let text = serde_json::to_string_pretty(&self.store)?;
-        std::fs::write(&tmp, text)?;
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
         std::fs::rename(&tmp, &self.path)?;
+        #[cfg(unix)]
+        if let Some(dir) = self.path.parent() {
+            std::fs::File::open(dir)?.sync_all()?;
+        }
         self.dirty = false;
         tracing::debug!(path = %self.path.display(), "accounts saved");
         Ok(())
@@ -209,10 +264,59 @@ impl Accounts {
         self.dirty = true;
     }
 
+    /// Credit a paid test Checkout Session once. Call after snapshotting online players.
+    /// Returns the new balance when credited; None means the same session was seen before.
+    pub fn credit_stripe_session(
+        &mut self,
+        account: u32,
+        character: u32,
+        currency: i32,
+        session: &str,
+        amount: i64,
+    ) -> std::result::Result<Option<i64>, String> {
+        if !session.starts_with("cs_test_") || session.len() > 255 || !matches!(amount, 100 | 500) {
+            return Err("Invalid test grant".into());
+        }
+        if self
+            .store
+            .accounts
+            .iter()
+            .flat_map(|a| &a.characters)
+            .any(|c| c.stripe_grants.iter().any(|id| id == session) && c.id != character)
+        {
+            return Err("Checkout Session belongs to another character".into());
+        }
+        let record = self
+            .character_mut(account, character)
+            .ok_or("Unknown checkout recipient")?;
+        if record.stripe_grants.iter().any(|id| id == session) {
+            return Ok(None);
+        }
+        if record.deleted {
+            return Err("Checkout recipient was deleted".into());
+        }
+        let entry = record
+            .currencies
+            .iter_mut()
+            .find(|(index, _)| *index == currency);
+        let balance = if let Some((_, balance)) = entry {
+            *balance = balance
+                .checked_add(amount)
+                .ok_or("Game Gold balance overflow")?;
+            *balance
+        } else {
+            record.currencies.push((currency, amount));
+            amount
+        };
+        record.stripe_grants.push(session.to_owned());
+        self.mark_dirty();
+        Ok(Some(balance))
+    }
+
     pub fn create(&mut self, email: &str, password: &str) -> std::result::Result<u32, String> {
         let email = email.trim();
         if !rules::valid_email(email) {
-            return Err("Invalid account name".into());
+            return Err("Invalid email address".into());
         }
         if !rules::valid_password(password) {
             return Err(format!(
@@ -237,6 +341,9 @@ impl Accounts {
             password_hash: hash,
             created: now_secs(),
             last_login: 0,
+            banned_until: 0,
+            chat_ban_until: 0,
+            global_ban_until: 0,
             characters: Vec::new(),
             storage: Vec::new(),
             storage_size: 0,
@@ -262,6 +369,9 @@ impl Accounts {
             .is_err()
         {
             return Err("Wrong password".into());
+        }
+        if account.banned_until > now_secs() {
+            return Err("Account banned".into());
         }
         account.last_login = now_secs();
         self.dirty = true;
@@ -330,6 +440,7 @@ impl Accounts {
             hair,
             level: 1,
             experience: 0,
+            experience_fraction: 0.0,
             hp: 0,
             mp: 0,
             map: String::new(),
@@ -338,18 +449,25 @@ impl Accounts {
             created: now_secs(),
             last_login: 0,
             deleted: false,
+            gm: false,
+            caption: None,
             items: Vec::new(),
+            inventory_size: mir_proto::INVENTORY_SIZE as u8,
             gold: 0,
+            event_rewards: Vec::new(),
             next_item_id: 0,
             magics: Vec::new(),
             belt: Vec::new(),
             currencies: Vec::new(),
+            stripe_grants: Vec::new(),
             rebirth: 0,
             quests: Vec::new(),
             allow_group: false,
             attack_mode: 0,
+            pet_mode: 0,
             pk_points: 0,
             fame: 0,
+            hermit_stats: Vec::new(),
             horse: 0,
             partner: 0,
             partner_name: String::new(),
@@ -358,6 +476,13 @@ impl Accounts {
             companions: Vec::new(),
             active_companion: None,
             companion_unlocks: Vec::new(),
+            hair_colour: 0,
+            wardrobe_item: None,
+            wardrobe_helmet: None,
+            wardrobe_weapon: None,
+            wardrobe_shoes: None,
+            discipline: 0,
+            discipline_experience: 0,
         };
         acc.characters.push(rec.clone());
         self.store.next_character_id += 1;
@@ -449,6 +574,7 @@ pub fn test_character(name: &str) -> CharacterRecord {
         hair: 1,
         level: 1,
         experience: 0,
+        experience_fraction: 0.0,
         hp: 0,
         mp: 0,
         map: String::new(),
@@ -457,18 +583,25 @@ pub fn test_character(name: &str) -> CharacterRecord {
         created: 0,
         last_login: 0,
         deleted: false,
+        gm: false,
+        caption: None,
         items: Vec::new(),
+        inventory_size: mir_proto::INVENTORY_SIZE as u8,
         gold: 0,
+        event_rewards: Vec::new(),
         next_item_id: 0,
         magics: Vec::new(),
         belt: Vec::new(),
         currencies: Vec::new(),
+        stripe_grants: Vec::new(),
         rebirth: 0,
         quests: Vec::new(),
         allow_group: false,
         attack_mode: 0,
+        pet_mode: 0,
         pk_points: 0,
         fame: 0,
+        hermit_stats: Vec::new(),
         horse: 0,
         partner: 0,
         partner_name: String::new(),
@@ -477,6 +610,13 @@ pub fn test_character(name: &str) -> CharacterRecord {
         companions: Vec::new(),
         active_companion: None,
         companion_unlocks: Vec::new(),
+        hair_colour: 0,
+        wardrobe_item: None,
+        wardrobe_helmet: None,
+        wardrobe_weapon: None,
+        wardrobe_shoes: None,
+        discipline: 0,
+        discipline_experience: 0,
     }
 }
 
@@ -504,12 +644,92 @@ mod tests {
             .new_character(id, "1bad", Class::Wizard, Gender::Female, 2)
             .is_err());
         assert_eq!(a.summaries(id).len(), 1);
+        a.character_mut(id, c.id).unwrap().pet_mode = mir_proto::pet_mode::PVP;
+        a.character_mut(id, c.id).unwrap().level = MAX_PLAYER_LEVEL;
+        a.mark_dirty();
         a.save_if_dirty().unwrap();
         let b = Accounts::load(&path).unwrap();
         assert_eq!(b.summaries(id)[0].name, "Hero");
+        assert_eq!(b.summaries(id)[0].level, MAX_PLAYER_LEVEL);
+        assert_eq!(
+            b.character(id, c.id).unwrap().pet_mode,
+            mir_proto::pet_mode::PVP
+        );
         let mut b = b;
         b.delete_character(id, c.id).unwrap();
         assert!(b.summaries(id).is_empty());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn gm_grant_and_ban_survive_reload() {
+        let dir = std::env::temp_dir().join(format!("zircon-gm-accounts-{}", std::process::id()));
+        let path = dir.join("accounts.json");
+        let mut accounts = Accounts::load(&path).unwrap();
+        let id = accounts.create("gm@example.test", "secret123").unwrap();
+        let character = accounts
+            .new_character(id, "Master", Class::Warrior, Gender::Male, 1)
+            .unwrap();
+        assert!(!character.gm);
+        accounts.character_mut(id, character.id).unwrap().gm = true;
+        accounts.account_mut(id).unwrap().banned_until = now_secs() + 3600;
+        accounts.mark_dirty();
+        accounts.save_if_dirty().unwrap();
+        let mut loaded = Accounts::load(&path).unwrap();
+        assert!(loaded.character(id, character.id).unwrap().gm);
+        assert_eq!(
+            loaded.login("gm@example.test", "secret123"),
+            Err("Account banned".into())
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stripe_credit_is_atomic_with_its_replay_marker() {
+        let dir =
+            std::env::temp_dir().join(format!("zircon-stripe-accounts-{}", std::process::id()));
+        let path = dir.join("accounts.json");
+        let mut accounts = Accounts::load(&path).unwrap();
+        let account = accounts.create("buyer@example.test", "secret123").unwrap();
+        let character = accounts
+            .new_character(account, "Buyer", Class::Warrior, Gender::Male, 1)
+            .unwrap()
+            .id;
+        assert_eq!(
+            accounts
+                .credit_stripe_session(account, character, 1, "cs_test_paid1", 100)
+                .unwrap(),
+            Some(100)
+        );
+        // A failed disk write keeps the grant pending for the next retry.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert!(accounts.save_if_dirty().is_err());
+        std::fs::remove_dir(&path).unwrap();
+        assert_eq!(
+            accounts
+                .credit_stripe_session(account, character, 1, "cs_test_paid1", 100)
+                .unwrap(),
+            None
+        );
+        accounts.save_if_dirty().unwrap();
+        let mut loaded = Accounts::load(&path).unwrap();
+        assert_eq!(
+            loaded
+                .credit_stripe_session(account, character, 1, "cs_test_paid1", 100)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            loaded.character(account, character).unwrap().currencies,
+            vec![(1, 100)]
+        );
+        assert_eq!(
+            loaded
+                .credit_stripe_session(account, character, 1, "cs_test_paid2", 500)
+                .unwrap(),
+            Some(600)
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }

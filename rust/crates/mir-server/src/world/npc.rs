@@ -1,6 +1,28 @@
 use super::*;
 
+fn shop_price(base: u64, exchange_rate: f64) -> u64 {
+    (base as f64 * exchange_rate).max(1.0) as u64
+}
+
 impl World {
+    /// Keep a dialog only while its NPC is still visible to this player.
+    pub(super) fn npc_session(&mut self, id: ObjectId) -> Option<(ObjectId, i32)> {
+        let player = self.objects.get(&id)?;
+        let session = player.player()?.npc?;
+        let valid = self.objects.get(&session.0).is_some_and(|npc| {
+            !player.dead
+                && npc.map == player.map
+                && npc.location.distance(player.location) <= MAX_VIEW_RANGE
+                && matches!(&npc.kind, Kind::Npc(data) if self.npc_visible_to(data.info, player.player().unwrap()))
+        });
+        if !valid {
+            self.npc_close(id);
+            self.send_to(id, ServerMessage::NpcClose);
+            return None;
+        }
+        Some(session)
+    }
+
     pub fn npc_call(&mut self, id: ObjectId, npc: ObjectId) {
         let Some(o) = self.objects.get(&id) else {
             return;
@@ -22,12 +44,7 @@ impl World {
     }
 
     pub fn npc_button(&mut self, id: ObjectId, button: i32) {
-        let Some((npc, page)) = self
-            .objects
-            .get(&id)
-            .and_then(|o| o.player())
-            .and_then(|p| p.npc)
-        else {
+        let Some((npc, page)) = self.npc_session(id) else {
             return;
         };
         let Some(def) = self.data.npc_pages.get(&page) else {
@@ -99,22 +116,27 @@ impl World {
                 self.send_to(id, ServerMessage::NpcClose);
                 return;
             }
+            let Some(currency) = self.npc_page_currency(&def).cloned() else {
+                self.npc_close(id);
+                self.send_to(id, ServerMessage::NpcClose);
+                return;
+            };
             let goods = def
                 .goods
                 .iter()
                 .filter_map(|(item, rate)| {
                     let d = self.data.items.get(item)?;
+                    let base = ((d.price as f64 * rate).round() as u64).max(1);
                     Some(Good {
                         info: *item,
-                        price: ((d.price as f64 * rate).round() as u64).max(1),
+                        price: shop_price(base, currency.exchange_rate),
                     })
                 })
                 .collect();
             if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
                 p.npc = Some((npc, page));
             }
-            // Strip markup the client does not render.
-            let say = def.say.clone();
+            let say = self.npc_page_say(id, &def);
             let _ = parse_dialog(&say);
             self.send_to(
                 id,
@@ -123,6 +145,7 @@ impl World {
                     page,
                     say,
                     dialog_type: def.dialog_type,
+                    currency: currency.name,
                     goods,
                     sell_types: def.types.clone(),
                     quests: self.npc_quests(id, npc),
@@ -135,6 +158,36 @@ impl World {
             }
             return;
         }
+    }
+
+    fn npc_page_say(&self, id: ObjectId, page: &crate::data::NpcPageDef) -> String {
+        let mut say = page.say.clone();
+        let Some(player) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return say;
+        };
+        for value in &page.values {
+            // This pack uses Field.Name and Field.FameCost on the Fame page.
+            let field = match (value.value_type, value.field_type) {
+                (3, 1) => Some(player.name.clone()),
+                (3, 100) => self
+                    .next_fame_title(player.fame)
+                    .map(|f| f.cost.to_string()),
+                _ => None,
+            };
+            let prefix = format!("<{}:", value.id);
+            while let Some(start) = say.find(&prefix) {
+                let fallback_start = start + prefix.len();
+                let Some(end_offset) = say[fallback_start..].find('>') else {
+                    break;
+                };
+                let end = fallback_start + end_offset;
+                let replacement = field
+                    .clone()
+                    .unwrap_or_else(|| say[fallback_start..end].into());
+                say.replace_range(start..=end, &replacement);
+            }
+        }
+        say
     }
 
     pub(super) fn npc_check(&mut self, id: ObjectId, c: &crate::data::NpcCheckDef) -> bool {
@@ -177,13 +230,7 @@ impl World {
             // the item's own), only counted when it matches `int1` (0 = any).
             8 => weapon.is_some_and(|w| {
                 let def = self.data.items.get(&w.info);
-                let added = |stat: i32| {
-                    w.added
-                        .iter()
-                        .find(|(s, _)| *s == stat)
-                        .map(|(_, v)| *v)
-                        .unwrap_or(0)
-                };
+                let added = |stat: i32| w.bonus(stat);
                 let base = |stat: i32| def.map(|d| d.stat(stat)).unwrap_or(0);
                 let elem_stat = |v: i32| -> Option<i32> {
                     (1..=7)
@@ -206,16 +253,11 @@ impl World {
                 };
                 cmp(c.operator, value as i64, c.int2 as i64)
             }),
-            // Weapon can refine: every weapon here is refinable.
-            9 => weapon.is_some() && equal,
+            // Readiness is separate from the permanent NonRefinable flag.
+            9 => weapon.is_some_and(|w| w.refinable && !w.non_refinable) == equal,
             // Weapon added stat `stat1` compared with `int1`.
             16 => weapon.is_some_and(|w| {
-                let v = w
-                    .added
-                    .iter()
-                    .find(|(s, _)| *s == c.stat1)
-                    .map(|(_, v)| *v)
-                    .unwrap_or(0);
+                let v = w.bonus(c.stat1);
                 cmp(c.operator, v as i64, c.int1 as i64)
             }),
             // Horse type owned (NPC pages compare the HorseType value).
@@ -340,7 +382,9 @@ impl World {
                     return;
                 }
                 p.level = 1;
-                p.experience /= 200;
+                let kept = (p.experience as f64 + p.experience_fraction) / 200.0;
+                p.experience = kept.floor() as u64;
+                p.experience_fraction = kept.fract();
                 p.rebirth += 1;
                 self.refresh_stats(id, true);
                 self.send_player_stats(id);
@@ -445,6 +489,19 @@ impl World {
         })
     }
 
+    fn npc_page_currency(
+        &self,
+        page: &crate::data::NpcPageDef,
+    ) -> Option<&crate::data::CurrencyDef> {
+        self.data
+            .currencies
+            .iter()
+            .find(|currency| match page.currency {
+                Some(index) => currency.index == index,
+                None => currency.currency_type == 0,
+            })
+    }
+
     /// Zircon `GetDataTypeValue`: the key a data list/value is stored under.
     /// `NPCDataType`: None 0, User 1, Guild 2 (no guilds yet), Account 3.
     pub(super) fn npc_data_key(&self, p: &PlayerData, data_type: i32) -> Option<String> {
@@ -483,13 +540,16 @@ impl World {
     }
 
     pub fn npc_buy(&mut self, id: ObjectId, info: i32, count: u32) {
+        let Some((_, page)) = self.npc_session(id) else {
+            return;
+        };
         let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
             return;
         };
-        let Some((_, page)) = p.npc else {
+        let Some(def) = self.data.npc_pages.get(&page) else {
             return;
         };
-        let Some(def) = self.data.npc_pages.get(&page) else {
+        let Some(currency) = self.npc_page_currency(def).cloned() else {
             return;
         };
         let Some((_, rate)) = def.goods.iter().find(|(i, _)| *i == info) else {
@@ -498,19 +558,43 @@ impl World {
         let Some(item) = self.data.items.get(&info) else {
             return;
         };
-        let count = count.clamp(1, item.stack_size.max(1) as u32);
-        let price = ((item.price as f64 * rate).round() as u64).max(1);
-        let total = price * count as u64;
-        if p.bag.gold < total {
+        if count == 0 || count > item.stack_size.max(1) as u32 {
+            return;
+        }
+        let base = ((item.price as f64 * rate).round() as u64).max(1);
+        let price = shop_price(base, currency.exchange_rate);
+        let Some(total) = price.checked_mul(count as u64) else {
+            return;
+        };
+        let has_funds = if currency.currency_type == 0 {
+            p.bag.gold >= total
+        } else {
+            total <= i64::MAX as u64
+                && p.currencies.get(&currency.index).copied().unwrap_or(0) >= total as i64
+        };
+        if !has_funds {
             self.send_to(
                 id,
                 ServerMessage::Chat {
-                    text: "Not enough gold.".into(),
+                    text: format!("Not enough {}.", currency.name),
                 },
             );
             return;
         }
-        if !p.bag.can_gain(&self.data, info, count, p.max_bag) {
+        let mut bought = UserItem::fresh(&self.data, info, count).unwrap();
+        bought.locked = true;
+        bought.non_refinable = matches!(
+            item.item_type,
+            mir_proto::item_type::WEAPON
+                | mir_proto::item_type::ARMOUR
+                | mir_proto::item_type::HELMET
+                | mir_proto::item_type::NECKLACE
+                | mir_proto::item_type::BRACELET
+                | mir_proto::item_type::RING
+                | mir_proto::item_type::SHOES
+                | mir_proto::item_type::BOOK
+        );
+        if !p.bag.can_gain_item(&self.data, &bought, p.max_bag) {
             self.send_to(
                 id,
                 ServerMessage::Chat {
@@ -522,25 +606,31 @@ impl World {
         let name = item.name.clone();
         let o = self.objects.get_mut(&id).unwrap();
         let p = o.player_mut().unwrap();
-        p.bag.gold -= total;
-        let mut next = p.next_item_id;
-        let changes = p.bag.gain(&self.data, info, count, &mut next);
-        p.next_item_id = next;
-        self.send_gold(id);
+        if currency.currency_type == 0 {
+            p.bag.gold -= total;
+        } else {
+            *p.currencies.entry(currency.index).or_insert(0) -= total as i64;
+        }
+        let changes = p.bag.gain_item(&self.data, bought, &mut p.next_item_id);
+        if currency.currency_type == 0 {
+            self.send_gold(id);
+        } else {
+            self.send_currencies(id);
+        }
         self.send_changes(id, changes);
         self.send_to(
             id,
             ServerMessage::Chat {
-                text: format!("Bought {name} x{count} for {total} gold."),
+                text: format!("Bought {name} x{count} for {total} {}.", currency.name),
             },
         );
     }
 
-    pub fn npc_sell(&mut self, id: ObjectId, slots: Vec<u8>) {
-        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+    pub fn npc_sell(&mut self, id: ObjectId, items: Vec<(u8, u32)>) {
+        let Some((_, page)) = self.npc_session(id) else {
             return;
         };
-        let Some((_, page)) = p.npc else {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
             return;
         };
         let Some(def) = self.data.npc_pages.get(&page).cloned() else {
@@ -549,51 +639,206 @@ impl World {
         if def.dialog_type != 1 || def.types.is_empty() {
             return;
         }
+        let Some(currency) = self.npc_page_currency(&def).cloned() else {
+            return;
+        };
+        let requested = !items.is_empty();
         let mut earned = 0u64;
         let mut sold = 0u32;
-        let mut changes = Changed::new();
-        for slot in slots {
-            let Some(item) = self.objects[&id]
-                .player()
-                .unwrap()
-                .bag
-                .inventory
-                .get(slot as usize)
-                .cloned()
-                .flatten()
-            else {
+        let mut selected = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (slot, count) in items {
+            if count == 0 || !seen.insert(slot) {
+                continue;
+            }
+            let Some(item) = p.bag.inventory.get(slot as usize).and_then(Option::as_ref) else {
                 continue;
             };
             let Some(idef) = self.data.items.get(&item.info) else {
                 continue;
             };
-            if !idef.can_sell || !def.types.contains(&idef.item_type) {
+            if count > item.count
+                || item.locked
+                || item.worthless
+                || !idef.can_sell
+                || !def.types.contains(&idef.item_type)
+            {
                 continue;
             }
-            let price = sell_price(idef, &item);
+            let mut part = item.clone();
+            part.count = count;
+            let price = (sell_price(idef, &part) as f64 * currency.exchange_rate).max(0.0) as u64;
+            let Some(next) = earned.checked_add(price) else {
+                return;
+            };
+            earned = next;
+            sold += count;
+            selected.push((slot, count));
+        }
+        let can_credit = if currency.currency_type == 0 {
+            p.bag.gold.checked_add(earned).is_some()
+        } else {
+            earned <= i64::MAX as u64
+                && p.currencies
+                    .get(&currency.index)
+                    .copied()
+                    .unwrap_or(0)
+                    .checked_add(earned as i64)
+                    .is_some()
+        };
+        if !can_credit {
+            return;
+        }
+        let mut changes = Changed::new();
+        for (slot, count) in selected {
             let o = self.objects.get_mut(&id).unwrap();
             let p = o.player_mut().unwrap();
-            if let Some(c) = p.bag.take(Grid::Inventory, slot, item.count) {
+            if let Some(c) = p.bag.take(Grid::Inventory, slot, count) {
                 changes.push(c);
             }
-            p.bag.gold += price;
-            earned += price;
-            sold += item.count;
         }
-        self.send_gold(id);
+        let p = self.objects.get_mut(&id).unwrap().player_mut().unwrap();
+        if currency.currency_type == 0 {
+            p.bag.gold += earned;
+            self.send_gold(id);
+        } else {
+            *p.currencies.entry(currency.index).or_insert(0) += earned as i64;
+            self.send_currencies(id);
+        }
         self.send_changes(id, changes);
         if sold > 0 {
             self.send_to(
                 id,
                 ServerMessage::Chat {
-                    text: format!("Sold {sold} item(s) for {earned} gold."),
+                    text: format!("Sold {sold} item(s) for {earned} {}.", currency.name),
+                },
+            );
+        } else if requested {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: "This shop cannot buy that item, or the item is locked or worthless."
+                        .into(),
                 },
             );
         }
     }
-}
 
-// ---- Lua page scripts (Zircon NpcScriptEngine) ---------------------------
+    pub fn npc_repair(&mut self, id: ObjectId, items: Vec<(Grid, u8, u32)>, special: bool) {
+        let Some(object) = self.objects.get(&id) else {
+            return;
+        };
+        let Some(player) = object.player() else {
+            return;
+        };
+        let Some((_, page)) = player.npc else { return };
+        let Some(def) = self.data.npc_pages.get(&page) else {
+            return;
+        };
+        if object.dead || def.dialog_type != 2 || items.is_empty() || items.len() > 55 {
+            return;
+        }
+        let now = super::store::now_secs();
+        let mut seen = std::collections::HashSet::new();
+        let mut cost = 0u64;
+        for &(grid, slot, item_id) in &items {
+            let valid = player
+                .bag
+                .grid(grid)
+                .get(slot as usize)
+                .and_then(Option::as_ref)
+                .filter(|item| item.id == item_id)
+                .and_then(|item| self.data.items.get(&item.info).map(|idef| (item, idef)));
+            let Some((item, idef)) = valid else {
+                self.send_to(
+                    id,
+                    ServerMessage::Chat {
+                        text: "Item changed. Select it again.".into(),
+                    },
+                );
+                return;
+            };
+            if !seen.insert((grid, slot))
+                || !idef.can_repair
+                || idef.durability <= 0
+                || item.durability >= item.max_durability
+                || !def.types.contains(&idef.item_type)
+                || !matches!(
+                    idef.item_type,
+                    mir_proto::item_type::WEAPON
+                        | mir_proto::item_type::ARMOUR
+                        | mir_proto::item_type::HELMET
+                        | mir_proto::item_type::NECKLACE
+                        | mir_proto::item_type::BRACELET
+                        | mir_proto::item_type::RING
+                        | mir_proto::item_type::SHOES
+                        | mir_proto::item_type::SHIELD
+                )
+            {
+                self.send_to(
+                    id,
+                    ServerMessage::Chat {
+                        text: "This NPC cannot repair that item.".into(),
+                    },
+                );
+                return;
+            }
+            if special && now < item.special_repair_until {
+                self.send_to(
+                    id,
+                    ServerMessage::Chat {
+                        text: "Special repair is still cooling down.".into(),
+                    },
+                );
+                return;
+            }
+            cost = cost.saturating_add(crate::items::repair_cost(idef, item, special));
+        }
+        if player.bag.gold < cost {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: format!("Repair costs {cost} gold; you do not have enough."),
+                },
+            );
+            return;
+        }
+        let player = self.objects.get_mut(&id).unwrap().player_mut().unwrap();
+        player.bag.gold -= cost;
+        let mut changes = Vec::with_capacity(items.len());
+        let mut refresh = false;
+        for (grid, slot, _) in items.iter().copied() {
+            let item = player.bag.grid_mut(grid)[slot as usize].as_mut().unwrap();
+            refresh |= grid == Grid::Equipment && item.durability == 0;
+            if special {
+                item.durability = item.max_durability;
+                if self.data.items[&item.info].item_type != mir_proto::item_type::WEAPON {
+                    item.special_repair_until = now + 8 * 60 * 60;
+                }
+            } else {
+                item.max_durability =
+                    (item.max_durability - (item.max_durability - item.durability) / 15).max(0);
+                item.durability = item.max_durability;
+            }
+            changes.push((grid, slot, Some(item.instance())));
+        }
+        self.send_gold(id);
+        self.send_changes(id, changes);
+        if refresh {
+            self.refresh_stats(id, false);
+        }
+        self.send_to(
+            id,
+            ServerMessage::Chat {
+                text: format!(
+                    "{} repaired {} item(s) for {cost} gold.",
+                    if special { "Special" } else { "Normal" },
+                    items.len()
+                ),
+            },
+        );
+    }
+}
 
 impl World {
     fn script_view(&self, id: ObjectId) -> Option<lua::PlayerView> {
@@ -755,3 +1000,27 @@ impl World {
         }
     }
 }
+
+#[cfg(test)]
+mod value_tests {
+    use super::*;
+
+    #[test]
+    fn fame_page_uses_installed_npc_values() {
+        let Some(assets) = std::env::var_os("ZIRCON_ASSETS").map(std::path::PathBuf::from) else {
+            return;
+        };
+        let data = crate::data::GameData::load(assets.join("../Database/System.db")).unwrap();
+        let mut world = World::new(data, assets.join("Map"), None);
+        let id = world
+            .add_player(1, 1, &crate::accounts::test_character("FameTester"))
+            .unwrap();
+        let page = &world.data.npc_pages[&334];
+        assert_eq!(page.values.len(), 2);
+        let say = world.npc_page_say(id, page);
+        assert!(say.contains("{1000:LawnGreen} points are required"));
+        assert!(!say.contains("<1:Unlimited>"));
+    }
+}
+
+// ---- Lua page scripts (Zircon NpcScriptEngine) ---------------------------

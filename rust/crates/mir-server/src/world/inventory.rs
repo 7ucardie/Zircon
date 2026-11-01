@@ -1,6 +1,28 @@
 use super::*;
 
 impl World {
+    pub fn item_lock(&mut self, id: ObjectId, grid: Grid, slot: u8, locked: bool) {
+        let Some(o) = self.objects.get_mut(&id) else {
+            return;
+        };
+        let safe = o.in_safe_zone;
+        let Some(p) = o.player_mut() else { return };
+        if grid == Grid::Storage && (!safe || slot as usize >= p.storage_size as usize) {
+            return;
+        }
+        let Some(item) = p
+            .bag
+            .grid_mut(grid)
+            .get_mut(slot as usize)
+            .and_then(Option::as_mut)
+        else {
+            return;
+        };
+        item.locked = locked;
+        let change = (grid, slot, Some(item.instance()));
+        self.send_changes(id, vec![change]);
+    }
+
     pub fn item_move(&mut self, id: ObjectId, from: Grid, from_slot: u8, to: Grid, to_slot: u8) {
         let result = self.item_move_inner(id, from, from_slot, to, to_slot);
         match result {
@@ -34,7 +56,7 @@ impl World {
                 return Err("Cannot use storage while trading".into());
             }
             if !self.in_safe_zone(o.map, o.location) {
-                return Err("You cannot access storage outside of a safe zone".into());
+                return Err(self.storage_safe_zone_error(o.map, o.location));
             }
             let size = p.storage_size as usize;
             if (from == Grid::Storage && from_slot as usize >= size)
@@ -42,6 +64,9 @@ impl World {
             {
                 return Err("No such storage slot".into());
             }
+        }
+        if to_slot as usize >= p.bag.grid(to).len() {
+            return Err("No such slot".into());
         }
         let src = p
             .bag
@@ -51,13 +76,35 @@ impl World {
             .flatten()
             .ok_or("Nothing there")?;
         let dst = p.bag.grid(to).get(to_slot as usize).cloned().flatten();
+        let poison_merge = ((from == Grid::Inventory
+            && to == Grid::Equipment
+            && to_slot as usize == slot::POISON)
+            || (from == Grid::Equipment
+                && from_slot as usize == slot::POISON
+                && to == Grid::Inventory))
+            && self
+                .data
+                .items
+                .get(&src.info)
+                .is_some_and(|def| def.item_type == item_type::POISON);
+        let stack = self
+            .data
+            .items
+            .get(&src.info)
+            .map(|def| def.stack_size.max(1) as u32)
+            .unwrap_or(1);
+        let stack = if poison_merge { stack.min(999) } else { stack };
+        let merge = (from == Grid::Inventory && to == Grid::Inventory || poison_merge)
+            && dst
+                .as_ref()
+                .is_some_and(|d| d.stacks_with(&src) && d.id != src.id && d.count < stack);
         if to == Grid::Storage {
             let def = self.data.items.get(&src.info).ok_or("Unknown item")?;
             if !def.can_store {
                 return Err("That item cannot be stored".into());
             }
         }
-        if to == Grid::Equipment || from == Grid::Equipment {
+        if (to == Grid::Equipment || from == Grid::Equipment) && !(poison_merge && merge) {
             // The item moving INTO equipment must fit; the item moving out
             // (if any) needs no check.
             let (moving_in, target_slot) = if to == Grid::Equipment {
@@ -95,33 +142,24 @@ impl World {
         let o = self.objects.get_mut(&id).unwrap();
         let p = o.player_mut().unwrap();
         let mut changes = Changed::new();
-        // Merge stacks when moving within the inventory.
-        if from == Grid::Inventory && to == Grid::Inventory {
-            if let Some(d) = &dst {
-                if d.info == src.info && d.id != src.id {
-                    let stack = self
-                        .data
-                        .items
-                        .get(&src.info)
-                        .map(|i| i.stack_size)
-                        .unwrap_or(1) as u32;
-                    if d.count < stack {
-                        let add = (stack - d.count).min(src.count);
-                        let d = p.bag.inventory[to_slot as usize].as_mut().unwrap();
-                        d.count += add;
-                        changes.push((to, to_slot, Some(d.instance())));
-                        let s = p.bag.inventory[from_slot as usize].as_mut().unwrap();
-                        s.count -= add;
-                        if s.count == 0 {
-                            p.bag.inventory[from_slot as usize] = None;
-                            changes.push((from, from_slot, None));
-                        } else {
-                            changes.push((from, from_slot, Some(s.instance())));
-                        }
-                        return Ok(changes);
-                    }
-                }
+        // Poison stacks can merge between the bag and poison equipment slot.
+        if merge {
+            let add = (stack - dst.as_ref().unwrap().count).min(src.count);
+            let d = p.bag.grid_mut(to)[to_slot as usize].as_mut().unwrap();
+            d.count += add;
+            changes.push((to, to_slot, Some(d.instance())));
+            let s = p.bag.grid_mut(from)[from_slot as usize].as_mut().unwrap();
+            s.count -= add;
+            if s.count == 0 {
+                p.bag.grid_mut(from)[from_slot as usize] = None;
+                changes.push((from, from_slot, None));
+            } else {
+                changes.push((from, from_slot, Some(s.instance())));
             }
+            return Ok(changes);
+        }
+        if poison_merge && from == Grid::Equipment && dst.is_some() {
+            return Err("Cannot move equipped poison onto an occupied slot".into());
         }
         p.bag.grid_mut(from)[from_slot as usize] = dst.clone();
         p.bag.grid_mut(to)[to_slot as usize] = Some(src.clone());
@@ -145,9 +183,6 @@ impl World {
     pub(super) fn item_use_inner(&mut self, id: ObjectId, slot: u8) -> Result<Changed, String> {
         let o = self.objects.get(&id).ok_or("no player")?;
         let p = o.player().ok_or("no player")?;
-        if p.mounted {
-            return Err("You cannot use items while riding".into());
-        }
         let item = p
             .bag
             .inventory
@@ -165,6 +200,9 @@ impl World {
             let target = default_slot(def.item_type, &p.bag.equipment).ok_or("Cannot equip")?;
             return self.item_move_inner(id, Grid::Inventory, slot, Grid::Equipment, target as u8);
         }
+        if p.mounted {
+            return Err("You cannot use items while riding".into());
+        }
         match def.item_type {
             item_type::CONSUMABLE => {
                 can_use(&def, p.class, p.gender, p.level)?;
@@ -175,20 +213,34 @@ impl World {
                 if self.now < p.use_item_time {
                     return Ok(Vec::new());
                 }
-                // Companion food (Zircon `Stat.CompanionHunger`).
-                let hunger = def.stat(super::companion::COMPANION_HUNGER_STAT);
-                if hunger > 0 {
-                    if !self.companion_feed(id, hunger) {
-                        return Err("Your companion is not hungry".into());
-                    }
-                    let p = self
-                        .objects
-                        .get_mut(&id)
-                        .and_then(|o| o.player_mut())
-                        .unwrap();
-                    return Ok(p.bag.take(Grid::Inventory, slot, 1).into_iter().collect());
-                }
                 self.use_consumable(id, slot, &def)
+            }
+            item_type::COMPANION_BAG => {
+                self.companion_bag_equip(id, slot);
+                Ok(Vec::new())
+            }
+            item_type::COMPANION_FOOD => {
+                can_use(&def, p.class, p.gender, p.level)?;
+                let Some(level) = p
+                    .active_companion
+                    .and_then(|active| p.companions.iter().find(|c| c.index == active))
+                    .map(|c| c.level)
+                else {
+                    return Err("No companion is out".into());
+                };
+                super::companion::companion_food_requirement(&def, level)?;
+                if self.now < p.use_item_time {
+                    return Ok(Vec::new());
+                }
+                if !self.companion_feed(id, def.stat(super::companion::COMPANION_HUNGER_STAT)) {
+                    return Err("Your companion is not hungry".into());
+                }
+                let p = self
+                    .objects
+                    .get_mut(&id)
+                    .and_then(|o| o.player_mut())
+                    .unwrap();
+                Ok(p.bag.take(Grid::Inventory, slot, 1).into_iter().collect())
             }
             item_type::BOOK => self.learn_book(id, slot, &def),
             _ => Err(format!("{} cannot be used", def.name)),
@@ -204,6 +256,7 @@ impl World {
         slot: u8,
         def: &crate::data::ItemDef,
     ) -> Result<Changed, String> {
+        let mut changes = Vec::new();
         match def.shape {
             0 => {
                 let mut health = def.stat(stat::HEALTH);
@@ -269,25 +322,88 @@ impl World {
                 }
             }
             2 => {
-                // Town teleport: a random cell of the bind point.
-                let bind_region = self.objects[&id].player().unwrap().bind_region;
-                if bind_region == 0 {
+                let o = &self.objects[&id];
+                let fallback = o.player().unwrap().bind_region;
+                let town = self.nearest_town_region(o.map, o.location, o.player().unwrap().class);
+                let region = town.unwrap_or(fallback);
+                if region == 0 {
                     return Err("You have no town to return to".into());
                 }
-                self.go_to_bind_point(id).map_err(|e| e.to_string())?;
+                let from = o.location;
+                let to = self.go_to_region(id, region).map_err(|e| e.to_string())?;
+                self.events.push((
+                    id,
+                    ServerMessage::ObjectEffect {
+                        id,
+                        effect: effect::TELEPORT_OUT,
+                        location: from,
+                    },
+                ));
+                self.events.push((
+                    id,
+                    ServerMessage::ObjectEffect {
+                        id,
+                        effect: effect::TELEPORT_IN,
+                        location: to,
+                    },
+                ));
             }
             3 => {
                 let map = self.objects[&id].map;
                 let to = self.random_walkable(map).ok_or("Nowhere to teleport to")?;
                 self.teleport_with_effects(id, to);
             }
+            4 => {
+                let weapon = self.objects[&id]
+                    .player()
+                    .unwrap()
+                    .bag
+                    .equipment
+                    .get(slot::WEAPON)
+                    .and_then(Option::as_ref)
+                    .ok_or("Equip a weapon first")?;
+                let luck: i32 = weapon
+                    .added
+                    .iter()
+                    .filter(|s| {
+                        s.stat == stat::LUCK && s.source == crate::items::StatSource::Enhancement
+                    })
+                    .map(|s| s.amount)
+                    .sum();
+                if luck >= 7 {
+                    return Err("Weapon Luck is already at maximum".into());
+                }
+                // Zircon defaults: MaxCurse -10, CurseRate 20, LuckRate 10.
+                let change = if luck > -10 && self.rng.random_range(0..20) == 0 {
+                    -1
+                } else if luck <= 0 || self.rng.random_range(0..luck * 10) == 0 {
+                    1
+                } else {
+                    0
+                };
+                let weapon = self
+                    .objects
+                    .get_mut(&id)
+                    .unwrap()
+                    .player_mut()
+                    .unwrap()
+                    .bag
+                    .equipment[slot::WEAPON]
+                    .as_mut()
+                    .unwrap();
+                if change != 0 {
+                    weapon.add_stat(stat::LUCK, change, crate::items::StatSource::Enhancement);
+                }
+                changes.push((Grid::Equipment, slot::WEAPON as u8, Some(weapon.instance())));
+            }
+            16 => self.companion_skill_reroll(id, def.required_amount)?,
             _ => return Err(format!("{} cannot be used", def.name)),
         }
         let o = self.objects.get_mut(&id).unwrap();
         let p = o.player_mut().unwrap();
         p.use_item_time = self.now + def.durability.max(0) as u64;
-        let change = p.bag.take(Grid::Inventory, slot, 1);
-        Ok(change.into_iter().collect())
+        changes.extend(p.bag.take(Grid::Inventory, slot, 1));
+        Ok(changes)
     }
 
     pub fn item_drop(&mut self, id: ObjectId, slot: u8, count: u32) {
@@ -300,14 +416,14 @@ impl World {
         if o.dead {
             return;
         }
-        let (map, loc) = (o.map, o.location);
+        let (map, loc, account) = (o.map, o.location, p.account);
         let Some(item) = p.bag.inventory.get(slot as usize).cloned().flatten() else {
             return;
         };
         let Some(def) = self.data.items.get(&item.info) else {
             return;
         };
-        if !def.can_drop {
+        if item.locked || !def.can_drop {
             self.send_to(
                 id,
                 ServerMessage::Chat {
@@ -316,7 +432,7 @@ impl World {
             );
             return;
         }
-        let count = count.clamp(1, item.count);
+        let count = count.max(1).min(item.count);
         let change = self
             .objects
             .get_mut(&id)
@@ -326,11 +442,20 @@ impl World {
             .bag
             .take(Grid::Inventory, slot, count);
         let dropped = UserItem { count, ..item };
-        self.spawn_ground_item(map, loc, dropped, None, 0);
+        let owner = dropped.bound.then_some(account);
+        self.spawn_ground_item(map, loc, dropped, owner, 1);
         self.send_changes(id, change.into_iter().collect());
     }
 
     pub fn pick_up(&mut self, id: ObjectId) {
+        self.pick_up_target(id, None);
+    }
+
+    pub fn pick_up_item(&mut self, id: ObjectId, item: ObjectId) {
+        self.pick_up_target(id, Some(item));
+    }
+
+    fn pick_up_target(&mut self, id: ObjectId, requested: Option<ObjectId>) {
         let Some(o) = self.objects.get(&id) else {
             return;
         };
@@ -340,9 +465,15 @@ impl World {
         if o.dead {
             return;
         }
-        let (map, loc, account, max_bag) = (o.map, o.location, p.account, p.max_bag);
+        let (map, loc, account, max_bag, pickup_radius) = (
+            o.map,
+            o.location,
+            p.account,
+            p.max_bag,
+            o.stats.pickup_radius,
+        );
         let mut candidates: Vec<ObjectId> = Vec::new();
-        for d in 0..=PICKUP_RADIUS {
+        for d in 0..=pickup_radius {
             for dy in -d..=d {
                 for dx in -d..=d {
                     if dx.abs().max(dy.abs()) != d {
@@ -355,14 +486,18 @@ impl World {
                 }
             }
         }
+        let mut bag_full = false;
         for cid in candidates {
+            if requested.is_some_and(|target| target != cid) {
+                continue;
+            }
             let (item, allowed) = {
                 let Some(obj) = self.objects.get(&cid) else {
                     continue;
                 };
                 let Kind::Item(i) = &obj.kind else { continue };
                 let allowed = i.owner.is_none_or(|a| a == account)
-                    || self.now >= i.spawn_time + DROP_SHARE_AFTER;
+                    || (!i.item.bound && self.now >= i.spawn_time + DROP_SHARE_AFTER);
                 (i.item.clone(), allowed)
             };
             if !allowed {
@@ -388,19 +523,14 @@ impl World {
                 return;
             }
             let p = self.objects[&id].player().unwrap();
-            if !p.bag.can_gain(&self.data, item.info, item.count, max_bag) {
-                self.send_to(
-                    id,
-                    ServerMessage::Chat {
-                        text: "You cannot carry any more.".into(),
-                    },
-                );
-                return;
+            if !p.bag.can_gain_item(&self.data, &item, max_bag) {
+                bag_full = true;
+                continue;
             }
             let o = self.objects.get_mut(&id).unwrap();
             let p = o.player_mut().unwrap();
             let mut next = p.next_item_id;
-            let changes = p.bag.gain(&self.data, item.info, item.count, &mut next);
+            let changes = p.bag.gain_item(&self.data, item.clone(), &mut next);
             p.next_item_id = next;
             self.remove_object(cid);
             self.send_changes(id, changes);
@@ -411,6 +541,14 @@ impl World {
             };
             self.send_to(id, ServerMessage::Chat { text });
             return;
+        }
+        if bag_full {
+            self.send_to(
+                id,
+                ServerMessage::Chat {
+                    text: "You cannot carry any more.".into(),
+                },
+            );
         }
     }
 

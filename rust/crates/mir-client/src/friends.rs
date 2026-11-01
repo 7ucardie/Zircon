@@ -10,6 +10,7 @@
 use mir_proto::{online_state, BlockSummary, ClientMessage, FriendSummary};
 
 use crate::ui::{Button, Ctx, Rect, TextBox};
+use crate::windows::WindowLayout;
 
 /// Which tab of the window is showing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +52,7 @@ pub struct FriendsWindow {
     /// Whisper was pressed: the caller opens the chat bar on this name,
     /// the way Zircon pre-fills it rather than sending an empty line.
     pub whisper_to: Option<String>,
+    layout: WindowLayout,
 }
 
 impl Default for FriendsWindow {
@@ -66,6 +68,7 @@ impl Default for FriendsWindow {
             buttons: Vec::new(),
             scroll: 0.0,
             whisper_to: None,
+            layout: WindowLayout::default(),
         }
     }
 }
@@ -90,6 +93,7 @@ impl FriendsWindow {
     }
 
     /// Draw the window. Returns true if the mouse is over it.
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         c: &mut Ctx,
@@ -97,18 +101,24 @@ impl FriendsWindow {
         blocks: &[BlockSummary],
         state: u8,
         width: i32,
+        height: i32,
         out: &mut Vec<ClientMessage>,
     ) -> bool {
         if !self.open {
             return false;
         }
         let mouse = c.input.mouse;
-        let win = Rect::new(width as f32 - 320.0 - 10.0, 30.0, 320.0, 400.0);
-        let over = win.contains(mouse.0, mouse.1);
+        let win = self.layout.place(
+            "friends",
+            Rect::new(width as f32 - 320.0 - 10.0, 30.0, 320.0, 400.0),
+            c.input,
+            (width, height),
+        );
+        let over = win.contains(mouse.0, mouse.1) || self.layout.is_dragging();
         if over {
             self.scroll = (self.scroll - c.input.wheel * 18.0).max(0.0);
         }
-        let closed = c.window(win, "Friends", true);
+        let closed = c.window(win, "Friends", true) && !self.layout.is_dragging();
 
         self.draw_tabs(c, win);
         // The state we advertise, as a row of small buttons rather than
@@ -152,6 +162,7 @@ impl FriendsWindow {
         if closed {
             self.open = false;
         }
+        self.layout.end_frame(c.input);
         over
     }
 

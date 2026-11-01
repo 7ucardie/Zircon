@@ -72,19 +72,14 @@ pub struct MarketStore {
 
 impl MarketStore {
     pub(super) fn load(path: PathBuf) -> MarketStore {
-        let mut store: MarketStore = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let mut store: MarketStore = super::load_json(&path);
         store.path = Some(path);
         store
     }
 
-    fn save(&self) {
+    pub(super) fn save(&self) {
         if let Some(p) = &self.path {
-            if let Ok(json) = serde_json::to_vec_pretty(self) {
-                let _ = std::fs::write(p, json);
-            }
+            super::save_json(p, self);
         }
     }
 
@@ -106,6 +101,52 @@ fn summary(l: &Listing, account: u32) -> MarketListing {
 }
 
 impl World {
+    /// Legacy `@reboot`: withdraw listings affected by item-part and
+    /// level-40..56 rule changes, returning each item by system mail.
+    pub(super) fn gm_cancel_changed_listings(&mut self) -> usize {
+        let (cancelled, kept): (Vec<Listing>, Vec<Listing>) =
+            std::mem::take(&mut self.market_store.listings)
+                .into_iter()
+                .partition(|listing| {
+                    self.data.items.get(&listing.item.info).is_some_and(|def| {
+                        def.item_type == 25
+                            || (def.required_type == 0 && (40..=56).contains(&def.required_amount))
+                    })
+                });
+        self.market_store.listings = kept;
+        if cancelled.is_empty() {
+            return 0;
+        }
+        self.market_store.save();
+        let count = cancelled.len();
+        let mut affected = std::collections::BTreeSet::new();
+        for listing in cancelled {
+            let account = listing.account;
+            affected.insert(account);
+            self.mail_store.next_index += 1;
+            let mail = super::mail::Mail {
+                index: self.mail_store.next_index,
+                sender: "System".into(),
+                date: crate::accounts::now_secs(),
+                subject: "Listing Cancelled".into(),
+                message: "Your listing was cancelled because of item changes.".into(),
+                opened: false,
+                gold: 0,
+                items: vec![listing.item],
+            };
+            if let Some(online) = self.online_account(account) {
+                self.send_to(online, ServerMessage::MailNew(super::mail::summary(&mail)));
+            }
+            self.mail_store.boxes.entry(account).or_default().push(mail);
+        }
+        self.mail_store.save();
+        for account in affected {
+            if let Some(online) = self.online_account(account) {
+                self.market_login(online);
+            }
+        }
+        count
+    }
     fn market_line(&mut self, id: ObjectId, text: String) {
         self.send_to(
             id,
@@ -225,11 +266,12 @@ impl World {
         if count > item.count {
             return;
         }
-        if self
-            .data
-            .items
-            .get(&item.info)
-            .is_some_and(|d| !d.can_trade)
+        if item.bound
+            || self
+                .data
+                .items
+                .get(&item.info)
+                .is_some_and(|d| !d.can_trade)
         {
             self.market_line(id, "That item cannot be sold.".into());
             return;
@@ -453,7 +495,7 @@ impl World {
         let o = &self.objects[&id];
         let room = o.in_safe_zone
             && o.player()
-                .is_some_and(|p| p.bag.can_gain(&self.data, item.info, item.count, p.max_bag));
+                .is_some_and(|p| p.bag.can_gain_item(&self.data, &item, p.max_bag));
         if room {
             self.gain_exact(id, item);
             return;
@@ -472,53 +514,10 @@ impl World {
     /// level survive, which `Bag::gain` (which builds a fresh item from the
     /// definition) would drop.
     fn gain_exact(&mut self, id: ObjectId, item: UserItem) {
-        let stack = self
-            .data
-            .items
-            .get(&item.info)
-            .map(|d| d.stack_size.max(1) as u32)
-            .unwrap_or(1);
-        let plain = item.added.is_empty() && item.level == 0;
         let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) else {
             return;
         };
-        let mut changes = Changed::new();
-        let mut left = item.count;
-        // A plain stackable tops up existing stacks first, like `Bag::gain`.
-        if plain && stack > 1 {
-            for (i, cell) in p.bag.inventory.iter_mut().enumerate() {
-                if left == 0 {
-                    break;
-                }
-                if let Some(existing) = cell {
-                    if existing.info == item.info
-                        && existing.added.is_empty()
-                        && existing.level == 0
-                        && existing.count < stack
-                    {
-                        let add = (stack - existing.count).min(left);
-                        existing.count += add;
-                        left -= add;
-                        changes.push((Grid::Inventory, i as u8, Some(existing.instance())));
-                    }
-                }
-            }
-        }
-        while left > 0 {
-            let Some(i) = p.bag.inventory.iter().position(|c| c.is_none()) else {
-                break;
-            };
-            let add = stack.min(left);
-            p.next_item_id += 1;
-            let placed = UserItem {
-                id: p.next_item_id,
-                count: add,
-                ..item.clone()
-            };
-            changes.push((Grid::Inventory, i as u8, Some(placed.instance())));
-            p.bag.inventory[i] = Some(placed);
-            left -= add;
-        }
+        let changes = p.bag.gain_item(&self.data, item, &mut p.next_item_id);
         self.send_changes(id, changes);
     }
 
@@ -590,6 +589,16 @@ impl World {
                     max_durability: 100,
                     added: Vec::new(),
                     level: 0,
+                    refinable: false,
+                    non_refinable: false,
+                    bound: false,
+                    worthless: false,
+                    locked: false,
+                    special_repair_until: 0,
+                    weapon_experience_tenths: 0,
+                    accessory_experience: 0,
+                    expires_at: None,
+                    colour: 0,
                 },
                 price,
                 message: "Fair price, no haggling.".into(),

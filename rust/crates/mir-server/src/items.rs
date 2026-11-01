@@ -4,10 +4,75 @@ use std::collections::HashMap;
 
 use mir_proto::{
     item_type, Class, Gender, Grid, ItemInstance, Weights, EQUIPMENT_SIZE, INVENTORY_SIZE,
+    MAX_INVENTORY_SIZE,
 };
 use serde::{Deserialize, Serialize};
 
 use crate::data::{GameData, ItemDef};
+
+/// Bonus provenance, retained independently even when two sources modify one stat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StatSource {
+    Legacy,
+    Added,
+    Refine,
+    Enhancement,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "StoredStat")]
+pub struct ItemStat {
+    pub stat: i32,
+    pub amount: i32,
+    pub source: StatSource,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredStat {
+    Sourced {
+        stat: i32,
+        amount: i32,
+        source: StatSource,
+    },
+    Legacy((i32, i32)),
+}
+impl From<StoredStat> for ItemStat {
+    fn from(value: StoredStat) -> Self {
+        match value {
+            StoredStat::Sourced {
+                stat,
+                amount,
+                source,
+            } => Self {
+                stat,
+                amount,
+                source,
+            },
+            StoredStat::Legacy((stat, amount)) => Self {
+                stat,
+                amount,
+                source: StatSource::Legacy,
+            },
+        }
+    }
+}
+fn legacy_refinable() -> bool {
+    true
+}
+
+/// C# Globals.WeaponExperienceList. Stored experience uses tenths to avoid
+/// losing fractional experience from small kills.
+pub const WEAPON_EXPERIENCE: [u64; 17] = [
+    0, 300000, 350000, 400000, 450000, 500000, 550000, 600000, 650000, 700000, 750000, 800000,
+    850000, 900000, 1000000, 1300000, 2000000,
+];
+
+/// Zircon `Globals.AccessoryExperienceList`, indexed by accessory level.
+pub const ACCESSORY_EXPERIENCE: [u64; 11] = [
+    0, 5, 20, 80, 350, 1_500, 6_200, 26_500, 114_000, 490_000, 2_090_000,
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserItem {
@@ -16,15 +81,136 @@ pub struct UserItem {
     pub count: u32,
     pub durability: i32,
     pub max_durability: i32,
-    /// Added stats (Zircon `AddedStats` from refining): (stat id, amount).
+    /// Added stats with provenance; old JSON pairs load as Legacy.
     #[serde(default)]
-    pub added: Vec<(i32, i32)>,
+    pub added: Vec<ItemStat>,
     /// Refine level (Zircon `UserItem.Level`).
     #[serde(default)]
     pub level: i32,
+    /// Existing saves previously allowed refining unconditionally.
+    #[serde(default = "legacy_refinable")]
+    pub refinable: bool,
+    #[serde(default)]
+    pub non_refinable: bool,
+    #[serde(default)]
+    pub bound: bool,
+    #[serde(default)]
+    pub worthless: bool,
+    #[serde(default)]
+    pub locked: bool,
+    /// Unix seconds when special repair becomes available again.
+    #[serde(default)]
+    pub special_repair_until: u64,
+
+    #[serde(default)]
+    pub weapon_experience_tenths: u64,
+    #[serde(default)]
+    pub accessory_experience: u64,
+    /// Unix seconds this item expires at, for store goods with a `Duration`
+    /// (Zircon `UserItemFlags.Expirable`). `None` never expires.
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    /// Zircon `UserItem.Colour`: the armour dye, packed ARGB (0 = undyed).
+    #[serde(default)]
+    pub colour: u32,
 }
 
 impl UserItem {
+    pub fn add_stat(&mut self, stat: i32, amount: i32, source: StatSource) {
+        if let Some(s) = self
+            .added
+            .iter_mut()
+            .find(|s| s.stat == stat && s.source == source)
+        {
+            s.amount = s.amount.saturating_add(amount);
+        } else {
+            self.added.push(ItemStat {
+                stat,
+                amount,
+                source,
+            });
+        }
+    }
+
+    pub fn bonus(&self, stat: i32) -> i32 {
+        self.added
+            .iter()
+            .filter(|s| s.stat == stat)
+            .fold(0i32, |n, s| n.saturating_add(s.amount))
+    }
+
+    pub fn bonus_totals(&self) -> Vec<(i32, i32)> {
+        let mut stats = std::collections::BTreeMap::<i32, i32>::new();
+        for s in &self.added {
+            let v = stats.entry(s.stat).or_default();
+            *v = v.saturating_add(s.amount);
+        }
+        stats.into_iter().collect()
+    }
+
+    pub fn gain_weapon_experience(&mut self, player_experience: u64) -> bool {
+        if player_experience == 0 || self.refinable || self.non_refinable {
+            return false;
+        }
+        let Some(required) = usize::try_from(self.level)
+            .ok()
+            .and_then(|i| WEAPON_EXPERIENCE.get(i))
+        else {
+            return false;
+        };
+        self.weapon_experience_tenths = self
+            .weapon_experience_tenths
+            .saturating_add(player_experience);
+        if self.weapon_experience_tenths < required * 10 {
+            return false;
+        }
+        self.weapon_experience_tenths = 0;
+        self.level += 1;
+        self.refinable = (self.level as usize) < WEAPON_EXPERIENCE.len();
+        true
+    }
+
+    pub fn fresh(data: &GameData, info: i32, count: u32) -> Option<Self> {
+        let def = data.items.get(&info)?;
+        Some(Self {
+            id: 0,
+            info,
+            count,
+            durability: def.durability,
+            max_durability: def.durability,
+            added: Vec::new(),
+            level: 0,
+            refinable: false,
+            non_refinable: false,
+            bound: false,
+            worthless: false,
+            locked: false,
+            special_repair_until: 0,
+            weapon_experience_tenths: 0,
+            accessory_experience: 0,
+            expires_at: None,
+            colour: 0,
+        })
+    }
+
+    pub fn stacks_with(&self, other: &Self) -> bool {
+        self.bound == other.bound
+            && self.worthless == other.worthless
+            && self.locked == other.locked
+            && self.special_repair_until == other.special_repair_until
+            && self.info == other.info
+            && self.expires_at == other.expires_at
+            && self.colour == other.colour
+            && self.added == other.added
+            && self.level == other.level
+            && self.refinable == other.refinable
+            && self.non_refinable == other.non_refinable
+            && self.weapon_experience_tenths == other.weapon_experience_tenths
+            && self.accessory_experience == other.accessory_experience
+            && self.durability == other.durability
+            && self.max_durability == other.max_durability
+    }
+
     pub fn instance(&self) -> ItemInstance {
         ItemInstance {
             id: self.id,
@@ -32,7 +218,22 @@ impl UserItem {
             count: self.count,
             durability: self.durability,
             max_durability: self.max_durability,
-            added: self.added.clone(),
+            added: self.bonus_totals(),
+            enhancements: self
+                .added
+                .iter()
+                .filter(|s| s.source == StatSource::Enhancement)
+                .map(|s| (s.stat, s.amount))
+                .collect(),
+            refinable: self.refinable,
+            level: self.level,
+            accessory_experience: self.accessory_experience,
+            non_refinable: self.non_refinable,
+            bound: self.bound,
+            worthless: self.worthless,
+            locked: self.locked,
+            expires_at: self.expires_at,
+            colour: self.colour,
         }
     }
 }
@@ -71,7 +272,13 @@ impl Bag {
     }
 
     pub fn from_stored(items: &[StoredItem], gold: u64) -> Bag {
+        Self::from_stored_with_size(items, gold, INVENTORY_SIZE)
+    }
+
+    pub fn from_stored_with_size(items: &[StoredItem], gold: u64, size: usize) -> Bag {
         let mut b = Bag::new();
+        b.inventory
+            .resize(size.clamp(INVENTORY_SIZE, MAX_INVENTORY_SIZE), None);
         b.gold = gold;
         for s in items {
             let target = match s.grid {
@@ -183,70 +390,77 @@ impl Bag {
             .sum()
     }
 
-    /// Can `count` of `info` be added (stacking first, then empty slots)?
-    pub fn can_gain(&self, data: &GameData, info: i32, count: u32, max_bag: i32) -> bool {
-        let Some(def) = data.items.get(&info) else {
+    /// Stack only items whose persistent properties agree.
+    pub fn can_gain_item(&self, data: &GameData, item: &UserItem, max_bag: i32) -> bool {
+        let Some(def) = data.items.get(&item.info) else {
             return false;
         };
-        if self.bag_weight(data) + def.weight * count as i32 > max_bag {
+        if i64::from(self.bag_weight(data)) + i64::from(def.weight) * i64::from(item.count)
+            > i64::from(max_bag)
+        {
             return false;
         }
-        let mut remaining = count;
-        for it in self.inventory.iter().flatten() {
-            if it.info == info && it.count < def.stack_size as u32 {
-                remaining = remaining.saturating_sub(def.stack_size as u32 - it.count);
+        let stack = def.stack_size.max(1) as u32;
+        let mut remaining = item.count;
+        for existing in self.inventory.iter().flatten() {
+            if existing.stacks_with(item) {
+                remaining = remaining.saturating_sub(stack.saturating_sub(existing.count));
             }
         }
-        let empty = self.inventory.iter().filter(|s| s.is_none()).count() as u32;
-        let stack = def.stack_size.max(1) as u32;
-        remaining.div_ceil(stack) <= empty
+        remaining.div_ceil(stack) <= self.inventory.iter().filter(|s| s.is_none()).count() as u32
     }
 
-    /// Add items, stacking where possible. Returns changed slots. `next_id`
-    /// is bumped for every new stack.
-    pub fn gain(
-        &mut self,
-        data: &GameData,
-        info: i32,
-        mut count: u32,
-        next_id: &mut u32,
-    ) -> Changed {
-        let mut changed = Changed::new();
-        let Some(def) = data.items.get(&info) else {
-            return changed;
+    pub fn can_gain(&self, data: &GameData, info: i32, count: u32, max_bag: i32) -> bool {
+        let Some(item) = UserItem::fresh(data, info, count) else {
+            return false;
+        };
+        self.can_gain_item(data, &item, max_bag)
+    }
+
+    /// Add fresh rewards, keeping timed and modified stacks separate.
+    pub fn gain(&mut self, data: &GameData, info: i32, count: u32, next_id: &mut u32) -> Changed {
+        let Some(item) = UserItem::fresh(data, info, count) else {
+            return Changed::new();
+        };
+        self.gain_item(data, item, next_id)
+    }
+
+    /// Transfer an item without losing expiry, dye, durability or added stats.
+    /// The caller must first check capacity with `can_gain_item`.
+    pub fn gain_item(&mut self, data: &GameData, item: UserItem, next_id: &mut u32) -> Changed {
+        let Some(def) = data.items.get(&item.info) else {
+            return Changed::new();
         };
         let stack = def.stack_size.max(1) as u32;
-        for (i, it) in self.inventory.iter_mut().enumerate() {
+        let mut count = item.count;
+        let mut changed = Changed::new();
+        for (i, cell) in self.inventory.iter_mut().enumerate() {
             if count == 0 {
                 break;
             }
-            if let Some(item) = it {
-                if item.info == info && item.count < stack {
-                    let add = (stack - item.count).min(count);
-                    item.count += add;
+            if let Some(existing) = cell {
+                if existing.stacks_with(&item) && existing.count < stack {
+                    let add = (stack - existing.count).min(count);
+                    existing.count += add;
                     count -= add;
-                    changed.push((Grid::Inventory, i as u8, Some(item.instance())));
+                    changed.push((Grid::Inventory, i as u8, Some(existing.instance())));
                 }
             }
         }
-        for (i, it) in self.inventory.iter_mut().enumerate() {
+        for (i, cell) in self.inventory.iter_mut().enumerate() {
             if count == 0 {
                 break;
             }
-            if it.is_none() {
+            if cell.is_none() {
                 let add = stack.min(count);
                 *next_id += 1;
-                let item = UserItem {
+                let placed = UserItem {
                     id: *next_id,
-                    info,
                     count: add,
-                    durability: def.durability,
-                    max_durability: def.durability,
-                    added: Vec::new(),
-                    level: 0,
+                    ..item.clone()
                 };
-                changed.push((Grid::Inventory, i as u8, Some(item.instance())));
-                *it = Some(item);
+                changed.push((Grid::Inventory, i as u8, Some(placed.instance())));
+                *cell = Some(placed);
                 count -= add;
             }
         }
@@ -328,8 +542,8 @@ impl Bag {
                     *out.entry(*k).or_insert(0) += v;
                 }
             }
-            for (k, v) in &item.added {
-                *out.entry(*k).or_insert(0) += v;
+            for s in &item.added {
+                *out.entry(s.stat).or_insert(0) += s.amount;
             }
         }
         for (stat, amount) in set_bonuses(data, &worn, level, class) {
@@ -372,6 +586,25 @@ impl Bag {
             .as_ref()
             .and_then(|i| data.items.get(&i.info))
             .map(|d| d.shape)
+    }
+
+    pub fn equipped_exterior_effect(&self, data: &GameData, slot: usize) -> u8 {
+        self.equipment
+            .get(slot)
+            .and_then(|item| item.as_ref())
+            .and_then(|item| data.items.get(&item.info))
+            .map(|item| item.exterior_effect)
+            .unwrap_or(0)
+    }
+
+    /// The dye on an equipped item (Zircon `UserItem.Colour`), 0 when the
+    /// slot is empty or undyed.
+    pub fn equipped_colour(&self, slot: usize) -> u32 {
+        self.equipment
+            .get(slot)
+            .and_then(|i| i.as_ref())
+            .map(|i| i.colour)
+            .unwrap_or(0)
     }
 }
 
@@ -473,8 +706,11 @@ pub fn default_slot(item_type: u8, equipment: &[Option<UserItem>]) -> Option<usi
         .or_else(|| slots.first().copied())
 }
 
-/// Sell price (Zircon `UserItem.Price` with no added stats).
+/// Sell price (Zircon `UserItem.Price`).
 pub fn sell_price(def: &ItemDef, item: &UserItem) -> u64 {
+    if item.worthless {
+        return 0;
+    }
     let mut p = def.price as f64;
     if def.durability > 0 {
         let r = def.price as f64 / 2.0 / def.durability as f64;
@@ -486,5 +722,37 @@ pub fn sell_price(def: &ItemDef, item: &UserItem) -> u64 {
         };
         p = (p / 2.0 + p / 2.0 * ratio + def.price as f64 / 2.0).floor();
     }
+    let stats = item
+        .bonus_totals()
+        .iter()
+        .map(|(_, amount)| amount.unsigned_abs() as u64)
+        .sum::<u64>();
+    p *= 1.0 + stats as f64 * 0.1;
+    // Zircon Stat.SaleBonus5..20 are IDs 56..59.
+    for (stat, rate) in [(59, 1.20), (58, 1.15), (57, 1.10), (56, 1.05)] {
+        let needed = def.stat(stat);
+        if needed > 0 && needed as u32 <= item.count {
+            p *= rate;
+            break;
+        }
+    }
     (p * item.count as f64 * def.sell_rate).max(0.0) as u64
+}
+
+/// Zircon `UserItem.RepairCost`: full value minus current sale value.
+pub fn repair_cost(def: &ItemDef, item: &UserItem, special: bool) -> u64 {
+    if def.durability <= 0 || item.durability >= item.max_durability {
+        return 0;
+    }
+    let half = def.price as f64 / 2.0;
+    let full = (item.max_durability as f64 * half / def.durability as f64 + half).floor();
+    let stats = 1.0
+        + item
+            .bonus_totals()
+            .iter()
+            .map(|(_, amount)| amount.unsigned_abs() as u64)
+            .sum::<u64>() as f64
+            * 0.1;
+    let cost = (full * stats * item.count as f64 - sell_price(def, item) as f64).max(0.0) as u64;
+    cost.saturating_mul(if special { 2 } else { 1 })
 }
