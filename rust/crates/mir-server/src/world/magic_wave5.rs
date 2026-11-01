@@ -276,6 +276,7 @@ impl World {
                         id,
                         direction: face,
                         attack_magic: Some(m::DANCE_OF_SWALLOW),
+                        element: mir_proto::element::NONE,
                     },
                 ));
                 targets.push(t);

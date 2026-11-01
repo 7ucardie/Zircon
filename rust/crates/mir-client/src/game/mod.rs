@@ -78,6 +78,8 @@ type PendingPayload = (u64, u16, Point, Vec<ObjectId>, Vec<Point>);
 
 pub struct Game {
     pub assets: Assets,
+    /// A map was loaded: the renderer drops its sprite cache before the next frame.
+    pub atlas_reset: bool,
     pub audio: crate::audio::Audio,
     /// The character we entered the world with (name, look).
     pub character: Option<CharacterSummary>,
@@ -296,6 +298,7 @@ impl Game {
         };
         Game {
             assets,
+            atlas_reset: false,
             audio,
             catalog,
             input: Input::default(),
@@ -471,6 +474,7 @@ impl Game {
                 fame_title: String::new(),
                 fp: 0,
                 max_fp: 0,
+                attack_element: 0,
                 discipline: 0,
                 discipline_experience: 0,
             },

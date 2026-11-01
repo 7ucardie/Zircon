@@ -88,10 +88,12 @@ impl MiniMap {
 
     pub(super) fn contains_mouse(&self, mouse: (f32, f32), width: i32, height: i32) -> bool {
         if self.big_open {
-            self.layout
-                .rect("big_map", Self::big_rect(width, height), (width, height))
-                .contains(mouse.0, mouse.1)
-                || self.layout.is_dragging()
+            self.layout.contains_mouse(
+                "big_map",
+                Self::big_rect(width, height),
+                mouse,
+                (width, height),
+            )
         } else if self.mode != MiniMode::Hidden {
             Self::mini_rect(width).contains(mouse.0, mouse.1)
         } else {

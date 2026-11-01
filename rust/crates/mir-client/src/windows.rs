@@ -30,6 +30,17 @@ impl WindowLayout {
         self.dragging.is_some()
     }
 
+    /// The window's placed rectangle holds the mouse, or it is being dragged.
+    pub(crate) fn contains_mouse(
+        &self,
+        id: &'static str,
+        rect: Rect,
+        mouse: (f32, f32),
+        screen: (i32, i32),
+    ) -> bool {
+        self.rect(id, rect, screen).contains(mouse.0, mouse.1) || self.is_dragging()
+    }
+
     pub(crate) fn end_frame(&mut self, input: &crate::ui::Input) {
         if !input.lmb_down {
             self.dragging = None;
@@ -4984,7 +4995,7 @@ fn layout_parts(c: &mut Ctx, parts: &[DialogPart], max_w: f32) -> (Vec<Line>, f3
 }
 
 /// Greedy word wrap at `max_w` pixels for `size` text.
-fn wrap_text(c: &mut Ctx, text: &str, max_w: f32, size: u32) -> Vec<String> {
+pub(crate) fn wrap_text(c: &mut Ctx, text: &str, max_w: f32, size: u32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {

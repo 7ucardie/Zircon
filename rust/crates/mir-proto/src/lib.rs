@@ -1230,34 +1230,6 @@ pub mod magic_type {
                 | IMPROVED_EXPLOSIVE_TALISMAN
         )
     }
-    /// Spells cast on a ground cell.
-    pub fn needs_cell(m: u16) -> bool {
-        matches!(
-            m,
-            FIRE_WALL
-                | ICE_RAIN
-                | ASTEROID
-                | LIFE_STEAL
-                | BURNING_FIRE
-                | DARK_SOUL_PRISON
-                | MAGIC_RESISTANCE
-                | RESILIENCE
-                | MASS_HEAL
-                | SWIFT_BLADE
-                | GEO_MANIPULATION
-                | FIRE_STORM
-                | LIGHTNING_WAVE
-                | ICE_STORM
-                | DRAGON_TORNADO
-                | METEOR_SHOWER
-                | TEMPEST
-                | MASS_INVISIBILITY
-                | TRAP_OCTAGON
-                | ELEMENTAL_SUPERIORITY
-                | BLOOD_LUST
-                | RESURRECTION
-        )
-    }
     /// Spells cast on oneself (no target, own cell).
     pub fn is_self_cast(m: u16) -> bool {
         matches!(
@@ -1710,6 +1682,10 @@ pub struct PlayerStats {
     pub fp: i32,
     #[serde(default)]
     pub max_fp: i32,
+    /// Strongest affinity (`element::*`), so the client can tint its own
+    /// predicted swing like the server-echoed ones.
+    #[serde(default)]
+    pub attack_element: u8,
     /// Discipline level (Zircon `UserDiscipline.Level`, 0 = none) and the
     /// experience banked towards the next one.
     #[serde(default)]
@@ -1839,6 +1815,20 @@ pub mod rules {
 #[cfg(test)]
 mod account_email_tests {
     use super::rules;
+
+    #[test]
+    fn shared_combat_and_name_rules_match_zircon() {
+        assert_eq!(rules::attack_delay(0), 1500);
+        assert_eq!(rules::attack_delay(20), 800);
+        assert_eq!(rules::magic_cost(10, 2, 1), 10);
+        assert_eq!(rules::magic_cost(10, 2, 3), 12);
+        assert_eq!(rules::magic_power(-5, 10, 1, 3, 1), (0, 11));
+        assert_eq!(rules::use_item_lock(100), 250);
+        assert!(rules::valid_name("Alice1"));
+        assert!(!rules::valid_name("1abc"));
+        assert!(rules::valid_password("abc123"));
+        assert!(!rules::valid_password("abc\t12"));
+    }
 
     #[test]
     fn email_requires_one_at_with_text_on_both_sides() {
@@ -2349,6 +2339,9 @@ pub enum ServerMessage {
         id: ObjectId,
         direction: Direction,
         attack_magic: Option<u16>,
+        /// Zircon `AttackElement`: the attacker's strongest affinity, which
+        /// tints the swing effects (`element::*`, NONE = white).
+        element: u8,
     },
     /// A monster shot something at `target` (or `location`); `magic` picks
     /// the projectile look (0 = plain).

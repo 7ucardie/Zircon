@@ -551,6 +551,7 @@ impl World {
                 .unwrap_or_default(),
             fp: p.fp,
             max_fp: p.max_fp,
+            attack_element: o.stats.attack_element,
             discipline: p.discipline,
             discipline_experience: p.discipline_experience,
         }
@@ -922,6 +923,7 @@ impl World {
             element_attack: super::ELEMENT_ATTACK_STATS
                 .map(|stat| if stat == 0 { 0 } else { g(stat) }),
             element_resist: super::ELEMENT_RESIST_STATS.map(|stat| g(stat).min(5)),
+            attack_element: super::affinity_element(g),
         };
         // BaseStat rows can keep a class's attack unchanged for several levels.
         // Grant one extra maximum attack point per level to its primary stat.

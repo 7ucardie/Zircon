@@ -531,17 +531,32 @@ impl SpriteRenderer {
                 v1: 0.0,
             },
         };
-        // A 2x2 white pixel block for solid rectangles (HP bars, debug overlays).
-        r.white = r.upload_rgba(gpu, 2, 2, &[255u8; 16]);
-        r.white = SpriteRegion {
-            // Sample the center of the white block to avoid bleeding.
-            u0: r.white.u0 + 0.5 / ATLAS_SIZE as f32,
-            v0: r.white.v0 + 0.5 / ATLAS_SIZE as f32,
-            u1: r.white.u0 + 1.5 / ATLAS_SIZE as f32,
-            v1: r.white.v0 + 1.5 / ATLAS_SIZE as f32,
-            ..r.white
-        };
+        r.white = r.upload_white(gpu);
         r
+    }
+
+    /// A 2x2 white pixel block for solid rectangles (HP bars, debug overlays).
+    fn upload_white(&mut self, gpu: &Gpu) -> SpriteRegion {
+        let white = self.upload_rgba(gpu, 2, 2, &[255u8; 16]);
+        SpriteRegion {
+            // Sample the center of the white block to avoid bleeding.
+            u0: white.u0 + 0.5 / ATLAS_SIZE as f32,
+            v0: white.v0 + 0.5 / ATLAS_SIZE as f32,
+            u1: white.u0 + 1.5 / ATLAS_SIZE as f32,
+            v1: white.v0 + 1.5 / ATLAS_SIZE as f32,
+            ..white
+        }
+    }
+
+    /// Drop every cached sprite and atlas page (64 MB of VRAM each). Called
+    /// on map change, so a long session does not keep every sprite it ever
+    /// drew; what is visible re-uploads over the next frames.
+    pub fn reset(&mut self, gpu: &Gpu) {
+        self.sprites.clear();
+        self.pages.clear();
+        self.light = None;
+        self.light_sprite = None;
+        self.white = self.upload_white(gpu);
     }
 
     fn new_page(&mut self, gpu: &Gpu) -> u16 {
@@ -651,14 +666,12 @@ impl SpriteRenderer {
         if let Some(r) = self.sprites.get(&key) {
             return *r;
         }
-        let region = load().map(|(w, h, rgba)| self.upload_rgba(gpu, w, h, &rgba));
+        // A corrupt entry wider than a page is treated as missing (cached).
+        let region = load()
+            .filter(|(w, h, _)| w + 2 <= ATLAS_SIZE && h + 2 <= ATLAS_SIZE)
+            .map(|(w, h, rgba)| self.upload_rgba(gpu, w, h, &rgba));
         self.sprites.insert(key, region);
         region
-    }
-
-    #[allow(dead_code)]
-    pub fn is_loaded(&self, key: &SpriteKey) -> bool {
-        self.sprites.contains_key(key)
     }
 
     /// Queue a sprite quad at pixel position (x, y) with the given tint and blend.

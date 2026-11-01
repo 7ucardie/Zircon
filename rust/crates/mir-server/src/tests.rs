@@ -6457,6 +6457,24 @@ fn item_move_to_an_out_of_range_slot_is_refused() {
 }
 
 #[test]
+fn affinity_element_picks_the_highest_in_zircon_order() {
+    use crate::world::{affinity_element, AFFINITY_STATS};
+    use mir_proto::element;
+    assert_eq!(affinity_element(|_| 0), element::NONE);
+    // Talisman Of Darkness carries stat 48: Dark.
+    assert_eq!(affinity_element(|s| (s == 48) as i32), element::DARK);
+    // Ties keep the earlier element, as Zircon's strict `>` does.
+    assert_eq!(
+        affinity_element(|s| (s == AFFINITY_STATS[1] || s == 49) as i32),
+        element::FIRE
+    );
+    assert_eq!(
+        affinity_element(|s| if s == 49 { 3 } else { 1 }),
+        element::PHANTOM
+    );
+}
+
+#[test]
 fn mail_refuses_the_same_cell_attached_twice() {
     use mir_proto::Grid;
     let Some(mut world) = world() else {

@@ -220,6 +220,7 @@ impl World {
                 }
             }),
             element_resist: super::ELEMENT_RESIST_STATS.map(|stat| def.stat(stat)),
+            attack_element: 0,
         };
         stats.min_dc += stats.min_dc * pet_dc / 100;
         stats.max_dc += stats.max_dc * pet_dc / 100;

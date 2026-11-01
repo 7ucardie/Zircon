@@ -39,15 +39,12 @@ impl Default for WardrobeWindow {
 impl WardrobeWindow {
     pub fn contains_mouse(&self, mouse: (f32, f32), width: i32, height: i32) -> bool {
         self.open
-            && (self
-                .layout
-                .rect(
-                    "wardrobe",
-                    Rect::new((width as f32 - 474.0) / 2.0, 50.0, 474.0, 420.0),
-                    (width, height),
-                )
-                .contains(mouse.0, mouse.1)
-                || self.layout.is_dragging())
+            && self.layout.contains_mouse(
+                "wardrobe",
+                Rect::new((width as f32 - 474.0) / 2.0, 50.0, 474.0, 420.0),
+                mouse,
+                (width, height),
+            )
     }
 
     pub fn set_chosen_slot(&mut self, slot: usize, item: Option<i32>) {

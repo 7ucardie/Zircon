@@ -725,17 +725,24 @@ impl World {
     }
 
     pub fn npc_repair(&mut self, id: ObjectId, items: Vec<(Grid, u8, u32)>, special: bool) {
+        let Some((_, page)) = self.npc_session(id) else {
+            return;
+        };
         let Some(object) = self.objects.get(&id) else {
             return;
         };
         let Some(player) = object.player() else {
             return;
         };
-        let Some((_, page)) = player.npc else { return };
         let Some(def) = self.data.npc_pages.get(&page) else {
             return;
         };
         if object.dead || def.dialog_type != 2 || items.is_empty() || items.len() > 55 {
+            return;
+        }
+        if items.iter().any(|(g, ..)| *g == Grid::Storage)
+            && !self.in_safe_zone(object.map, object.location)
+        {
             return;
         }
         let now = super::store::now_secs();

@@ -5,7 +5,7 @@
 //! during a war, everyone not in the same guild is an enemy (`AtWar`).
 //! Ownership and requests persist in `guilds.json`.
 
-use super::guilds::ConquestRequest;
+use super::guilds::{has, ConquestRequest};
 use super::*;
 use mir_proto::{guild_permission, ChatKind};
 
@@ -391,12 +391,4 @@ impl World {
             .and_then(|p| p.guild)
             .is_some_and(|g| self.guild_store.castle_of(g).is_some())
     }
-}
-
-/// Zircon `GuildPermission` test shared with the guild module.
-fn has(permission: i32, bit: i32) -> bool {
-    if bit == guild_permission::LEADER {
-        return permission == guild_permission::LEADER;
-    }
-    permission == guild_permission::LEADER || permission & bit != 0
 }

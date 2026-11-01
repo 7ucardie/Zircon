@@ -473,7 +473,10 @@ impl ChatPanel {
             .filter(|l| !faded || now.saturating_sub(l.time) < FADE_MS)
             .rev()
         {
-            for part in wrap(c, &line.text, text_w).into_iter().rev() {
+            for part in crate::windows::wrap_text(c, &line.text, text_w, 12)
+                .into_iter()
+                .rev()
+            {
                 wrapped.push((part, line.colour(), line.cat.back()));
             }
             if wrapped.len() > rows + self.scroll {
@@ -559,32 +562,6 @@ impl ChatPanel {
         let y = track.y + (track.h - h) * pos;
         c.fill(Rect::new(track.x, y, track.w, h), [1.0, 1.0, 1.0, 0.35]);
     }
-}
-
-/// Greedy word wrap, splitting words that are wider than the panel.
-fn wrap(c: &mut Ctx, text: &str, max_w: f32) -> Vec<String> {
-    let mut lines = Vec::new();
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        let candidate = if current.is_empty() {
-            word.to_string()
-        } else {
-            format!("{current} {word}")
-        };
-        if c.text.width(&candidate, 12) > max_w && !current.is_empty() {
-            lines.push(std::mem::take(&mut current));
-            current = word.to_string();
-        } else {
-            current = candidate;
-        }
-    }
-    if !current.is_empty() {
-        lines.push(current);
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
 }
 
 #[cfg(test)]

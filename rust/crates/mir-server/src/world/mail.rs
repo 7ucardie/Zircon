@@ -81,7 +81,7 @@ impl World {
         );
     }
 
-    fn account_of(&self, id: ObjectId) -> Option<u32> {
+    pub(super) fn account_of(&self, id: ObjectId) -> Option<u32> {
         self.objects.get(&id)?.player().map(|p| p.account)
     }
 
@@ -205,6 +205,7 @@ impl World {
         }
         self.send_changes(id, changes);
         self.send_gold(id);
+        self.account_dirty = true;
         let mail = {
             let store = &mut self.mail_store;
             store.next_index += 1;
@@ -277,6 +278,7 @@ impl World {
                 .unwrap();
             p.bag.gold += mail.gold;
             self.send_gold(id);
+            self.account_dirty = true;
         } else {
             let Some(item) = mail.items.get(slot as usize).cloned() else {
                 self.send_to(id, ServerMessage::MailItemDelete { index, slot });
@@ -296,6 +298,7 @@ impl World {
             let changes = p.bag.gain_item(&self.data, item.clone(), &mut next);
             p.next_item_id = next;
             self.send_changes(id, changes);
+            self.account_dirty = true;
         }
         if let Some(m) = self
             .mail_store
