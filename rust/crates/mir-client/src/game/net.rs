@@ -302,6 +302,7 @@ impl Game {
                 id,
                 direction,
                 attack_magic,
+                element,
             } => {
                 if let Some(o) = self.objects.get_mut(&id) {
                     let location = o.queue.back().map(|q| q.location).unwrap_or(o.location);
@@ -314,7 +315,8 @@ impl Game {
                 }
                 self.sfx_attack(id, attack_magic);
                 if let Some(m) = attack_magic {
-                    if let Some(e) = effects::attack_effect(m, id, direction.index(), now) {
+                    if let Some(e) = effects::attack_effect(m, id, direction.index(), now, element)
+                    {
                         self.effects.push(e);
                     }
                 }
@@ -1211,6 +1213,7 @@ impl Game {
         self.minimap.navigation = None;
         self.minimap.safe_cells = None;
         self.portal_markers.clear();
+        self.atlas_reset = true;
         match MapFile::load(&path) {
             Ok(m) => {
                 tracing::info!(map = name, w = m.width, h = m.height, "map loaded");

@@ -171,7 +171,15 @@ pub fn struck_effect(e: u8, target: ObjectId, now: u64) -> Effect {
 }
 
 /// Slash effect for a melee skill on the attacker, with 8-way direction.
-pub fn attack_effect(magic: u16, attacker: ObjectId, dir: u8, now: u64) -> Option<Effect> {
+/// Zircon draws the white recipes in the attacker's affinity colour
+/// (`GetElementColour(AttackElement)`); the fire ones keep their own.
+pub fn attack_effect(
+    magic: u16,
+    attacker: ObjectId,
+    dir: u8,
+    now: u64,
+    element: u8,
+) -> Option<Effect> {
     let (library, start, count, delay, color, directed, wait) = match magic {
         magic_type::SLAYING => (MAGIC, 1350, 6, 100, WHITE, true, 0),
         magic_type::THRUSTING => (MAGIC_EX3, 0, 6, 100, WHITE, true, 0),
@@ -182,6 +190,11 @@ pub fn attack_effect(magic: u16, attacker: ObjectId, dir: u8, now: u64) -> Optio
         magic_type::DRAGON_RISE => (MAGIC, 2185, 10, 100, WHITE, true, 200),
         magic_type::BLADE_STORM => (MAGIC_EX, 1780, 10, 60, WHITE, true, 0),
         _ => return None,
+    };
+    let color = if color == WHITE {
+        element_color(element)
+    } else {
+        color
     };
     Some(Effect {
         library,

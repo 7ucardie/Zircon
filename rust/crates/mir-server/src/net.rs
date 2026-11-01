@@ -139,8 +139,11 @@ async fn handle(
                     continue;
                 }
             };
-            if writer.write_all(&frame).await.is_err() {
-                break;
+            // A client that stops reading blocks write_all forever and
+            // would keep the connection alive after the server dropped it.
+            match tokio::time::timeout(IDLE_TIMEOUT, writer.write_all(&frame)).await {
+                Ok(Ok(())) => {}
+                _ => break,
             }
         }
         let _ = writer.shutdown().await;
@@ -185,4 +188,22 @@ async fn handle(
     let _ = inbound.send(Inbound::Disconnected { conn });
     writer_task.abort();
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gate_caps_per_address_and_releases() {
+        let gate = Gate::default();
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        for _ in 0..MAX_PER_ADDRESS {
+            assert!(gate.admit(ip));
+        }
+        assert!(!gate.admit(ip));
+        gate.release(ip);
+        assert!(gate.admit(ip));
+        assert_eq!(gate.total.load(Ordering::Relaxed), MAX_PER_ADDRESS);
+    }
 }

@@ -434,9 +434,13 @@ impl Game {
                         }
                         if let Some(m) = attack_magic {
                             if let Some(uid) = self.user {
-                                if let Some(e) =
-                                    effects::attack_effect(m, uid, direction.index(), now)
-                                {
+                                if let Some(e) = effects::attack_effect(
+                                    m,
+                                    uid,
+                                    direction.index(),
+                                    now,
+                                    self.stats.attack_element,
+                                ) {
                                     self.effects.push(e);
                                 }
                             }

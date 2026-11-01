@@ -158,13 +158,9 @@ impl World {
         );
     }
 
-    fn market_account(&self, id: ObjectId) -> Option<u32> {
-        self.objects.get(&id)?.player().map(|p| p.account)
-    }
-
     /// Send this account's listings (on entry and after every change).
     pub fn market_login(&mut self, id: ObjectId) {
-        let Some(account) = self.market_account(id) else {
+        let Some(account) = self.account_of(id) else {
             return;
         };
         let mine: Vec<MarketListing> = self
@@ -185,7 +181,7 @@ impl World {
         sort: MarketSort,
         page: u32,
     ) {
-        let Some(account) = self.market_account(id) else {
+        let Some(account) = self.account_of(id) else {
             return;
         };
         let needle = name.trim().to_lowercase();
@@ -243,7 +239,7 @@ impl World {
         price: u64,
         message: String,
     ) {
-        let Some(account) = self.market_account(id) else {
+        let Some(account) = self.account_of(id) else {
             return;
         };
         let Some(o) = self.objects.get(&id) else {
@@ -294,6 +290,7 @@ impl World {
             changes.push(ch);
         }
         self.send_changes(id, changes);
+        self.account_dirty = true;
         let listed = {
             let store = &mut self.market_store;
             store.next_index += 1;
@@ -322,7 +319,7 @@ impl World {
     /// The item goes to the bag when there is room in a safe zone, otherwise
     /// by mail, exactly as the C# does.
     pub fn market_cancel_consign(&mut self, id: ObjectId, index: u32, count: u32) {
-        let Some(account) = self.market_account(id) else {
+        let Some(account) = self.account_of(id) else {
             return;
         };
         if count == 0 {
@@ -364,7 +361,7 @@ impl World {
     /// Zircon `MarketPlaceBuy`: pay `price * count`, take the goods, and mail
     /// the seller the proceeds less tax.
     pub fn market_buy(&mut self, id: ObjectId, index: u32, count: u32) {
-        let Some(account) = self.market_account(id) else {
+        let Some(account) = self.account_of(id) else {
             return;
         };
         if count == 0 {
@@ -409,6 +406,7 @@ impl World {
             .unwrap();
         p.bag.gold -= total;
         self.send_gold(id);
+        self.account_dirty = true;
         self.market_take(index, count);
         let bought = UserItem {
             count,
@@ -439,7 +437,7 @@ impl World {
         );
         let left = self.listing_count(index);
         // Tell the seller their listing shrank, if they are online.
-        if let Some(seller_id) = self.online_of_account(listing.account) {
+        if let Some(seller_id) = self.online_account(listing.account) {
             self.send_to(
                 seller_id,
                 ServerMessage::MarketConsignChanged { index, count: left },
@@ -472,18 +470,11 @@ impl World {
             .unwrap_or(0)
     }
 
-    /// An online player of this account, if any.
-    fn online_of_account(&self, account: u32) -> Option<ObjectId> {
-        self.players()
-            .find(|o| o.player().is_some_and(|p| p.account == account))
-            .map(|o| o.id)
-    }
-
     /// Hand an item to a player: into the bag when they are in a safe zone
     /// with room, otherwise by mail. Zircon does exactly this so a full bag
     /// can never eat the goods.
     fn deliver_item(&mut self, id: ObjectId, item: UserItem, subject: &str, what: &str) {
-        let Some(account) = self.market_account(id) else {
+        let Some(account) = self.account_of(id) else {
             return;
         };
         let name = self
@@ -548,7 +539,7 @@ impl World {
             store.save();
             mail
         };
-        if let Some(target) = self.online_of_account(account) {
+        if let Some(target) = self.online_account(account) {
             self.send_to(target, ServerMessage::MailNew(super::mail::summary(&mail)));
         }
     }

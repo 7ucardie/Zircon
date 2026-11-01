@@ -81,26 +81,37 @@ players and untrusted clients. Fixed today, each with a regression test:
   are computed in `usize`. Truncated-input tests added for map and db.
 - Client `Storage { size }` is capped at 200 slots like the inventory.
 
-Reported, not fixed (larger changes, decide separately):
+Second pass, same day (the items first reported as "not fixed"):
 
-1. Argon2 login/new-account hashing runs on the tick thread with no
-   per-connection rate limit: 50 `Login` per tick stalls the world 1-2 s.
-   Fix: one attempt per connection per second, disconnect on failure.
-2. Items moved into the market/mail stores are saved at once but the bag
-   only reaches `accounts.json` on the 30 s snapshot: a crash in that
-   window duplicates the item. Fix: snapshot + save the account right
-   after `market_consign`, `mail_send`, `market_buy`, `mail_get_item`
-   (as `BuyTab` already does).
-3. `disconnect` runs a full `accounts.json` rewrite with fsync per
-   dropped connection; a mass disconnect stalls the tick for seconds.
-4. A writer blocked in `write_all` keeps a "too slow" connection alive.
-5. `guild_tax_gold` rewrites `guilds.json` on every taxed gold pickup.
-6. `npc_repair` skips `npc_session` (works from across the map, and
-   from storage outside a safe zone).
-7. Client sprite atlas pages (64 MB each) are never freed across maps;
-   a sprite wider than a page hits an `expect`.
-8. `mir_proto::rules` has no tests beyond `valid_email`.
-9. Duplicates to fold: `account_of`/`market_account`,
-   `online_account`/`online_of_account`, `castles::has`/`guilds::has`,
-   two word-wrap helpers, three `contains_mouse` copies; dead
-   `magic_type::needs_cell`, `SpriteRenderer::is_loaded`.
+- Login / new-account: at most three attempts per connection per three
+  seconds (the login screen's failed login, create, login sequence fits).
+- Items moved into the market or mail stores, and mail/market gold, mark
+  `World::account_dirty`; main saves accounts that tick (one-tick window
+  instead of 30 s). A disconnect sets `save_soon` instead of a full
+  rewrite per connection, so a mass disconnect costs one save.
+- Writer task: `write_all` under `IDLE_TIMEOUT`, so a client that stops
+  reading cannot hold a dropped connection open.
+- `guild_tax_gold` marks the guild store dirty; `World::tick` flushes once.
+- `npc_repair` goes through `npc_session` and refuses storage cells
+  outside a safe zone, like every other storage path.
+- `guild_broadcast_info` builds one online set instead of a player scan
+  per member.
+- Client: `SpriteRenderer::reset` drops the sprite cache and atlas pages
+  on map change (64 MB VRAM per page); a sprite wider than a page is
+  "missing" instead of an `expect`.
+- Tests: `valid()` size limits, `Gate` per-address cap, `mir_proto::rules`
+  (attack delay floor, `/3` costs, power clamp, name and password rules).
+- Deleted: `magic_type::needs_cell`, `SpriteRenderer::is_loaded`,
+  `castles::has`, `market_account`, `online_of_account`, the chat panel's
+  word wrap; one `WindowLayout::contains_mouse` for the three windows.
+
+Also upstream #138 (element colour on physical skills): `CombatStats` now
+carries `attack_element` (Zircon `GetAffinityElement`, affinity stats
+43-49; the pack's Talisman Of Darkness is Dark), `ObjectAttack` and
+`PlayerStats` carry it, and the white attack recipes (Slaying, Thrusting,
+Half Moon, Destructive Surge, Dragon Rise, Blade Storm) draw in the
+element colour. Swift Blade stays white, as it does upstream.
+
+Still open: the `Inbound::Reload | Shutdown => {}` arm is required for
+exhaustiveness; `wearable_animation::supported_actions` ignores its
+argument but is test-only; the store tab re-sorts its stock per frame.

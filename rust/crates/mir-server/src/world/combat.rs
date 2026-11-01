@@ -269,6 +269,7 @@ impl World {
                 id,
                 direction,
                 attack_magic: valid,
+                element: stats.attack_element,
             },
         ));
         // Dragon Rise lands every hit of the swing at 600 ms instead of 300.

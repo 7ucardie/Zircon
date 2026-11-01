@@ -205,6 +205,8 @@ mod tests {
             since: HashMap::new(),
             counts: HashMap::new(),
             dropped: Vec::new(),
+            login_at: Default::default(),
+            save_soon: false,
         };
         sessions.state.insert(
             1,

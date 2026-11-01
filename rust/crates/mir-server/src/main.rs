@@ -202,6 +202,8 @@ fn main() -> anyhow::Result<()> {
         since: HashMap::new(),
         counts: HashMap::new(),
         dropped: Vec::new(),
+        login_at: HashMap::new(),
+        save_soon: false,
     };
     let start = Instant::now();
     let mut next_tick = Instant::now();
@@ -225,9 +227,7 @@ fn main() -> anyhow::Result<()> {
                 Inbound::Shutdown => {
                     tracing::info!("shutting down: saving");
                     sessions.snapshot_all(&world, &mut accounts);
-                    if let Err(e) = accounts.save_if_dirty() {
-                        tracing::error!("saving accounts failed: {e:#}");
-                    }
+                    save_accounts(&mut accounts);
                     return Ok(());
                 }
                 ev => handle_inbound(&mut world, &mut accounts, &mut sessions, ev),
@@ -279,12 +279,16 @@ fn main() -> anyhow::Result<()> {
                 Outgoing::To(conn, msg) => sessions.send(conn, msg),
             }
         }
+        // Items that just moved into the market or mail stores, and players
+        // who just left, reach accounts.json this tick rather than in up to
+        // SAVE_INTERVAL: a crash in between would duplicate the item.
+        if std::mem::take(&mut world.account_dirty) || std::mem::take(&mut sessions.save_soon) {
+            next_save = Instant::now();
+        }
         if Instant::now() >= next_save {
             next_save = Instant::now() + SAVE_INTERVAL;
             sessions.snapshot_all(&world, &mut accounts);
-            if let Err(e) = accounts.save_if_dirty() {
-                tracing::error!("saving accounts failed: {e:#}");
-            }
+            save_accounts(&mut accounts);
         }
         next_tick += TICK;
         let sleep = next_tick.saturating_duration_since(Instant::now());
@@ -304,6 +308,8 @@ const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 /// Said hello but never logged in: the slot goes back to the gate so idle
 /// unauthenticated sockets cannot hold all `MAX_CONNECTIONS`.
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+const LOGIN_WINDOW: Duration = Duration::from_secs(3);
+const LOGIN_BURST: u8 = 3;
 const DB_CHECK_INTERVAL: Duration = Duration::from_secs(2);
 
 fn db_modified(path: &PathBuf) -> Option<std::time::SystemTime> {
@@ -350,9 +356,27 @@ struct Sessions {
     counts: HashMap<ConnId, u32>,
     /// Connections whose outbound queue overflowed; dropped by the loop.
     dropped: Vec<ConnId>,
+    /// Login / new-account attempts per connection: window start and count.
+    login_at: HashMap<ConnId, (Instant, u8)>,
+    /// A player left: save accounts on the next tick, once for all of them.
+    save_soon: bool,
 }
 
 impl Sessions {
+    /// At most `LOGIN_BURST` login / new-account attempts per connection
+    /// per `LOGIN_WINDOW`: an Argon2 hash costs tens of milliseconds and
+    /// fifty logins in one tick used to stall the world for everyone. The
+    /// burst covers the login screen's failed login, create, login sequence.
+    fn login_allowed(&mut self, conn: ConnId) -> bool {
+        let now = Instant::now();
+        let entry = self.login_at.entry(conn).or_insert((now, 0));
+        if now.duration_since(entry.0) >= LOGIN_WINDOW {
+            *entry = (now, 0);
+        }
+        entry.1 += 1;
+        entry.1 <= LOGIN_BURST
+    }
+
     fn send(&mut self, conn: ConnId, msg: ServerMessage) {
         if let Some(tx) = self.conns.get(&conn) {
             if let Err(mpsc::error::TrySendError::Full(_)) = tx.try_send(msg) {
@@ -442,11 +466,18 @@ fn disconnect(world: &mut World, accounts: &mut Accounts, sessions: &mut Session
     sessions.conns.remove(&conn);
     sessions.since.remove(&conn);
     sessions.counts.remove(&conn);
+    sessions.login_at.remove(&conn);
     if let Some(stage) = sessions.state.remove(&conn) {
         leave_world(world, accounts, stage);
-        if let Err(e) = accounts.save_if_dirty() {
-            tracing::error!("saving accounts failed: {e:#}");
-        }
+        // One save next tick covers a mass disconnect; a full rewrite per
+        // connection here stalled the tick.
+        sessions.save_soon = true;
+    }
+}
+
+fn save_accounts(accounts: &mut Accounts) {
+    if let Err(e) = accounts.save_if_dirty() {
+        tracing::error!("saving accounts failed: {e:#}");
     }
 }
 
@@ -587,6 +618,14 @@ fn handle_message(
             sessions.send(conn, ServerMessage::Connected);
         }
         (Stage::Connected, ClientMessage::NewAccount { email, password }) => {
+            if !sessions.login_allowed(conn) {
+                let reason = "Too many attempts; wait a second.".into();
+                sessions.send(
+                    conn,
+                    ServerMessage::NewAccountResult(NewAccountResult::Failed { reason }),
+                );
+                return;
+            }
             let result = match accounts.create(&email, &password) {
                 Ok(id) => {
                     tracing::info!(conn, id, email, "account created");
@@ -594,10 +633,18 @@ fn handle_message(
                 }
                 Err(reason) => NewAccountResult::Failed { reason },
             };
-            let _ = accounts.save_if_dirty();
+            save_accounts(accounts);
             sessions.send(conn, ServerMessage::NewAccountResult(result));
         }
         (Stage::Connected, ClientMessage::Login { email, password }) => {
+            if !sessions.login_allowed(conn) {
+                let reason = "Too many attempts; wait a second.".into();
+                sessions.send(
+                    conn,
+                    ServerMessage::LoginResult(LoginResult::Failed { reason }),
+                );
+                return;
+            }
             let result = match accounts.login(&email, &password) {
                 Ok(account) if sessions.account_in_use(account, conn) => LoginResult::Failed {
                     reason: "Account already logged in".into(),
@@ -631,7 +678,7 @@ fn handle_message(
                 }
                 Err(reason) => NewCharacterResult::Failed { reason },
             };
-            let _ = accounts.save_if_dirty();
+            save_accounts(accounts);
             sessions.send(conn, ServerMessage::NewCharacterResult(result));
         }
         (Stage::LoggedIn { account }, ClientMessage::DeleteCharacter { id }) => {
@@ -639,7 +686,7 @@ fn handle_message(
                 Ok(()) => (true, String::new()),
                 Err(r) => (false, r),
             };
-            let _ = accounts.save_if_dirty();
+            save_accounts(accounts);
             sessions.send(
                 conn,
                 ServerMessage::DeleteCharacterResult { id, ok, reason },
@@ -698,7 +745,7 @@ fn handle_message(
         }
         (Stage::InGame { account, .. }, ClientMessage::Logout) => {
             leave_world(world, accounts, stage);
-            let _ = accounts.save_if_dirty();
+            save_accounts(accounts);
             sessions.state.insert(conn, Stage::LoggedIn { account });
             sessions.send(
                 conn,
@@ -774,9 +821,7 @@ fn handle_message(
                     accounts.mark_dirty();
                 }
                 save_storage(world, accounts, account, object);
-                if let Err(error) = accounts.save_if_dirty() {
-                    tracing::error!("saving tab purchase failed: {error:#}");
-                }
+                save_accounts(accounts);
             }
         }
         (Stage::InGame { object, .. }, ClientMessage::PickUp) => world.pick_up(object),
@@ -1215,4 +1260,32 @@ fn inspect(world: &mut World) -> anyhow::Result<()> {
         near.join(", ")
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_rejects_oversized_client_messages() {
+        assert!(valid(&ClientMessage::Chat {
+            text: "x".repeat(512)
+        }));
+        assert!(!valid(&ClientMessage::Chat {
+            text: "x".repeat(513)
+        }));
+        let mail = |n| ClientMessage::MailSend {
+            recipient: "Bob".into(),
+            subject: String::new(),
+            message: String::new(),
+            gold: 0,
+            items: vec![(mir_proto::Grid::Inventory, 0, 1); n],
+        };
+        assert!(valid(&mail(5)));
+        assert!(!valid(&mail(6)));
+        assert!(!valid(&ClientMessage::Login {
+            email: "e".repeat(65),
+            password: "p".into()
+        }));
+    }
 }

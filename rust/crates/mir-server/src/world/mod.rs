@@ -110,6 +110,21 @@ pub const DROP_DISTANCE: i32 = 5;
 pub const PICKUP_RADIUS: i32 = 1;
 /// Element index 0 is physical; 1..=7 match `mir_proto::element`.
 pub(super) const ELEMENT_ATTACK_STATS: [i32; 8] = [0, 20, 22, 24, 26, 28, 30, 32];
+/// Zircon `Stat.FireAffinity`..`PhantomAffinity`, indexed by `element::*`.
+pub(crate) const AFFINITY_STATS: [i32; 8] = [0, 43, 44, 45, 46, 47, 48, 49];
+
+/// Zircon `Functions.GetAffinityElement`: the element whose affinity stat
+/// is highest, earlier elements winning ties; none when all are zero.
+pub(crate) fn affinity_element(stat: impl Fn(i32) -> i32) -> u8 {
+    let mut best = (mir_proto::element::NONE, 0);
+    for (element, id) in AFFINITY_STATS.iter().enumerate().skip(1) {
+        let value = stat(*id);
+        if value > best.1 {
+            best = (element as u8, value);
+        }
+    }
+    best.0
+}
 pub(super) const ELEMENT_RESIST_STATS: [i32; 8] = [118, 21, 23, 25, 27, 29, 31, 33];
 
 pub type ConnId = u64;
@@ -141,6 +156,8 @@ pub struct CombatStats {
     pub pickup_radius: i32,
     pub element_attack: [i32; 8],
     pub element_resist: [i32; 8],
+    /// Zircon `GetAffinityElement`: the element with the highest affinity.
+    pub attack_element: u8,
 }
 
 impl CombatStats {
@@ -169,6 +186,7 @@ impl CombatStats {
         pickup_radius: 1,
         element_attack: [0; 8],
         element_resist: [0; 8],
+        attack_element: 0,
     };
 }
 
@@ -847,6 +865,9 @@ pub enum Outgoing {
 
 pub struct World {
     pub data: GameData,
+    /// A bag changed in a way that is already persisted elsewhere (market,
+    /// mail); main saves accounts this tick instead of waiting.
+    pub account_dirty: bool,
     map_dir: PathBuf,
     /// Ordered maps so ticks iterate deterministically (seeded tests).
     pub maps: BTreeMap<i32, MapState>,
@@ -1040,6 +1061,7 @@ impl World {
             events: Vec::new(),
             next_item_expiry: 0,
             outgoing: Vec::new(),
+            account_dirty: false,
             groups: BTreeMap::new(),
             guild_store: guilds::GuildStore::default(),
             ranking: ranking::Ranking::default(),
@@ -1112,6 +1134,10 @@ impl World {
     // ---- tick ----------------------------------------------------------------
 
     pub fn tick(&mut self, now: u64) {
+        if self.guild_store.dirty {
+            self.guild_store.dirty = false;
+            self.guild_store.save();
+        }
         self.now = now;
 
         // Player timers: regen and revive.

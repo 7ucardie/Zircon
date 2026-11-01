@@ -83,6 +83,9 @@ pub struct GuildStore {
     pub conquests: Vec<ConquestRequest>,
     #[serde(skip)]
     path: Option<PathBuf>,
+    /// Funds changed by a taxed pickup; flushed once per tick, not per pickup.
+    #[serde(skip)]
+    pub dirty: bool,
 }
 
 impl GuildStore {
@@ -147,7 +150,7 @@ impl GuildStore {
     }
 }
 
-fn has(permission: i32, bit: i32) -> bool {
+pub(super) fn has(permission: i32, bit: i32) -> bool {
     if bit == guild_permission::LEADER {
         return permission == guild_permission::LEADER;
     }
@@ -196,7 +199,12 @@ impl World {
             .collect()
     }
 
-    fn guild_summary(&self, guild: u32, viewer: ObjectId) -> Option<GuildSummary> {
+    fn guild_summary(
+        &self,
+        guild: u32,
+        viewer: ObjectId,
+        online: &HashSet<u32>,
+    ) -> Option<GuildSummary> {
         let g = self.guild_store.get(guild)?;
         let me = self.character_of(viewer)?;
         Some(GuildSummary {
@@ -221,7 +229,7 @@ impl World {
                     name: m.name.clone(),
                     rank: m.rank.clone(),
                     permission: m.permission,
-                    online: self.online_character(m.character).is_some(),
+                    online: online.contains(&m.character),
                 })
                 .collect(),
             castle: self
@@ -404,8 +412,12 @@ impl World {
 
     /// Send the full guild view to every online member (after any change).
     pub(super) fn guild_broadcast_info(&mut self, guild: u32) {
+        let online: HashSet<u32> = self
+            .players()
+            .filter_map(|o| self.character_of(o.id))
+            .collect();
         for m in self.guild_online(guild) {
-            let info = self.guild_summary(guild, m);
+            let info = self.guild_summary(guild, m, &online);
             self.send_to(m, ServerMessage::GuildInfo(info));
         }
     }
@@ -921,7 +933,7 @@ impl World {
         }
         let cut = gold * g.tax as u64 / 100;
         g.funds += cut as i64;
-        self.guild_store.save();
+        self.guild_store.dirty = true;
         gold - cut
     }
 

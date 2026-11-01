@@ -159,11 +159,12 @@ impl DungeonCodex {
 
     pub fn contains_mouse(&self, mouse: (f32, f32), width: i32, height: i32) -> bool {
         self.open
-            && (self
-                .layout
-                .rect("dungeon_codex", Self::rect(width, height), (width, height))
-                .contains(mouse.0, mouse.1)
-                || self.layout.is_dragging())
+            && self.layout.contains_mouse(
+                "dungeon_codex",
+                Self::rect(width, height),
+                mouse,
+                (width, height),
+            )
     }
 
     pub fn draw(&mut self, c: &mut Ctx, width: i32, height: i32) -> bool {

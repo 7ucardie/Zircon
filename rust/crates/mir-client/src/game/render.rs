@@ -172,6 +172,9 @@ impl Game {
         now: u64,
         fps: f32,
     ) {
+        if std::mem::take(&mut self.atlas_reset) {
+            renderer.reset(gpu);
+        }
         self.ui_hover_last_frame = false;
         self.item_label_rects.clear();
         let white = [1.0, 1.0, 1.0, 1.0];

@@ -354,6 +354,7 @@ impl World {
                 id,
                 direction: dir,
                 attack_magic: None,
+                element: mir_proto::element::NONE,
             },
         ));
     }
