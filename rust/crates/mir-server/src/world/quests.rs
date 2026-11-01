@@ -66,6 +66,40 @@ impl World {
         };
         let s = summary(q);
         self.send_to(id, ServerMessage::QuestChanged(s));
+        self.send_quest_markers(id);
+    }
+
+    /// Quest icons depend on the viewer's level and quest progress.
+    pub(super) fn npc_quest_marker(&self, player: ObjectId, npc: ObjectId) -> u8 {
+        let quests = self.npc_quests(player, npc);
+        if quests.iter().any(|quest| quest.state == 2) {
+            3
+        } else if quests.iter().any(|quest| quest.state == 0) {
+            1
+        } else if quests.iter().any(|quest| quest.state == 1) {
+            2
+        } else {
+            0
+        }
+    }
+
+    pub(super) fn send_quest_markers(&mut self, player: ObjectId) {
+        let Some(visible) = self
+            .objects
+            .get(&player)
+            .map(|object| object.visible.clone())
+        else {
+            return;
+        };
+        for npc in visible {
+            if matches!(
+                self.objects.get(&npc).map(|object| &object.kind),
+                Some(Kind::Npc(_))
+            ) {
+                let marker = self.npc_quest_marker(player, npc);
+                self.send_to(player, ServerMessage::NpcQuestMarker { id: npc, marker });
+            }
+        }
     }
 
     /// Zircon `QuestCanAccept`.
@@ -296,6 +330,7 @@ impl World {
             .unwrap_or(false);
         if removed {
             self.send_to(id, ServerMessage::QuestCancelled { quest });
+            self.send_quest_markers(id);
         }
     }
 
@@ -454,5 +489,6 @@ impl World {
         for quest in removed {
             self.send_to(id, ServerMessage::QuestCancelled { quest });
         }
+        self.send_quest_markers(id);
     }
 }

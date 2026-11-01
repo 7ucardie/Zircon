@@ -16,7 +16,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use mir_proto::{Class, RankEntry};
+use mir_proto::{Class, Grid, RankEntry, RankInspection, EQUIPMENT_SIZE};
+
+use crate::accounts::CharacterRecord;
 
 /// Rows the client asks for at a time. Zircon sends 21 for 11 visible
 /// lines, so a small scroll needs no round trip.
@@ -127,6 +129,29 @@ impl Ranking {
         }
         RankPage { total, entries }
     }
+
+    /// Zircon's name search ignores the board's current class/online filters.
+    pub fn search(
+        &mut self,
+        mut rows: Vec<RankRow>,
+        name: &str,
+        online: &HashSet<u32>,
+        now: u64,
+    ) -> (Option<RankEntry>, u32) {
+        sort_rows(&mut rows);
+        let Some(start) = rows
+            .iter()
+            .position(|row| row.name.eq_ignore_ascii_case(name.trim()))
+        else {
+            return (None, 0);
+        };
+        let entry = self
+            .page(rows, None, false, start as u32, online, now)
+            .entries
+            .into_iter()
+            .next();
+        (entry, start as u32)
+    }
 }
 
 impl crate::world::World {
@@ -160,6 +185,92 @@ impl crate::world::World {
             },
         );
     }
+
+    pub fn rank_search(&mut self, id: mir_proto::ObjectId, rows: Vec<RankRow>, name: &str) {
+        let online: HashSet<u32> = self
+            .players()
+            .filter_map(|o| o.player())
+            .map(|p| p.character)
+            .collect();
+        let (entry, start) = self.ranking.search(rows, name, &online, self.now);
+        self.send_to(
+            id,
+            mir_proto::ServerMessage::RankSearchResult { entry, start },
+        );
+    }
+
+    pub fn rank_inspect(&mut self, id: mir_proto::ObjectId, record: Option<CharacterRecord>) {
+        let details = record.map(|record| {
+            let online = self
+                .players()
+                .filter_map(|o| o.player())
+                .find(|p| p.character == record.id);
+            let (name, class, gender, level, hair, hair_colour, equipment) = if let Some(p) = online
+            {
+                (
+                    p.name.clone(),
+                    p.class,
+                    p.gender,
+                    p.level,
+                    p.hair,
+                    p.hair_colour,
+                    p.bag
+                        .equipment
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(slot, item)| {
+                            item.as_ref().map(|item| (slot as u8, item.instance()))
+                        })
+                        .collect(),
+                )
+            } else {
+                (
+                    record.name.clone(),
+                    record.class,
+                    record.gender,
+                    record.level,
+                    record.hair,
+                    record.hair_colour,
+                    inspected_equipment(&record),
+                )
+            };
+            let guild = self.guild_store.guilds.iter().find_map(|guild| {
+                guild
+                    .members
+                    .iter()
+                    .find(|member| member.character == record.id)
+                    .map(|member| (guild.name.clone(), member.rank.clone()))
+            });
+            RankInspection {
+                character: record.id,
+                name,
+                class,
+                gender,
+                level,
+                hair,
+                hair_colour,
+                partner: record.partner_name,
+                fame: record.fame,
+                guild_name: guild
+                    .as_ref()
+                    .map_or_else(String::new, |(name, _)| name.clone()),
+                guild_rank: guild.map_or_else(String::new, |(_, rank)| rank),
+                equipment,
+            }
+        });
+        self.send_to(id, mir_proto::ServerMessage::RankInspection(details));
+    }
+}
+
+fn inspected_equipment(record: &CharacterRecord) -> Vec<(u8, mir_proto::ItemInstance)> {
+    let mut equipment: Vec<_> = record
+        .items
+        .iter()
+        .filter(|item| item.grid == Grid::Equipment && (item.slot as usize) < EQUIPMENT_SIZE)
+        .map(|item| (item.slot, item.item.instance()))
+        .collect();
+    equipment.sort_by_key(|(slot, _)| *slot);
+    equipment
 }
 
 #[cfg(test)]
@@ -285,5 +396,59 @@ mod tests {
         assert_eq!(page.total, 60);
         assert_eq!(page.entries.len(), PAGE);
         assert_eq!(page.entries[0].rank, 1);
+    }
+
+    #[test]
+    fn search_finds_exact_name_independent_of_current_board_filters() {
+        let mut rank = Ranking::default();
+        let (found, start) = rank.search(rows(), " c1 ", &HashSet::new(), 0);
+        assert_eq!(start, 2);
+        assert_eq!(
+            found.map(|entry| (entry.rank, entry.character)),
+            Some((3, 1))
+        );
+        assert_eq!(rank.search(rows(), "C", &HashSet::new(), 0), (None, 0));
+    }
+
+    #[test]
+    fn inspection_never_includes_inventory_or_storage() {
+        use crate::items::{StoredItem, UserItem};
+
+        let item = UserItem {
+            id: 1,
+            info: 100,
+            count: 1,
+            durability: 1000,
+            max_durability: 1000,
+            added: vec![],
+            level: 0,
+            refinable: true,
+            non_refinable: false,
+            bound: false,
+            worthless: false,
+            locked: false,
+            special_repair_until: 0,
+            weapon_experience_tenths: 0,
+            accessory_experience: 0,
+            expires_at: None,
+            colour: 0,
+        };
+        let mut record = crate::accounts::test_character("Inspector");
+        record.items = [Grid::Inventory, Grid::Storage, Grid::Equipment]
+            .into_iter()
+            .enumerate()
+            .map(|(index, grid)| StoredItem {
+                grid,
+                slot: index as u8,
+                item: UserItem {
+                    id: index as u32 + 1,
+                    ..item.clone()
+                },
+            })
+            .collect();
+        let equipment = inspected_equipment(&record);
+        assert_eq!(equipment.len(), 1);
+        assert_eq!(equipment[0].0, 2);
+        assert_eq!(equipment[0].1.id, 3);
     }
 }

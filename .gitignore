@@ -4,6 +4,8 @@ Build/
 .vs/
 [Oo]bj/
 [Bb]in/
+!/rust/crates/mir-server/src/bin/
+!/rust/crates/mir-server/src/bin/mir-stripe-checkout.rs
 packages/
 licenses.licx
 /NuGet.Config
@@ -18,3 +20,13 @@ licenses.licx
 
 # Server runtime data (accounts)
 /rust/data/
+**/accounts.json
+**/.env
+**/.env.*
+*.sqlite
+*.sqlite3
+*.pem
+*.key
+
+# Claude Code session data and agent worktrees
+.claude/

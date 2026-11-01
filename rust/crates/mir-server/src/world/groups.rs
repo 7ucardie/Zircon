@@ -28,7 +28,7 @@ impl World {
             .unwrap_or_default()
     }
 
-    fn find_player(&self, name: &str) -> Option<ObjectId> {
+    pub(super) fn find_player(&self, name: &str) -> Option<ObjectId> {
         self.players()
             .find(|o| {
                 o.player()
@@ -197,6 +197,7 @@ impl World {
 
     /// Leave the current group; a group left with one member dissolves.
     pub fn group_leave(&mut self, id: ObjectId) {
+        self.buff_remove(id, mir_proto::buff_type::SOUL_RESONANCE);
         let Some(g) = self
             .objects
             .get_mut(&id)

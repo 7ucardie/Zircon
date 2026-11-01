@@ -11,6 +11,13 @@ const SHOUT_DELAY: u64 = 10_000;
 const GLOBAL_SHOUT_DELAY: u64 = 30_000;
 
 impl World {
+    pub fn set_chat_bans(&mut self, id: ObjectId, chat_until: u64, global_until: u64) {
+        if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
+            p.chat_ban_until = chat_until;
+            p.global_ban_until = global_until;
+        }
+    }
+
     pub fn chat(&mut self, id: ObjectId, text: String) {
         let text = text.trim().to_string();
         if text.is_empty() {
@@ -22,10 +29,38 @@ impl World {
         let Some(p) = o.player() else {
             return;
         };
+        let now = crate::accounts::now_secs();
+        if p.chat_ban_until > now {
+            self.send_to(id, say(None, ChatKind::System, "You are muted.".into()));
+            return;
+        }
+        if text.starts_with("!@") && p.global_ban_until > now {
+            self.send_to(
+                id,
+                say(
+                    None,
+                    ChatKind::System,
+                    "Global chat is muted for this account.".into(),
+                ),
+            );
+            return;
+        }
         let (name, level, map, loc) = (p.name.clone(), p.level, o.map, o.location);
         tracing::info!(target: "chat", "{name}: {text}");
 
-        if let Some(rest) = text.strip_prefix('/') {
+        if let Some(command) = text.strip_prefix('@') {
+            if command.eq_ignore_ascii_case("event") {
+                self.world_event_status(id);
+            } else if let Some(level) = command
+                .to_ascii_lowercase()
+                .strip_prefix("enablelevel")
+                .and_then(|level| level.parse::<i32>().ok())
+            {
+                self.companion_skill_toggle(id, level);
+            } else {
+                self.gm_chat(id, command);
+            }
+        } else if let Some(rest) = text.strip_prefix('/') {
             // Whisper: "/name message".
             let mut parts = rest.splitn(2, ' ');
             let target_name = parts.next().unwrap_or("").to_string();

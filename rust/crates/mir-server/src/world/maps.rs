@@ -1,4 +1,5 @@
 use super::*;
+use mir_formats::room_door::RoomDoors;
 
 impl World {
     /// Load a map (and register its spawn groups) if not already loaded.
@@ -15,6 +16,16 @@ impl World {
         let path = self.map_dir.join(format!("{}.map", def.file_name));
         let file =
             MapFile::load(&path).map_err(|e| anyhow::anyhow!("loading {}: {e}", path.display()))?;
+        let doors = RoomDoors::load(&path, &file)?;
+        if let Some(doors) = &doors {
+            anyhow::ensure!(
+                doors
+                    .doors
+                    .iter()
+                    .all(|door| self.data.monsters.contains_key(&door.source_monster)),
+                "Room door source monster is absent from System.db."
+            );
+        }
         let width = file.width as i32;
         let mut spawns = Vec::new();
         for r in self.data.respawns.iter().filter(|r| !r.event_spawn) {
@@ -87,6 +98,9 @@ impl World {
         self.spawn_npcs(index);
         self.spawn_guards(index);
         self.spawn_castle_objects(index);
+        if let Some(doors) = &doors {
+            self.spawn_room_doors(index, doors);
+        }
         Ok(())
     }
 
@@ -191,10 +205,12 @@ impl World {
     /// Move a player to a random cell of its bind point, changing map if
     /// the bind region lies elsewhere.
     pub(super) fn go_to_bind_point(&mut self, id: ObjectId) -> anyhow::Result<Point> {
-        let (map, bind_region) = {
-            let o = &self.objects[&id];
-            (o.map, o.player().unwrap().bind_region)
-        };
+        let bind_region = self.objects[&id].player().unwrap().bind_region;
+        self.go_to_region(id, bind_region)
+    }
+
+    pub(super) fn go_to_region(&mut self, id: ObjectId, bind_region: i32) -> anyhow::Result<Point> {
+        let map = self.objects[&id].map;
         let target_map = self
             .data
             .regions
@@ -204,11 +220,83 @@ impl World {
         self.ensure_map(target_map)?;
         let location = self.bind_point(target_map, bind_region)?;
         if target_map == map {
-            self.move_object(id, location);
+            self.teleport_object(id, location);
         } else {
             self.change_map(id, target_map, location);
         }
         Ok(location)
+    }
+
+    /// Fewest map exits first; for equal routes, use the closest exit on the
+    /// current map. Town scrolls need this rather than the character's spawn bind.
+    pub(super) fn nearest_town_region(&self, map: i32, loc: Point, class: Class) -> Option<i32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+
+        let width = self.maps.get(&map)?.file.width as i32;
+        let mut routes = BinaryHeap::from([Reverse((0_u32, 0_i32, map))]);
+        let mut visited = HashSet::new();
+        while let Some(Reverse((hops, first_exit_distance, here))) = routes.pop() {
+            if !visited.insert(here) {
+                continue;
+            }
+            if let Some(zone) = self
+                .data
+                .safe_zones
+                .iter()
+                .filter(|zone| zone.bind_region != 0)
+                .filter(|zone| {
+                    self.data
+                        .regions
+                        .get(&zone.region)
+                        .is_some_and(|r| r.map == here)
+                })
+                .min_by_key(|zone| {
+                    if here != map {
+                        return 0;
+                    }
+                    self.data.regions[&zone.region]
+                        .points(width)
+                        .into_iter()
+                        .map(|(x, y)| (x - loc.x).abs() + (y - loc.y).abs())
+                        .min()
+                        .unwrap_or(i32::MAX)
+                })
+            {
+                return Some(zone.bind_region);
+            }
+            for movement in &self.data.movements {
+                if movement.need_item != 0
+                    || movement.need_spawn != 0
+                    || (movement.required_class != 0 && movement.required_class & class.flag() == 0)
+                {
+                    continue;
+                }
+                let (Some(source), Some(dest)) = (
+                    self.data.regions.get(&movement.source_region),
+                    self.data.regions.get(&movement.destination_region),
+                ) else {
+                    continue;
+                };
+                if source.map != here || visited.contains(&dest.map) {
+                    continue;
+                }
+                let distance = if hops == 0 {
+                    source
+                        .movement_points(width)
+                        .into_iter()
+                        .map(|(x, y)| (x - loc.x).abs() + (y - loc.y).abs())
+                        .min()
+                        .unwrap_or(i32::MAX)
+                } else {
+                    first_exit_distance
+                };
+                if distance != i32::MAX {
+                    routes.push(Reverse((hops + 1, distance, dest.map)));
+                }
+            }
+        }
+        None
     }
 
     // ---- map travel -------------------------------------------------------------
@@ -330,6 +418,7 @@ impl World {
                 direction: dir,
             },
         );
+        self.send_safe_zones(id, map);
         // Landing on another movement cell chains (Zircon recurses).
         if old_map != map || old_loc != to {
             let _ = self.try_travel(id);

@@ -87,19 +87,14 @@ pub struct GuildStore {
 
 impl GuildStore {
     pub(super) fn load(path: PathBuf) -> GuildStore {
-        let mut store: GuildStore = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let mut store: GuildStore = super::load_json(&path);
         store.path = Some(path);
         store
     }
 
     pub(super) fn save(&self) {
         if let Some(p) = &self.path {
-            if let Ok(json) = serde_json::to_vec_pretty(self) {
-                let _ = std::fs::write(p, json);
-            }
+            super::save_json(p, self);
         }
     }
 
@@ -487,6 +482,26 @@ impl World {
     }
 
     pub fn guild_create(&mut self, id: ObjectId, name: String, members: i32) {
+        self.guild_create_inner(id, name, members, false);
+    }
+
+    pub(super) fn gm_create_guild(&mut self, id: ObjectId, name: String) -> bool {
+        if self
+            .objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .is_some_and(|p| p.guild.is_some())
+        {
+            return false;
+        }
+        self.guild_create_inner(id, name, 1, true);
+        self.objects
+            .get(&id)
+            .and_then(|o| o.player())
+            .is_some_and(|p| p.guild.is_some())
+    }
+
+    fn guild_create_inner(&mut self, id: ObjectId, name: String, members: i32, free: bool) {
         let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
             return;
         };
@@ -511,7 +526,7 @@ impl World {
             return;
         }
         let cost = GUILD_CREATION_COST + members as u64 * GUILD_MEMBER_COST;
-        if p.bag.gold < cost {
+        if !free && p.bag.gold < cost {
             self.guild_line(id, format!("Creating that guild costs {cost} gold."));
             return;
         }
@@ -548,7 +563,9 @@ impl World {
             .get_mut(&id)
             .and_then(|o| o.player_mut())
             .unwrap();
-        p.bag.gold -= cost;
+        if !free {
+            p.bag.gold -= cost;
+        }
         p.guild = Some(gid);
         self.send_gold(id);
         self.guild_line(id, format!("Guild {name} created."));

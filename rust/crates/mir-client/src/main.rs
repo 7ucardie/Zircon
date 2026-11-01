@@ -1,7 +1,7 @@
-//! Rust Zircon game client (winit + wgpu).
+//! ZirconRust game client (winit + wgpu).
 //!
 //! ```text
-//! mir-client [--server HOST:PORT] [--assets DIR]
+//! mir-client [--server HOST:PORT] [--assets DIR] [--size WIDTHxHEIGHT]
 //!   ZIRCON_ASSETS  client root containing Data/ and Map/ (default ~/zircon-assets/Client)
 //!   ZIRCON_SERVER  server address (default 127.0.0.1:7000)
 //! ```
@@ -9,10 +9,13 @@
 mod anim;
 mod assets;
 mod audio;
+mod character_services;
 mod chat_options;
 mod chat_panel;
 mod client;
+mod dungeon_codex;
 mod effects;
+mod equipment_fx;
 mod fortune;
 mod friends;
 mod game;
@@ -24,9 +27,11 @@ mod net;
 mod overlay;
 mod ranking;
 mod scenes;
+mod settings;
 mod sound_table;
 mod text;
 mod ui;
+mod wardrobe;
 mod windows;
 
 use std::path::PathBuf;
@@ -48,6 +53,13 @@ use crate::text::TextLayer;
 struct Args {
     assets: PathBuf,
     server: String,
+    size: (u32, u32),
+}
+
+fn window_size(value: &str) -> Option<(u32, u32)> {
+    let (width, height) = value.split_once('x')?;
+    let (width, height) = (width.parse().ok()?, height.parse().ok()?);
+    crate::settings::valid_resolution((width, height)).then_some((width, height))
 }
 
 fn parse_args() -> Args {
@@ -59,18 +71,31 @@ fn parse_args() -> Args {
         .unwrap_or_else(|| home.join("zircon-assets/Client"));
     let mut server = std::env::var("ZIRCON_SERVER")
         .unwrap_or_else(|_| format!("127.0.0.1:{}", mir_proto::DEFAULT_PORT));
+    let mut size = std::env::var("ZIRCON_WINDOW_SIZE")
+        .ok()
+        .and_then(|value| window_size(&value))
+        .or_else(|| crate::settings::Preferences::load().resolution)
+        .unwrap_or((1024, 768));
     let mut it = std::env::args().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--assets" => assets = PathBuf::from(it.next().expect("--assets DIR")),
             "--server" => server = it.next().expect("--server HOST:PORT"),
+            "--size" => {
+                let value = it.next().expect("--size WIDTHxHEIGHT");
+                size = window_size(&value).expect("--size needs WIDTHxHEIGHT, at least 640x480");
+            }
             other => {
                 eprintln!("unknown argument {other}");
                 std::process::exit(2);
             }
         }
     }
-    Args { assets, server }
+    Args {
+        assets,
+        server,
+        size,
+    }
 }
 
 struct App {
@@ -139,7 +164,7 @@ impl App {
                     return;
                 }
                 wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
-                    return
+                    return;
                 }
                 wgpu::CurrentSurfaceTexture::Validation => {
                     tracing::error!("surface validation error");
@@ -235,6 +260,9 @@ impl App {
             window.pre_present_notify();
             gpu.queue.present(surface);
         }
+        if let Some((width, height)) = client.game.take_pending_resolution() {
+            let _ = window.request_inner_size(LogicalSize::new(width as f64, height as f64));
+        }
         text.trim();
     }
 }
@@ -249,15 +277,42 @@ fn save_png(path: &PathBuf, w: u32, h: u32, rgba: &[u8]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn set_dock_icon() {
+    use objc2::{AnyThread, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSImage};
+    use objc2_foundation::NSData;
+
+    let Some(thread) = MainThreadMarker::new() else {
+        return;
+    };
+    let bytes = include_bytes!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../icons/zircon.png"
+    ));
+    let data = NSData::with_bytes(bytes);
+    let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) else {
+        tracing::warn!("could not decode Dock icon");
+        return;
+    };
+    // AppKit owns the shared application and retains its icon image.
+    unsafe { NSApplication::sharedApplication(thread).setApplicationIconImage(Some(&image)) };
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("Legend of Mir 3 - Zircon (Rust)")
-            .with_inner_size(LogicalSize::new(1024.0, 768.0));
+            .with_title("ZirconRust")
+            .with_inner_size(LogicalSize::new(
+                self.args.size.0 as f64,
+                self.args.size.1 as f64,
+            ));
         let window = Arc::new(event_loop.create_window(attrs).expect("window"));
+        #[cfg(target_os = "macos")]
+        set_dock_icon();
         self.scale = window.scale_factor();
         let gpu = Gpu::new(window.clone()).expect("gpu");
         let renderer = SpriteRenderer::new(&gpu);
@@ -313,12 +368,19 @@ impl ApplicationHandler for App {
                 if let Some(c) = self.client.as_mut() {
                     c.input.ctrl = m.state().control_key();
                     c.input.alt = m.state().alt_key();
+                    c.input.command = m.state().super_key();
+                    c.input.shift = m.state().shift_key();
                 }
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if event.state == ElementState::Pressed {
                     match event.physical_key {
-                        PhysicalKey::Code(KeyCode::F12) => {
+                        PhysicalKey::Code(KeyCode::KeyS)
+                            if self
+                                .client
+                                .as_ref()
+                                .is_some_and(|c| c.input.ctrl && c.input.alt) =>
+                        {
                             let name = format!("zircon-{}.png", chrono_stamp());
                             self.screenshot = Some(PathBuf::from(name));
                         }
@@ -343,10 +405,34 @@ impl ApplicationHandler for App {
                                 KeyCode::F9 => Some(9),
                                 KeyCode::F10 => Some(10),
                                 KeyCode::F11 => Some(11),
+                                KeyCode::F12 => Some(12),
                                 _ => None,
                             };
-                            if f.is_some() {
-                                c.input.fkey = f;
+                            let mac_slot = if cfg!(target_os = "macos")
+                                && (c.input.alt || c.input.command)
+                                && !c.input.ctrl
+                                && !(c.input.alt && c.input.command)
+                            {
+                                match code {
+                                    KeyCode::Digit1 => Some(1),
+                                    KeyCode::Digit2 => Some(2),
+                                    KeyCode::Digit3 => Some(3),
+                                    KeyCode::Digit4 => Some(4),
+                                    KeyCode::Digit5 => Some(5),
+                                    KeyCode::Digit6 => Some(6),
+                                    KeyCode::Digit7 => Some(7),
+                                    KeyCode::Digit8 => Some(8),
+                                    KeyCode::Digit9 => Some(9),
+                                    KeyCode::Digit0 => Some(10),
+                                    KeyCode::Minus => Some(11),
+                                    KeyCode::Equal => Some(12),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            };
+                            if let Some(slot) = f.or(mac_slot) {
+                                c.input.fkey = Some(slot);
                             }
                             let digit = match code {
                                 KeyCode::Digit1 => Some(0),
@@ -361,11 +447,16 @@ impl ApplicationHandler for App {
                                 KeyCode::Digit0 => Some(9),
                                 _ => None,
                             };
-                            if digit.is_some() {
+                            if digit.is_some()
+                                && !event.repeat
+                                && !c.input.command
+                                && !c.input.alt
+                                && !c.input.ctrl
+                            {
                                 c.input.digit = digit;
                             }
                             // Ctrl/Alt chords: `KeyH` -> 'h'.
-                            if c.input.ctrl || c.input.alt {
+                            if !event.repeat && (c.input.ctrl || c.input.alt) {
                                 let name = format!("{code:?}");
                                 if let Some(ch) =
                                     name.strip_prefix("Key").and_then(|s| s.chars().next())
@@ -382,6 +473,8 @@ impl ApplicationHandler for App {
                             Key::Named(NamedKey::Delete) => c.input.delete = true,
                             Key::Named(NamedKey::ArrowUp) => c.input.up = true,
                             Key::Named(NamedKey::ArrowDown) => c.input.down = true,
+                            Key::Named(NamedKey::ArrowLeft) => c.input.left = true,
+                            Key::Named(NamedKey::ArrowRight) => c.input.right = true,
                             Key::Named(NamedKey::Space) => c.input.text.push(' '),
                             _ => {
                                 if let Some(t) = &event.text {

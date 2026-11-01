@@ -62,6 +62,7 @@ pub struct ZlLibrary {
     version: u8,
     images: Vec<Option<ImageInfo>>,
     file: Mutex<File>,
+    file_len: u64,
 }
 
 impl std::fmt::Debug for ZlLibrary {
@@ -114,7 +115,8 @@ impl ZlLibrary {
         let mut len_buf = [0u8; 4];
         file.read_exact(&mut len_buf)?;
         let header_size = i32::from_le_bytes(len_buf);
-        if header_size < 4 {
+        let file_len = file.metadata()?.len();
+        if header_size < 4 || header_size as u64 + 4 > file_len {
             return Err(FormatError::Invalid("zl header size"));
         }
         let mut header = vec![0u8; header_size as usize];
@@ -130,7 +132,7 @@ impl ZlLibrary {
         if count < 0 {
             return Err(FormatError::Invalid("zl image count"));
         }
-        let mut images = Vec::with_capacity(count as usize);
+        let mut images = Vec::with_capacity((count as usize).min(header_size as usize));
         for _ in 0..count {
             if !c.bool()? {
                 images.push(None);
@@ -157,6 +159,7 @@ impl ZlLibrary {
             version,
             images,
             file: Mutex::new(file),
+            file_len,
         })
     }
 
@@ -203,6 +206,9 @@ impl ZlLibrary {
                 info.surface_size(SurfaceKind::Overlay, self.version),
             ),
         };
+        if info.position as u64 + offset as u64 + size as u64 > self.file_len {
+            return Err(FormatError::Invalid("zl surface outside file"));
+        }
         let mut raw = vec![0u8; size];
         {
             let mut file = self.file.lock().unwrap();
@@ -399,6 +405,9 @@ impl ZlLibrary {
         } else {
             self.payload_size(info)
         };
+        if info.position as u64 + size as u64 > self.file_len {
+            return Err(FormatError::Invalid("zl surface outside file"));
+        }
         let mut payload = vec![0u8; size];
         if size > 0 {
             let mut file = self.file.lock().unwrap();

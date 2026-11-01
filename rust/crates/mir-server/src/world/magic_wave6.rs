@@ -11,8 +11,6 @@ use mir_proto::magic_type as m;
 
 /// Zircon `Globals.ShurikenLibraryWeaponShape`.
 pub const SHURIKEN_SHAPE: u16 = 33;
-/// Channelled beams stop after this long without a re-cast.
-const CHANNEL_LIMIT: u64 = 10_000;
 
 /// A channelled spell in progress (Elemental Hurricane).
 #[derive(Debug, Clone, Copy)]
@@ -35,7 +33,6 @@ pub(super) fn handled(magic: u16) -> bool {
             | m::SOUL_RESONANCE
             | m::CORPSE_EXPLODER
             | m::SUMMON_DEAD
-            | m::DRAGON_BLOOD
             | m::CHAIN
     )
 }
@@ -49,31 +46,43 @@ impl World {
             .is_some_and(|p| p.magics.iter().any(|x| x.magic == magic))
     }
 
-    /// Consume one Dark Stone from the bag (Mirror Image's focus).
-    fn use_dark_stone(&mut self, id: ObjectId) -> bool {
-        let slot = {
-            let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
-                return false;
-            };
-            p.bag.inventory.iter().position(|it| {
-                it.as_ref().is_some_and(|it| {
-                    self.data
-                        .items
-                        .get(&it.info)
-                        .is_some_and(|d| d.item_type == item_type::DARK_STONE)
-                })
-            })
-        };
-        let Some(slot) = slot else {
-            return false;
-        };
-        let change = self
+    /// Dark Stone affinity comes from the equipped item's base stats, not its bonuses.
+    fn dark_stone_affinity(&self, id: ObjectId, mirror: bool) -> u8 {
+        let Some(def) = self
             .objects
-            .get_mut(&id)
-            .and_then(|o| o.player_mut())
-            .and_then(|p| p.bag.take(Grid::Inventory, slot as u8, 1));
-        self.send_changes(id, change.into_iter().collect());
-        true
+            .get(&id)
+            .and_then(|o| o.player())
+            .and_then(|p| p.bag.equipment.get(slot::AMULET)?.as_ref())
+            .and_then(|it| self.data.items.get(&it.info))
+            .filter(|d| d.item_type == item_type::DARK_STONE)
+        else {
+            return element::NONE;
+        };
+        let mut best = (element::NONE, 0);
+        for element in 1..=if mirror { 4 } else { 7 } {
+            let value = def.stat(43 + i32::from(element));
+            if value > best.1 {
+                best = (element, value);
+                if mirror {
+                    break;
+                }
+            }
+        }
+        best.0
+    }
+
+    fn ice_attack(&self, id: ObjectId) -> i32 {
+        let Some(p) = self.objects.get(&id).and_then(|o| o.player()) else {
+            return 0;
+        };
+        let equipment = p.bag.equipment_stats(&self.data, p.level, p.class);
+        equipment.get(&22).copied().unwrap_or(0)
+            + self
+                .fame_stats(p.fame)
+                .into_iter()
+                .filter(|(stat, _)| *stat == 22)
+                .map(|(_, value)| value)
+                .sum::<i32>()
     }
 
     fn summon_spot(&mut self, map: i32, near: Point) -> Option<Point> {
@@ -85,6 +94,16 @@ impl World {
             if self.maps[&map].file.is_walkable(p.x, p.y) && !self.cell_blocked(map, p, false) {
                 return Some(p);
             }
+        }
+        // The random search can miss the only free neighbouring cell.
+        for dir in Direction::ALL {
+            let p = near.step(dir, 1);
+            if !self.cell_blocked(map, p, false) {
+                return Some(p);
+            }
+        }
+        if !self.cell_blocked(map, near, false) {
+            return Some(near);
         }
         None
     }
@@ -126,7 +145,7 @@ impl World {
         let map = self.objects[&id].map;
         match magic {
             m::ELEMENTAL_HURRICANE => {
-                // Start costs Mana * Cost / 1000 on top; each tick costs Cost.
+                // C# starts without payment; stopping costs Mana * Cost / 1000.
                 let (cost, max_mp) = {
                     let p = self.objects[&id].player().unwrap();
                     let def = &self.data.magics[&magic];
@@ -134,24 +153,27 @@ impl World {
                     (um.cost(def), p.max_mp)
                 };
                 let p = self.objects.get_mut(&id).unwrap().player_mut().unwrap();
-                p.mp = (p.mp - max_mp * cost / 1000).max(0);
+                if p.channel.take().is_some() {
+                    p.mp = (p.mp - max_mp * cost / 1000).max(0);
+                    return true;
+                }
                 p.channel = Some(Channel {
                     magic,
                     direction,
                     next_tick: now + 500,
-                    until: now + CHANNEL_LIMIT,
+                    until: u64::MAX,
                     cost,
                 });
                 locations.push(loc.step(direction, 1));
             }
             m::MIRROR_IMAGE => {
-                if location.distance(loc) > MAGIC_RANGE || !self.use_dark_stone(id) {
+                if location.distance(loc) > MAGIC_RANGE {
                     return false;
                 }
                 locations.push(location);
                 pending.push(mk(now + 500, None, location));
             }
-            m::FROST_BITE | m::DRAGON_BLOOD => pending.push(mk(now + 500, None, loc)),
+            m::FROST_BITE => pending.push(mk(now + 500, None, loc)),
             m::TORNADO => {
                 if location.distance(loc) > MAGIC_RANGE {
                     return false;
@@ -163,12 +185,20 @@ impl World {
                 let clevel = self.level_of(&self.objects[&id]);
                 let Some(t) = target.filter(|t| {
                     let o = &self.objects[t];
-                    o.is_monster() && !o.dead && self.level_of(o) <= clevel + 2
+                    self.objects[&id].hostile_to(o)
+                        && self.level_of(o) <= clevel + 2
+                        && !o
+                            .monster()
+                            .is_some_and(|m| self.data.monsters[&m.def].is_boss)
+                        && !self
+                            .objects
+                            .values()
+                            .any(|o| o.monster().is_some_and(|m| m.link == Some(*t)))
                 }) else {
                     locations.push(location);
                     return false;
                 };
-                if self.use_amulet(id, 1).is_none() {
+                if self.use_amulet_shape(id, 1, 1).is_none() {
                     return false;
                 }
                 targets.push(t);
@@ -176,7 +206,14 @@ impl World {
             }
             m::SOUL_RESONANCE => {
                 let members = self.group_members(id);
-                let Some(t) = target.filter(|t| *t != id && members.contains(t)) else {
+                let Some(t) = target.filter(|t| {
+                    *t != id
+                        && members.contains(t)
+                        && self
+                            .objects
+                            .get(t)
+                            .is_some_and(|o| !o.dead && !o.has_buff(buff_type::SOUL_RESONANCE))
+                }) else {
                     self.send_to(
                         id,
                         ServerMessage::Chat {
@@ -201,7 +238,10 @@ impl World {
                     return false;
                 };
                 let amulets = if magic == m::SUMMON_DEAD { 10 } else { 2 };
-                if self.use_amulet(id, amulets).is_none() {
+                if self
+                    .use_amulet_shape(id, amulets, i32::from(magic == m::SUMMON_DEAD))
+                    .is_none()
+                {
                     self.send_to(
                         id,
                         ServerMessage::Chat {
@@ -240,10 +280,20 @@ impl World {
         let (pmin, pmax, _) = self.caster_power(caster, pm.magic);
         let cs = self.objects[&caster].stats;
         let power = self.roll_range(pmin, pmax);
-        let sc = self.roll_range(cs.min_sc, cs.max_sc);
+        let sc = self.roll_lucky(cs.min_sc, cs.max_sc, cs.luck);
         let now = self.now;
         match pm.magic {
             m::MIRROR_IMAGE => {
+                let affinity = self.dark_stone_affinity(caster, true);
+                if affinity == element::NONE
+                    || self.objects.values().any(|o| {
+                        o.monster().is_some_and(|m| {
+                            m.owner == Some(caster) && self.data.monsters[&m.def].flag == 7
+                        })
+                    })
+                {
+                    return;
+                }
                 let Some(def) = self.monster_with_flag(7) else {
                     return;
                 };
@@ -251,17 +301,24 @@ impl World {
                 let decoy = self.create_monster(def, cmap, spot, None, Some(caster), 0);
                 if let Some(mm) = self.objects.get_mut(&decoy).and_then(|o| o.monster_mut()) {
                     mm.despawn_at = Some(now + (level.max(1) * 5) as u64 * 1000);
+                    mm.mirror_element = Some(affinity);
                 }
                 self.level_magic(caster, pm.magic);
             }
             m::FROST_BITE => {
+                if self.objects[&caster].has_buff(buff_type::FROST_BITE) {
+                    return;
+                }
                 let secs = 3 + 3 * level;
+                let mc = self.roll_lucky(cs.min_mc, cs.max_mc, cs.luck);
+                let ice = self.ice_attack(caster);
                 self.buff_add(
                     caster,
                     buff_type::FROST_BITE,
                     secs as u64 * 1000,
                     BuffStats {
-                        frost: cs.max_mc + power,
+                        frost: mc + power + ice * 2,
+                        frost_chance: 5 + 5 * level,
                         ..BuffStats::default()
                     },
                 );
@@ -311,9 +368,17 @@ impl World {
                 self.level_magic(caster, pm.magic);
             }
             m::SOUL_RESONANCE => {
-                let Some(t) = pm.target.filter(|t| self.objects.contains_key(t)) else {
+                let Some(t) = pm.target.filter(|t| {
+                    *t != caster
+                        && self.group_members(caster).contains(t)
+                        && self
+                            .objects
+                            .get(t)
+                            .is_some_and(|o| !o.dead && !o.has_buff(buff_type::SOUL_RESONANCE))
+                }) else {
                     return;
                 };
+                self.buff_remove(caster, buff_type::SOUL_RESONANCE);
                 for (a, b) in [(caster, t), (t, caster)] {
                     if let Some(p) = self.objects.get_mut(&a).and_then(|o| o.player_mut()) {
                         p.soul_link = Some(b);
@@ -321,9 +386,9 @@ impl World {
                     self.buff_add(
                         a,
                         buff_type::SOUL_RESONANCE,
-                        60_000,
+                        u64::MAX,
                         BuffStats {
-                            hp_pct: power,
+                            hp_pct: if a == t { power } else { 0 },
                             ..BuffStats::default()
                         },
                     );
@@ -367,8 +432,12 @@ impl World {
                 };
                 let at = self.objects[&t].location;
                 self.remove_object(t);
-                // Success: Random(MaxLevel + 1) <= Level (MaxLevel 3 here).
-                if self.rng.random_range(0..4) > level {
+                // Success: Random(MagicMaxLevel + 1) <= Level.
+                if self
+                    .rng
+                    .random_range(0..=i32::from(crate::magic::MAGIC_MAX_LEVEL))
+                    > level
+                {
                     self.send_to(
                         caster,
                         ServerMessage::Chat {
@@ -403,18 +472,6 @@ impl World {
                 self.create_monster(def, cmap, spot, None, Some(caster), level * 2);
                 self.level_magic(caster, pm.magic);
             }
-            m::DRAGON_BLOOD => {
-                if let Some(p) = self.objects.get_mut(&caster).and_then(|o| o.player_mut()) {
-                    p.dragon_blood = true;
-                }
-                self.send_to(
-                    caster,
-                    ServerMessage::Chat {
-                        text: "Your blades drip with poison.".into(),
-                    },
-                );
-                self.level_magic(caster, pm.magic);
-            }
             m::CHAIN => {
                 let Some(t) = pm.target.filter(|t| !self.objects[t].dead) else {
                     return;
@@ -443,7 +500,7 @@ impl World {
                 if self.knows(caster, m::CHAIN_OF_FIRE) {
                     let (amin, amax, _) = self.caster_power(caster, m::CHAIN_OF_FIRE);
                     let aug = self.roll_range(amin, amax);
-                    let mc = self.roll_range(cs.min_mc, cs.max_mc);
+                    let mc = self.roll_lucky(cs.min_mc, cs.max_mc, cs.luck);
                     let victims: Vec<ObjectId> = self
                         .on_map(cmap)
                         .filter(|o| {
@@ -539,7 +596,8 @@ impl World {
                     .collect();
                 for v in victims {
                     hit.push(v);
-                    self.magic_attack(id, v, ch.magic, element::FIRE, scale);
+                    let element = self.dark_stone_affinity(id, false);
+                    self.magic_attack(id, v, ch.magic, element, scale);
                 }
             }
             if !hit.is_empty() {
@@ -548,8 +606,86 @@ impl World {
         }
     }
 
+    /// Mirror Image uses the owner's MC, with C#'s Ice damage for every affinity.
+    pub(super) fn process_mirror_image(&mut self, id: ObjectId) {
+        let object = &self.objects[&id];
+        let monster = object.monster_ref();
+        let (map, loc, affinity, owner, ready, current, view) = (
+            object.map,
+            object.location,
+            monster.mirror_element.unwrap(),
+            monster.owner,
+            monster.range_time,
+            monster.target,
+            self.data.monsters[&monster.def].view_range,
+        );
+        let Some(owner) = owner.filter(|owner| self.objects.get(owner).is_some_and(|o| !o.dead))
+        else {
+            self.despawn_summon(id);
+            return;
+        };
+        if self.now < ready {
+            return;
+        }
+        let valid = |o: &&Object| {
+            o.map == map
+                && o.id != id
+                && o.location != loc
+                && o.location.distance(loc) <= view
+                && self.objects[&id].hostile_to(o)
+        };
+        let target = current
+            .and_then(|target| self.objects.get(&target))
+            .filter(valid)
+            .or_else(|| self.on_map(map).find(valid))
+            .map(|o| (o.id, o.location));
+        let Some((target, at)) = target else {
+            return;
+        };
+        let magic = match affinity {
+            element::FIRE => m::FIRE_STORM,
+            element::ICE => m::ICE_STORM,
+            element::LIGHTNING => m::CHAIN_LIGHTNING,
+            _ => m::DRAGON_TORNADO,
+        };
+        let direction = Direction::from_points(loc, at);
+        let stats = self.objects[&owner].stats;
+        let power = self.roll_lucky(stats.min_mc, stats.max_mc, stats.luck);
+        let victims = self
+            .on_map(map)
+            .filter(|o| o.location.distance(at) <= 2 && self.objects[&id].hostile_to(o))
+            .map(|o| o.id)
+            .collect();
+        let object = self.objects.get_mut(&id).unwrap();
+        object.direction = direction;
+        let monster = object.monster_mut().unwrap();
+        monster.target = Some(target);
+        monster.range_time = self.now + 1500;
+        self.events.push((
+            id,
+            ServerMessage::ObjectMagic {
+                id,
+                direction,
+                location: loc,
+                magic,
+                targets: Vec::new(),
+                locations: vec![at],
+                cast: true,
+            },
+        ));
+        self.pending_monster_spells.push(PendingMonsterSpell {
+            time: self.now + 500,
+            caster: id,
+            targets: victims,
+            cells: Vec::new(),
+            power,
+            element: element::ICE,
+            map,
+        });
+    }
+
     /// Frost Bite banks the damage its bearer takes.
-    pub(super) fn frost_store(&mut self, target: ObjectId, amount: i32) {
+    pub(super) fn frost_store(&mut self, target: ObjectId, attacker: ObjectId, amount: i32) {
         if let Some(b) = self
             .objects
             .get_mut(&target)
@@ -557,6 +693,24 @@ impl World {
             .and_then(|p| p.buffs.iter_mut().find(|b| b.kind == buff_type::FROST_BITE))
         {
             b.stats.frost += amount;
+            let chance = b.stats.frost_chance;
+            let rate = if self.level_of(&self.objects[&attacker]) >= 250 {
+                2000
+            } else {
+                200
+            };
+            if self.rng.random_range(0..rate) < chance {
+                self.apply_poison(
+                    attacker,
+                    Poison {
+                        kind: poison_kind::SLOW,
+                        value: 0,
+                        ticks_left: 5,
+                        next_tick: self.now + 2000,
+                        owner: Some(target),
+                    },
+                );
+            }
         }
     }
 
@@ -565,14 +719,23 @@ impl World {
         let Some(o) = self.objects.get(&id) else {
             return;
         };
-        let (map, loc, cap) = (o.map, o.location, o.stats.max_mc * 50);
+        let (map, loc, cap) = (
+            o.map,
+            o.location,
+            o.stats.max_mc * 50 + self.ice_attack(id) * 70,
+        );
         let amount = stored.min(cap.max(1));
         if amount <= 0 {
             return;
         }
         let victims: Vec<ObjectId> = self
             .on_map(map)
-            .filter(|v| v.is_monster() && !v.dead && v.location.distance(loc) <= 3)
+            .filter(|v| {
+                v.monster()
+                    .is_some_and(|m| !self.data.monsters[&m.def].is_boss)
+                    && o.hostile_to(v)
+                    && v.location.distance(loc) <= 3
+            })
             .map(|v| v.id)
             .collect();
         for v in victims {
@@ -580,18 +743,117 @@ impl World {
         }
     }
 
+    /// Consume the selected charge, then roll a new charge using equipped green poison.
+    pub(super) fn dragon_blood_attack(&mut self, id: ObjectId, selected: Option<u16>) -> bool {
+        if !self.knows(id, m::DRAGON_BLOOD)
+            || self.objects[&id].player().unwrap().level
+                < self.data.magics[&m::DRAGON_BLOOD].need_level[0]
+        {
+            return false;
+        }
+        let used =
+            selected == Some(m::DRAGON_BLOOD) && self.objects[&id].player().unwrap().dragon_blood;
+        if used {
+            self.objects
+                .get_mut(&id)
+                .unwrap()
+                .player_mut()
+                .unwrap()
+                .dragon_blood = false;
+            self.send_to(
+                id,
+                ServerMessage::MagicToggle {
+                    magic: m::DRAGON_BLOOD,
+                    on: false,
+                },
+            );
+        }
+        if !self.objects[&id].player().unwrap().dragon_blood && self.rng.random_range(0..5) == 0 {
+            let poison = self.objects[&id].player().unwrap().bag.equipment[slot::POISON].as_ref();
+            let valid = poison.is_some_and(|it| {
+                it.count > 0
+                    && self
+                        .data
+                        .items
+                        .get(&it.info)
+                        .is_some_and(|d| d.item_type == item_type::POISON && d.shape == 2)
+            });
+            if valid {
+                if self.rng.random_range(0..10) > 0 {
+                    let change = self
+                        .objects
+                        .get_mut(&id)
+                        .unwrap()
+                        .player_mut()
+                        .unwrap()
+                        .bag
+                        .take(Grid::Equipment, slot::POISON as u8, 1);
+                    self.send_changes(id, change.into_iter().collect());
+                    self.refresh_stats(id, false);
+                }
+                self.objects
+                    .get_mut(&id)
+                    .unwrap()
+                    .player_mut()
+                    .unwrap()
+                    .dragon_blood = true;
+                self.send_to(
+                    id,
+                    ServerMessage::MagicToggle {
+                        magic: m::DRAGON_BLOOD,
+                        on: true,
+                    },
+                );
+            }
+        }
+        used
+    }
+
     /// Melee hits by players: Dragon Blood poisons, Magic Combustion drains
     /// a player's mana.
-    pub(super) fn melee_landed(&mut self, attacker: ObjectId, target: ObjectId, dealt: i32) {
+    pub(super) fn melee_landed(
+        &mut self,
+        attacker: ObjectId,
+        target: ObjectId,
+        dealt: i32,
+        dragon_blood: bool,
+    ) {
         let _ = dealt;
-        let armed = self.objects[&attacker]
+        let stats = self.objects[&attacker].stats;
+        let poison_rate = if self.objects[&attacker]
             .player()
-            .is_some_and(|p| p.dragon_blood);
-        if armed {
+            .is_some_and(|p| p.level >= 250)
+        {
+            2000
+        } else {
+            200
+        };
+        for (chance, kind, duration) in [
+            (stats.paralysis_chance, poison_kind::PARALYSIS, 3000),
+            (stats.slow_chance, poison_kind::SLOW, 5000),
+            (stats.silence_chance, poison_kind::SILENCED, 5000),
+        ] {
+            if chance > 0
+                && (kind != poison_kind::SLOW || !self.objects[&target].is_player())
+                && self.rng.random_range(0..poison_rate) < chance
+            {
+                self.apply_poison(
+                    target,
+                    Poison {
+                        kind,
+                        value: if kind == poison_kind::SLOW { 20 } else { 0 },
+                        ticks_left: 0,
+                        next_tick: self.now + duration,
+                        owner: Some(attacker),
+                    },
+                );
+            }
+        }
+        if dragon_blood {
             let (pmin, pmax, _) = self.caster_power(attacker, m::DRAGON_BLOOD);
             let power = self.roll_range(pmin, pmax);
             let cs = self.objects[&attacker].stats;
-            let sp = self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc));
+            let sp = self.roll_lucky(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc), cs.luck);
             let value = (sp * power / 100).max(1);
             let existing = self.objects[&target]
                 .poisons
@@ -609,13 +871,7 @@ impl World {
                     owner: Some(attacker),
                 },
             );
-            // Zircon re-arms on Random(5) == 0 with a green poison item;
-            // here the blade simply stays wet four times in five.
-            if self.rng.random_range(0..5) == 0 {
-                if let Some(p) = self.objects.get_mut(&attacker).and_then(|o| o.player_mut()) {
-                    p.dragon_blood = false;
-                }
-            }
+            self.level_magic(attacker, m::DRAGON_BLOOD);
         }
         if self.objects[&target].is_player() && self.knows(attacker, m::MAGIC_COMBUSTION) {
             let (pmin, pmax, _) = self.caster_power(attacker, m::MAGIC_COMBUSTION);
@@ -710,11 +966,42 @@ impl World {
             return 0;
         }
         let level = self.magic_level(attacker, aug);
-        if self.rng.random_range(0..4) > level {
+        if self
+            .rng
+            .random_range(0..i32::from(crate::magic::MAGIC_MAX_LEVEL))
+            > level
+        {
             return 0;
         }
         let (pmin, pmax, _) = self.caster_power(attacker, aug);
         self.roll_range(pmin, pmax)
+    }
+
+    /// Clear both halves before removing buffs, so removal cannot leave a hidden death link.
+    pub(super) fn soul_resonance_remove(&mut self, id: ObjectId) {
+        let partner = self
+            .objects
+            .get_mut(&id)
+            .and_then(|o| o.player_mut())
+            .and_then(|p| p.soul_link.take());
+        let partner = partner.filter(|partner| {
+            self.objects
+                .get(partner)
+                .and_then(|o| o.player())
+                .is_some_and(|p| p.soul_link == Some(id))
+        });
+        if let Some(partner) = partner {
+            self.objects
+                .get_mut(&partner)
+                .unwrap()
+                .player_mut()
+                .unwrap()
+                .soul_link = None;
+        }
+        self.buff_remove(id, buff_type::SOUL_RESONANCE);
+        if let Some(partner) = partner {
+            self.buff_remove(partner, buff_type::SOUL_RESONANCE);
+        }
     }
 
     /// Soul Resonance: when one linked player dies, so does the other.
@@ -806,5 +1093,628 @@ impl World {
                 },
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod targeting_tests {
+    use super::*;
+
+    fn fixture() -> Option<(World, ObjectId, i32, Point, i32)> {
+        let assets = std::path::PathBuf::from(std::env::var_os("ZIRCON_ASSETS")?);
+        let data = GameData::load(assets.join("../Database/System.db")).unwrap();
+        let mut world = World::new(data, assets.join("Map"), None).with_seed(42);
+        let mut record = crate::accounts::test_character("SpellTargets");
+        record.level = 90;
+        let player = world.add_player(1, 1, &record).unwrap();
+        let map = world.objects[&player].map;
+        let loc = world.objects[&player].location;
+        let def = world
+            .data
+            .monsters
+            .values()
+            .find(|m| m.ai == 0 && !m.is_boss && m.level <= 92)
+            .unwrap()
+            .index;
+        Some((world, player, map, loc, def))
+    }
+
+    #[test]
+    fn soul_resonance_lifecycle_clears_both_halves_and_revalidates_delayed_casts() {
+        let Some((mut world, player, map, loc, _)) = fixture() else {
+            return;
+        };
+        let mut record = crate::accounts::test_character("SoulPartner");
+        record.id = 2;
+        let partner = world.add_player(2, 2, &record).unwrap();
+        world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .magics
+            .push(UserMagic {
+                magic: m::SOUL_RESONANCE,
+                level: 0,
+                experience: 0,
+                key: 0,
+                cooldown_until: 0,
+            });
+        let def = world.data.magics.get_mut(&m::SOUL_RESONANCE).unwrap();
+        def.min_base_power = 20;
+        def.max_base_power = 20;
+        let group = |w: &mut World| {
+            w.groups.insert(99, vec![player, partner]);
+            for id in [player, partner] {
+                w.objects.get_mut(&id).unwrap().player_mut().unwrap().group = Some(99);
+            }
+        };
+        let pm = PendingMagic {
+            time: 0,
+            caster: player,
+            magic: m::SOUL_RESONANCE,
+            target: Some(partner),
+            location: loc,
+            direction: None,
+            primary: true,
+            chain: None,
+        };
+        group(&mut world);
+        world.wave6_land(&pm, map, loc);
+        for (id, bonus) in [(player, 0), (partner, 20)] {
+            let b = world.objects[&id]
+                .player()
+                .unwrap()
+                .buffs
+                .iter()
+                .find(|b| b.kind == buff_type::SOUL_RESONANCE)
+                .unwrap();
+            assert_eq!(b.expires, u64::MAX);
+            assert_eq!(b.stats.hp_pct, bonus);
+        }
+        world.now = 60_001;
+        world.process_buffs();
+        assert!(world.objects[&partner].has_buff(buff_type::SOUL_RESONANCE));
+        // Removal through the shared buff API clears both buffs and both links.
+        world.buff_remove(player, buff_type::SOUL_RESONANCE);
+        let cleared = |w: &World| {
+            for id in [player, partner] {
+                assert!(!w.objects[&id].has_buff(buff_type::SOUL_RESONANCE));
+                assert_eq!(w.objects[&id].player().unwrap().soul_link, None);
+                assert!(!w.objects[&id].dead);
+            }
+        };
+        cleared(&world);
+        world.wave6_land(&pm, map, loc);
+        world.group_leave(partner);
+        cleared(&world);
+        world.wave6_land(&pm, map, loc); // Group changed during travel.
+        cleared(&world);
+        group(&mut world);
+        world.objects.get_mut(&partner).unwrap().dead = true;
+        world.wave6_land(&pm, map, loc);
+        assert_eq!(world.objects[&player].player().unwrap().soul_link, None);
+        world.objects.get_mut(&partner).unwrap().dead = false;
+        world.wave6_land(&pm, map, loc);
+        world.remove_object(partner); // Disconnect follows group leave.
+        assert_eq!(world.objects[&player].player().unwrap().soul_link, None);
+        assert!(!world.objects[&player].has_buff(buff_type::SOUL_RESONANCE));
+    }
+
+    #[test]
+    fn summon_dead_roll_includes_the_maximum_skill_level() {
+        use rand::SeedableRng;
+        let Some((mut world, player, map, loc, def)) = fixture() else {
+            return;
+        };
+        let seed = (0..1000)
+            .find(|seed| {
+                rand::rngs::StdRng::seed_from_u64(*seed)
+                    .random_range(0..=i32::from(crate::magic::MAGIC_MAX_LEVEL))
+                    == i32::from(crate::magic::MAGIC_MAX_LEVEL)
+            })
+            .unwrap();
+        let magic = world.data.magics.get_mut(&m::SUMMON_DEAD).unwrap();
+        magic.min_base_power = 0;
+        magic.max_base_power = 0;
+        magic.min_level_power = 0;
+        magic.max_level_power = 0;
+        world.objects.get_mut(&player).unwrap().stats.min_sc = 0;
+        world.objects.get_mut(&player).unwrap().stats.max_sc = 0;
+        world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .magics
+            .push(UserMagic {
+                magic: m::SUMMON_DEAD,
+                level: 3,
+                experience: 0,
+                key: 0,
+                cooldown_until: 0,
+            });
+        let corpse = world.create_monster(def, map, loc, None, None, 0);
+        world.objects.get_mut(&corpse).unwrap().dead = true;
+        world.outgoing.clear();
+        world.rng = rand::rngs::StdRng::seed_from_u64(seed);
+        world.wave6_land(
+            &PendingMagic {
+                time: 0,
+                caster: player,
+                magic: m::SUMMON_DEAD,
+                target: Some(corpse),
+                location: loc,
+                direction: None,
+                primary: true,
+                chain: None,
+            },
+            map,
+            loc,
+        );
+        assert!(world.outgoing.iter().any(|out| matches!(out,
+            Outgoing::To(_, ServerMessage::Chat {text}) if text == "The corpse does not rise.")));
+        assert!(!world.objects.contains_key(&corpse));
+    }
+
+    #[test]
+    fn soul_resonance_death_kills_only_the_current_linked_partner() {
+        let Some((mut world, player, _, _, _)) = fixture() else {
+            return;
+        };
+        let mut record = crate::accounts::test_character("SoulPartner");
+        record.id = 2;
+        let partner = world.add_player(2, 2, &record).unwrap();
+        for (id, other) in [(player, partner), (partner, player)] {
+            world
+                .objects
+                .get_mut(&id)
+                .unwrap()
+                .player_mut()
+                .unwrap()
+                .soul_link = Some(other);
+            world.buff_add(
+                id,
+                buff_type::SOUL_RESONANCE,
+                u64::MAX,
+                BuffStats::default(),
+            );
+        }
+        world.test_kill(player);
+        for id in [player, partner] {
+            assert!(world.objects[&id].dead);
+            assert_eq!(world.objects[&id].player().unwrap().soul_link, None);
+            assert!(!world.objects[&id].has_buff(buff_type::SOUL_RESONANCE));
+        }
+    }
+
+    fn learn(world: &mut World, player: ObjectId, magic: u16) {
+        world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .magics
+            .push(UserMagic {
+                magic,
+                level: 0,
+                experience: 0,
+                key: 0,
+                cooldown_until: 0,
+            });
+    }
+
+    fn equip(world: &mut World, player: ObjectId, item: i32, count: u32, slot: usize) {
+        world.test_give_item(player, item, count);
+        let inventory = world.test_slot_of(player, item).unwrap() as usize;
+        let p = world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap();
+        p.bag.equipment[slot] = p.bag.inventory[inventory].take();
+    }
+
+    #[test]
+    fn equipped_stone_controls_channels_and_mirror_without_consumption() {
+        let Some((mut world, player, map, loc, def)) = fixture() else {
+            return;
+        };
+        learn(&mut world, player, m::ELEMENTAL_HURRICANE);
+        learn(&mut world, player, m::MIRROR_IMAGE);
+        let item = world
+            .data
+            .items
+            .values()
+            .find(|d| d.item_type == item_type::DARK_STONE)
+            .unwrap()
+            .index;
+        for stat in 44..=50 {
+            world
+                .data
+                .items
+                .get_mut(&item)
+                .unwrap()
+                .stats
+                .insert(stat, 0);
+        }
+        world.data.items.get_mut(&item).unwrap().stats.insert(44, 5);
+        world.data.items.get_mut(&item).unwrap().stats.insert(45, 9);
+        world.test_give_item(player, item, 1);
+        assert_eq!(
+            world.dark_stone_affinity(player, true),
+            element::NONE,
+            "a bag stone is not equipped"
+        );
+        let inventory = world.test_slot_of(player, item).unwrap() as usize;
+        let p = world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap();
+        p.bag.equipment[slot::AMULET] = p.bag.inventory[inventory].take();
+        p.mp = 1000;
+        p.max_mp = 1000;
+        world
+            .data
+            .magics
+            .get_mut(&m::ELEMENTAL_HURRICANE)
+            .unwrap()
+            .base_cost = 10;
+        assert_eq!(
+            world.dark_stone_affinity(player, false),
+            element::ICE,
+            "hurricane uses greatest affinity"
+        );
+        assert_eq!(
+            world.dark_stone_affinity(player, true),
+            element::FIRE,
+            "mirror uses first positive affinity"
+        );
+        assert!(world.wave6_cast(
+            player,
+            m::ELEMENTAL_HURRICANE,
+            None,
+            loc,
+            Direction::Down,
+            loc,
+            0,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut Vec::new()
+        ));
+        assert_eq!(world.objects[&player].player().unwrap().mp, 1000);
+        world.now = 11_000;
+        world.process_channels();
+        assert!(world.objects[&player].player().unwrap().channel.is_some());
+        assert_eq!(world.objects[&player].player().unwrap().mp, 990);
+        assert!(world.wave6_cast(
+            player,
+            m::ELEMENTAL_HURRICANE,
+            None,
+            loc,
+            Direction::Down,
+            loc,
+            11_000,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut Vec::new()
+        ));
+        assert!(world.objects[&player].player().unwrap().channel.is_none());
+        assert_eq!(world.objects[&player].player().unwrap().mp, 980);
+        let mut mirror = world.data.monsters[&def].clone();
+        mirror.index = i32::MAX;
+        mirror.flag = 7;
+        world.data.monsters.retain(|_, d| d.flag != 7);
+        world.data.monsters.insert(mirror.index, mirror);
+        let pm = PendingMagic {
+            time: 0,
+            caster: player,
+            magic: m::MIRROR_IMAGE,
+            target: None,
+            location: loc,
+            direction: None,
+            primary: true,
+            chain: None,
+        };
+        world.wave6_land(&pm, map, loc);
+        world.wave6_land(&pm, map, loc);
+        let decoy = *world.objects[&player]
+            .player()
+            .unwrap()
+            .pets
+            .last()
+            .unwrap();
+        assert_eq!(
+            world.objects[&decoy].monster_ref().mirror_element,
+            Some(element::FIRE)
+        );
+        let decoy_loc = world.objects[&decoy].location;
+        let before_hp = world.objects[&decoy].hp;
+        assert_eq!(world.damage(decoy, player, 100, element::FIRE, true), 0);
+        assert_eq!(world.objects[&decoy].hp, before_hp);
+        for o in world
+            .objects
+            .values_mut()
+            .filter(|o| o.is_monster() && o.id != decoy)
+        {
+            o.dead = true;
+        }
+        let enemy =
+            world.create_monster(def, map, decoy_loc.step(Direction::Down, 2), None, None, 0);
+        world.objects.get_mut(&player).unwrap().stats.min_mc = 100;
+        world.objects.get_mut(&player).unwrap().stats.max_mc = 100;
+        world.process_monster(decoy);
+        assert_eq!(world.objects[&decoy].location, decoy_loc);
+        let spell = world.pending_monster_spells.last().unwrap();
+        assert_eq!(
+            spell.element,
+            element::ICE,
+            "C# intentionally uses Ice damage for all four mirror affinities"
+        );
+        assert_eq!(spell.power, 100);
+        assert!(spell.targets.contains(&enemy));
+        assert_eq!(spell.time, world.now + 500);
+        assert!(world.events.iter().any(|(_, event)| matches!(event, ServerMessage::ObjectMagic { id, magic, .. } if *id == decoy && *magic == m::FIRE_STORM)));
+        assert_eq!(
+            world
+                .objects
+                .values()
+                .filter(|o| o
+                    .monster()
+                    .is_some_and(|m| m.owner == Some(player) && m.def == i32::MAX))
+                .count(),
+            1
+        );
+        assert_eq!(
+            world.objects[&player].player().unwrap().bag.equipment[slot::AMULET]
+                .as_ref()
+                .unwrap()
+                .count,
+            1
+        );
+    }
+
+    #[test]
+    fn dragon_blood_requires_green_poison_and_consumes_selected_charge() {
+        use rand::SeedableRng;
+        let Some((mut world, player, _, _, _)) = fixture() else {
+            return;
+        };
+        learn(&mut world, player, m::DRAGON_BLOOD);
+        let seed = (0..1000)
+            .find(|seed| {
+                let mut rng = rand::rngs::StdRng::seed_from_u64(*seed);
+                rng.random_range(0..5) == 0 && rng.random_range(0..10) > 0
+            })
+            .unwrap();
+        world.rng = rand::rngs::StdRng::seed_from_u64(seed);
+        assert!(!world.dragon_blood_attack(player, None));
+        assert!(!world.objects[&player].player().unwrap().dragon_blood);
+        let item = world
+            .data
+            .items
+            .values()
+            .find(|d| d.item_type == item_type::POISON)
+            .unwrap()
+            .index;
+        world.data.items.get_mut(&item).unwrap().shape = 2;
+        equip(&mut world, player, item, 5, slot::POISON);
+        let count = |w: &World| {
+            w.objects[&player].player().unwrap().bag.equipment[slot::POISON]
+                .as_ref()
+                .unwrap()
+                .count
+        };
+        let before = count(&world);
+        world.rng = rand::rngs::StdRng::seed_from_u64(seed);
+        assert!(!world.dragon_blood_attack(player, None));
+        assert!(world.objects[&player].player().unwrap().dragon_blood);
+        assert_eq!(count(&world), before - 1);
+        assert!(!world.dragon_blood_attack(player, None));
+        assert_eq!(count(&world), before - 1);
+        let fail_seed = (0..1000)
+            .find(|seed| rand::rngs::StdRng::seed_from_u64(*seed).random_range(0..5) != 0)
+            .unwrap();
+        world.rng = rand::rngs::StdRng::seed_from_u64(fail_seed);
+        assert!(world.dragon_blood_attack(player, Some(m::DRAGON_BLOOD)));
+        assert!(!world.objects[&player].player().unwrap().dragon_blood);
+        assert_eq!(count(&world), before - 1);
+        assert!(m::is_auto_charge(m::DRAGON_BLOOD));
+        assert!(!m::is_castable(m::DRAGON_BLOOD));
+    }
+
+    #[test]
+    fn frost_bite_uses_ice_attack_and_slow_chance_without_refreshing_buff() {
+        let Some((mut world, player, map, loc, def)) = fixture() else {
+            return;
+        };
+        learn(&mut world, player, m::FROST_BITE);
+        let item = world
+            .data
+            .items
+            .values()
+            .find(|d| d.item_type == item_type::AMULET && d.shape == 0)
+            .unwrap()
+            .index;
+        world
+            .data
+            .items
+            .get_mut(&item)
+            .unwrap()
+            .stats
+            .insert(22, 10);
+        equip(&mut world, player, item, 5, slot::AMULET);
+        assert_eq!(world.ice_attack(player), 10);
+        world.objects.get_mut(&player).unwrap().stats.min_mc = 5;
+        world.objects.get_mut(&player).unwrap().stats.max_mc = 5;
+        let magic = world.data.magics.get_mut(&m::FROST_BITE).unwrap();
+        magic.min_base_power = 7;
+        magic.max_base_power = 7;
+        let pm = PendingMagic {
+            time: 0,
+            caster: player,
+            magic: m::FROST_BITE,
+            target: None,
+            location: loc,
+            direction: None,
+            primary: true,
+            chain: None,
+        };
+        world.wave6_land(&pm, map, loc);
+        let b = world.objects[&player]
+            .player()
+            .unwrap()
+            .buffs
+            .iter()
+            .find(|b| b.kind == buff_type::FROST_BITE)
+            .unwrap();
+        assert_eq!(b.stats.frost, 32);
+        assert_eq!(b.stats.frost_chance, 5);
+        let expiry = b.expires;
+        world.now = 1000;
+        world.wave6_land(&pm, map, loc);
+        assert_eq!(
+            world.objects[&player]
+                .player()
+                .unwrap()
+                .buffs
+                .iter()
+                .find(|b| b.kind == buff_type::FROST_BITE)
+                .unwrap()
+                .expires,
+            expiry
+        );
+        let enemy = world.create_monster(def, map, loc, None, None, 0);
+        world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap()
+            .buffs
+            .iter_mut()
+            .find(|b| b.kind == buff_type::FROST_BITE)
+            .unwrap()
+            .stats
+            .frost_chance = 2000;
+        world.frost_store(player, enemy, 9);
+        assert!(world.objects[&enemy]
+            .poisons
+            .iter()
+            .any(|p| p.kind == poison_kind::SLOW && p.ticks_left == 5));
+    }
+
+    #[test]
+    fn frost_bite_burst_excludes_bosses_and_friendly_monsters() {
+        let Some((mut world, player, map, loc, def)) = fixture() else {
+            return;
+        };
+        let enemy = world.create_monster(def, map, loc, None, None, 0);
+        let pet = world.create_monster(def, map, loc, None, Some(player), 0);
+        let mut boss_def = world.data.monsters[&def].clone();
+        boss_def.index = i32::MAX;
+        boss_def.is_boss = true;
+        world.data.monsters.insert(boss_def.index, boss_def);
+        let boss = world.create_monster(i32::MAX, map, loc, None, None, 0);
+        world.objects.get_mut(&player).unwrap().stats.max_mc = 100;
+        let before = [enemy, pet, boss].map(|id| world.objects[&id].hp);
+        world.frost_bite_burst(player, 10);
+        assert!(world.objects[&enemy].hp < before[0]);
+        assert_eq!(world.objects[&pet].hp, before[1]);
+        assert_eq!(world.objects[&boss].hp, before[2]);
+    }
+
+    #[test]
+    fn cursed_doll_rejects_bosses_friends_and_existing_links_before_amulet_use() {
+        let Some((mut world, player, map, loc, def)) = fixture() else {
+            return;
+        };
+        let amulet = world
+            .data
+            .items
+            .values()
+            .find(|d| d.item_type == item_type::AMULET && d.shape == 1)
+            .unwrap()
+            .index;
+        world.test_give_item(player, amulet, 5);
+        let bag_slot = world.test_slot_of(player, amulet).unwrap() as usize;
+        let p = world
+            .objects
+            .get_mut(&player)
+            .unwrap()
+            .player_mut()
+            .unwrap();
+        p.bag.equipment[slot::AMULET] = p.bag.inventory[bag_slot].take();
+        let enemy = world.create_monster(def, map, loc, None, None, 0);
+        let pet = world.create_monster(def, map, loc, None, Some(player), 0);
+        let mut boss_def = world.data.monsters[&def].clone();
+        boss_def.index = i32::MAX;
+        boss_def.is_boss = true;
+        world.data.monsters.insert(boss_def.index, boss_def);
+        let boss = world.create_monster(i32::MAX, map, loc, None, None, 0);
+        let count = |w: &World| {
+            w.objects[&player].player().unwrap().bag.equipment[slot::AMULET]
+                .as_ref()
+                .unwrap()
+                .count
+        };
+        let cast = |w: &mut World, target| {
+            w.wave6_cast(
+                player,
+                m::CURSED_DOLL,
+                Some(target),
+                loc,
+                Direction::Down,
+                loc,
+                0,
+                &mut Vec::new(),
+                &mut Vec::new(),
+                &mut Vec::new(),
+            )
+        };
+        let before = count(&world);
+        assert!(!cast(&mut world, boss));
+        assert!(!cast(&mut world, pet));
+        assert_eq!(count(&world), before);
+        // C# keeps CursedList membership until the doll despawns, including its corpse.
+        world
+            .objects
+            .get_mut(&pet)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .link = Some(enemy);
+        world.objects.get_mut(&pet).unwrap().dead = true;
+        assert!(!cast(&mut world, enemy));
+        assert_eq!(count(&world), before);
+        world
+            .objects
+            .get_mut(&pet)
+            .unwrap()
+            .monster_mut()
+            .unwrap()
+            .link = None;
+        world.data.items.get_mut(&amulet).unwrap().shape = 0;
+        assert!(!cast(&mut world, enemy));
+        assert_eq!(count(&world), before);
+        world.data.items.get_mut(&amulet).unwrap().shape = 1;
+        assert!(cast(&mut world, enemy));
+        assert_eq!(count(&world), before - 1);
+        // C# allows hostile players too; the old monster-only gate rejected them.
+        let mut record = crate::accounts::test_character("DollOpponent");
+        record.id = 2;
+        let opponent = world.add_player(2, 2, &record).unwrap();
+        world.objects.get_mut(&opponent).unwrap().in_safe_zone = false;
+        let caster = world.objects.get_mut(&player).unwrap();
+        caster.in_safe_zone = false;
+        caster.player_mut().unwrap().attack_mode = mir_proto::attack_mode::ALL;
+        assert!(cast(&mut world, opponent));
+        assert_eq!(count(&world), before - 2);
     }
 }

@@ -94,8 +94,8 @@ impl LoginScene {
             d.pending = false;
             match r {
                 NewAccountResult::Success => {
-                    self.email.text = d.email.text.clone();
-                    self.password.text.clear();
+                    self.email.set_text(d.email.text.clone());
+                    self.password.set_text(String::new());
                     self.status = "Account created. Please log in.".into();
                     self.dialog = None;
                 }
@@ -130,20 +130,25 @@ impl LoginScene {
         c.anim(INTERFACE1C, 2400, 30, 5_000, ox, oy, true, false, start);
         c.anim(INTERFACE1C, 2300, 30, 10_000, ox, oy, true, true, start);
         c.anim(INTERFACE1C, 2500, 30, 8_000, ox, oy, true, false, start);
-        // Logo.
-        if let Some(bg) = c.assets.info(INTERFACE1C, 23) {
-            let lx = ox + (SCENE_W - bg.width as f32) / 2.0;
-            let ly = oy + 25.0;
-            c.draw(INTERFACE1C, 23, lx, ly);
-            c.draw_tinted(
-                INTERFACE1C,
-                22,
-                lx - 35.0,
-                ly - 35.0,
-                [1.0, 1.0, 1.0, 1.0],
-                Blend::Screen,
-            );
-        }
+        // The original logo sprite says Legend of Mir; keep the background,
+        // but use the game's own name on the login screen.
+        let title = Rect::new(ox + (SCENE_W - 540.0) / 2.0, oy + 36.0, 540.0, 94.0);
+        c.fill(title, [0.08, 0.03, 0.01, 0.78]);
+        c.border(title, [151, 109, 46, 255]);
+        c.text.draw_centered(
+            "ZirconRust",
+            48,
+            ox + SCENE_W / 2.0 + 2.0,
+            oy + 53.0 + 3.0,
+            [37, 16, 6, 255],
+        );
+        c.text.draw_centered(
+            "ZirconRust",
+            48,
+            ox + SCENE_W / 2.0,
+            oy + 53.0,
+            [247, 207, 112, 255],
+        );
 
         // Login window at the bottom of the scene.
         let win = Rect::new(

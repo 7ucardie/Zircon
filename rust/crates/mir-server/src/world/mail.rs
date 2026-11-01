@@ -44,19 +44,14 @@ pub struct MailStore {
 
 impl MailStore {
     pub(super) fn load(path: PathBuf) -> MailStore {
-        let mut store: MailStore = std::fs::read(&path)
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
+        let mut store: MailStore = super::load_json(&path);
         store.path = Some(path);
         store
     }
 
     pub(super) fn save(&self) {
         if let Some(p) = &self.path {
-            if let Ok(json) = serde_json::to_vec_pretty(self) {
-                let _ = std::fs::write(p, json);
-            }
+            super::save_json(p, self);
         }
     }
 }
@@ -91,7 +86,7 @@ impl World {
     }
 
     /// Online player of an account (any character).
-    fn online_account(&self, account: u32) -> Option<ObjectId> {
+    pub(super) fn online_account(&self, account: u32) -> Option<ObjectId> {
         self.players()
             .find(|o| o.player().is_some_and(|p| p.account == account))
             .map(|o| o.id)
@@ -168,6 +163,9 @@ impl World {
             self.mail_line(id, format!("{rname}'s mailbox is full."));
             return;
         }
+        if !super::refine::distinct_cells(&items) {
+            return;
+        }
         // Validate every attached cell before taking anything.
         let mut attached: Vec<UserItem> = Vec::new();
         for (grid, slot, count) in &items {
@@ -181,7 +179,7 @@ impl World {
             if *count == 0 || *count > it.count {
                 return;
             }
-            if self.data.items.get(&it.info).is_some_and(|d| !d.can_trade) {
+            if it.bound || self.data.items.get(&it.info).is_some_and(|d| !d.can_trade) {
                 self.mail_line(id, "That item cannot be mailed.".into());
                 return;
             }
@@ -285,7 +283,7 @@ impl World {
                 return;
             };
             let p = o.player().unwrap();
-            if !p.bag.can_gain(&self.data, item.info, item.count, i32::MAX) {
+            if !p.bag.can_gain_item(&self.data, &item, i32::MAX) {
                 self.mail_line(id, "You need more bag space.".into());
                 return;
             }
@@ -295,7 +293,7 @@ impl World {
                 .and_then(|o| o.player_mut())
                 .unwrap();
             let mut next = p.next_item_id;
-            let changes = p.bag.gain(&self.data, item.info, item.count, &mut next);
+            let changes = p.bag.gain_item(&self.data, item.clone(), &mut next);
             p.next_item_id = next;
             self.send_changes(id, changes);
         }

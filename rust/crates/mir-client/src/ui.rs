@@ -45,6 +45,8 @@ pub struct Input {
     /// Held modifiers (Zircon binds Ctrl+H and Alt+Q).
     pub ctrl: bool,
     pub alt: bool,
+    pub command: bool,
+    pub shift: bool,
     /// Letter pressed while a modifier is held (text input carries control
     /// characters then, so the physical key is used instead).
     pub chord: Option<char>,
@@ -52,7 +54,9 @@ pub struct Input {
     /// Arrow keys (the chat bar walks its history with them).
     pub up: bool,
     pub down: bool,
-    /// F1..F12 pressed this frame (1..=12).
+    pub left: bool,
+    pub right: bool,
+    /// Spell slot 1..=12, from F keys or the Mac Option-key fallback.
     pub fkey: Option<u8>,
     /// Belt key pressed this frame: 1..9 -> slot 0..8, 0 -> slot 9.
     pub digit: Option<u8>,
@@ -74,6 +78,8 @@ impl Input {
         self.delete = false;
         self.up = false;
         self.down = false;
+        self.left = false;
+        self.right = false;
         self.fkey = None;
         self.digit = None;
         self.wheel = 0.0;
@@ -390,7 +396,7 @@ impl Button {
         }
         if let Some(label) = &self.label {
             let color = if !self.enabled {
-                [51, 51, 51, 255]
+                [170, 170, 170, 255]
             } else if hover || down {
                 [255, 255, 255, 255]
             } else {
@@ -414,6 +420,8 @@ pub struct TextBox {
     pub masked: bool,
     pub max_len: usize,
     pub focused: bool,
+    /// Character position; None follows the end when callers replace text.
+    cursor: Option<usize>,
     /// Optional validity for the border colour: None = neutral, Some(true) green, Some(false) red.
     pub valid: Option<bool>,
 }
@@ -426,6 +434,7 @@ impl TextBox {
             masked: false,
             max_len,
             focused: false,
+            cursor: None,
             valid: None,
         }
     }
@@ -435,24 +444,56 @@ impl TextBox {
         self
     }
 
+    pub fn set_text(&mut self, text: String) {
+        self.text = text;
+        self.cursor = None;
+    }
+
+    fn byte_offset(&self, position: usize) -> usize {
+        self.text
+            .char_indices()
+            .nth(position)
+            .map_or(self.text.len(), |(index, _)| index)
+    }
+
+    pub(crate) fn edit(&mut self, input: &Input) {
+        if !self.focused {
+            return;
+        }
+        let mut position = self
+            .cursor
+            .unwrap_or(self.text.chars().count())
+            .min(self.text.chars().count());
+        if input.left {
+            position = position.saturating_sub(1);
+        }
+        if input.right {
+            position = (position + 1).min(self.text.chars().count());
+        }
+        for c in input.text.chars() {
+            if !c.is_control() && self.text.chars().count() < self.max_len {
+                self.text.insert(self.byte_offset(position), c);
+                position += 1;
+            }
+        }
+        if input.backspace && position > 0 {
+            self.text.remove(self.byte_offset(position - 1));
+            position -= 1;
+        }
+        if input.delete && position < self.text.chars().count() {
+            self.text.remove(self.byte_offset(position));
+        }
+        self.cursor = (position < self.text.chars().count()).then_some(position);
+    }
+
     /// Handle typing (only when focused) and draw. Returns true if Enter was
     /// pressed while focused.
     pub fn update(&mut self, ctx: &mut Ctx) -> bool {
         if ctx.input.lmb_pressed {
             self.focused = self.rect.contains(ctx.input.mouse.0, ctx.input.mouse.1);
         }
-        let mut submitted = false;
-        if self.focused {
-            for c in ctx.input.text.chars() {
-                if !c.is_control() && self.text.chars().count() < self.max_len {
-                    self.text.push(c);
-                }
-            }
-            if ctx.input.backspace {
-                self.text.pop();
-            }
-            submitted = ctx.input.enter;
-        }
+        self.edit(ctx.input);
+        let submitted = self.focused && ctx.input.enter;
         ctx.fill(self.rect, WINDOW_BG);
         let border = match self.valid {
             None => GOLD,
@@ -470,8 +511,14 @@ impl TextBox {
         } else {
             ""
         };
+        let position = self
+            .cursor
+            .unwrap_or(shown.chars().count())
+            .min(shown.chars().count());
+        let before: String = shown.chars().take(position).collect();
+        let after: String = shown.chars().skip(position).collect();
         ctx.text.draw(
-            &format!("{shown}{caret}"),
+            &format!("{before}{caret}{after}"),
             13,
             self.rect.x + 4.0,
             self.rect.y + (self.rect.h - 17.0) / 2.0,
@@ -503,4 +550,40 @@ pub fn caption(ctx: &mut Ctx, text: &str, field: Rect) {
         field.y + (field.h - 17.0) / 2.0,
         [255, 255, 255, 255],
     );
+}
+
+#[cfg(test)]
+mod text_box_tests {
+    use super::*;
+
+    #[test]
+    fn arrow_keys_move_caret_without_deleting_text() {
+        let mut box_ = TextBox::new(Rect::new(0.0, 0.0, 170.0, 18.0), 50);
+        box_.focused = true;
+        box_.text = "abc".into();
+        box_.edit(&Input {
+            left: true,
+            ..Input::default()
+        });
+        assert_eq!(box_.text, "abc");
+        box_.edit(&Input {
+            text: "X".into(),
+            ..Input::default()
+        });
+        assert_eq!(box_.text, "abXc");
+        box_.edit(&Input {
+            backspace: true,
+            ..Input::default()
+        });
+        assert_eq!(box_.text, "abc");
+        box_.edit(&Input {
+            right: true,
+            ..Input::default()
+        });
+        box_.edit(&Input {
+            text: "!".into(),
+            ..Input::default()
+        });
+        assert_eq!(box_.text, "abc!");
+    }
 }

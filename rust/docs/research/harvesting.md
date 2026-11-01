@@ -1,5 +1,9 @@
 # Harvesting, and what the AI coverage report was hiding
 
+Status: implemented during worktree recovery on 2026-09-14. The historical
+gap analysis below explains the scope; the server now holds loot on corpses
+and the client supports harvesting with `B` or a nearby corpse click.
+
 Written 2026-09-14, from `ServerLibrary/Models/MonsterObject.cs` and
 `ServerLibrary/Models/MonsterRegistrations.cs`.
 

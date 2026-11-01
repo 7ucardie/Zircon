@@ -3,6 +3,14 @@ use super::*;
 
 #[cfg(test)]
 impl World {
+    pub fn test_nearest_town_region(&self, map: i32, at: Point) -> Option<i32> {
+        self.nearest_town_region(map, at, Class::Warrior)
+    }
+
+    pub fn test_roll_drop_bonus(&mut self, item: &mut UserItem) {
+        let def = self.data.items[&item.info].clone();
+        self.roll_drop_bonus(item, &def);
+    }
     /// Test helper: move an object to a cell without validation.
     #[cfg(test)]
     pub fn teleport(&mut self, id: ObjectId, to: Point) {
@@ -41,8 +49,9 @@ impl World {
 
     #[cfg(test)]
     pub fn test_open_page(&mut self, id: ObjectId, page: i32) {
+        let npc = self.test_open_npc(id, 0);
         if let Some(p) = self.objects.get_mut(&id).and_then(|o| o.player_mut()) {
-            p.npc = Some((ObjectId(0), page));
+            p.npc = Some((npc, page));
         }
     }
 
@@ -118,6 +127,18 @@ impl World {
             .min_by_key(|d| d.index)?
             .index;
         Some(self.create_monster(def, map, at, None, None, 0))
+    }
+
+    /// Test helper: spawn a specific monster, optionally owned by a player.
+    #[cfg(test)]
+    pub fn test_spawn_monster(
+        &mut self,
+        def: i32,
+        map: i32,
+        at: Point,
+        owner: Option<ObjectId>,
+    ) -> ObjectId {
+        self.create_monster(def, map, at, None, owner, 0)
     }
 
     /// Test helper: number of guards alive on a map.
@@ -248,6 +269,51 @@ impl World {
     #[cfg(test)]
     pub fn test_damage(&mut self, target: ObjectId, attacker: ObjectId, power: i32) -> i32 {
         self.damage(target, attacker, power, mir_proto::element::NONE, false)
+    }
+
+    #[cfg(test)]
+    pub fn test_damage_element(
+        &mut self,
+        target: ObjectId,
+        attacker: ObjectId,
+        power: i32,
+        element: u8,
+    ) -> i32 {
+        self.damage(target, attacker, power, element, true)
+    }
+
+    #[cfg(test)]
+    pub fn test_apply_poison(&mut self, target: ObjectId, kind: u16) {
+        self.apply_poison(
+            target,
+            Poison {
+                kind,
+                value: 1,
+                ticks_left: 1,
+                next_tick: self.now + 1_000,
+                owner: None,
+            },
+        );
+    }
+
+    #[cfg(test)]
+    pub fn test_apply_owned_poison(
+        &mut self,
+        target: ObjectId,
+        owner: ObjectId,
+        kind: u16,
+        value: i32,
+    ) {
+        self.apply_poison(
+            target,
+            Poison {
+                kind,
+                value,
+                ticks_left: 1,
+                next_tick: self.now + 1_000,
+                owner: Some(owner),
+            },
+        );
     }
 
     /// Test helper: face a direction without the turn delay.
@@ -449,6 +515,16 @@ impl World {
             max_durability: def.durability,
             added: Vec::new(),
             level: 0,
+            refinable: false,
+            non_refinable: false,
+            bound: false,
+            worthless: false,
+            locked: false,
+            special_repair_until: 0,
+            weapon_experience_tenths: 0,
+            accessory_experience: 0,
+            expires_at: None,
+            colour: 0,
         };
         self.spawn_ground_item(map, at, ui, Some(owner), 0);
     }
@@ -601,7 +677,14 @@ impl World {
             .and_then(|w| w.as_mut())
         {
             w.level = level;
-            w.added = added;
+            w.added = added
+                .into_iter()
+                .map(|(stat, amount)| crate::items::ItemStat {
+                    stat,
+                    amount,
+                    source: crate::items::StatSource::Legacy,
+                })
+                .collect();
         }
     }
 
@@ -659,6 +742,12 @@ impl World {
     /// included).
     #[cfg(test)]
     pub fn gain_experience_test(&mut self, id: ObjectId, amount: u64) {
+        self.gain_combat_experience(id, amount);
+    }
+
+    /// Test helper: quest/item experience follows the same rate-affected path.
+    #[cfg(test)]
+    pub fn gain_reward_experience_test(&mut self, id: ObjectId, amount: u64) {
         self.gain_experience(id, amount);
     }
 

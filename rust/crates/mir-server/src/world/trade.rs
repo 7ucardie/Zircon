@@ -12,8 +12,10 @@ pub const TRADE_ITEMS: usize = 15;
 #[derive(Debug, Clone)]
 pub struct Trade {
     pub partner: ObjectId,
-    /// Offered cells: (grid, slot, count).
-    pub items: Vec<(Grid, u8, u32)>,
+    /// Offered cells: (grid, slot, count, item id). The id pins the item
+    /// shown to the partner; a swap into the slot after they confirmed
+    /// cancels the trade instead of delivering the swapped item.
+    pub items: Vec<(Grid, u8, u32, u32)>,
     pub gold: u64,
     pub confirmed: bool,
 }
@@ -173,11 +175,15 @@ impl World {
         let Some(def) = self.data.items.get(&item.info) else {
             return;
         };
-        if !def.can_trade {
+        if item.bound || !def.can_trade {
             refuse(self, "That item cannot be traded.");
             return;
         }
-        if trade.items.iter().any(|(g, s, _)| *g == grid && *s == slot) {
+        if trade
+            .items
+            .iter()
+            .any(|(g, s, ..)| *g == grid && *s == slot)
+        {
             refuse(self, "That item is already offered.");
             return;
         }
@@ -190,7 +196,11 @@ impl World {
             .get_mut(&id)
             .and_then(|o| o.player_mut())
             .unwrap();
-        p.trade.as_mut().unwrap().items.push((grid, slot, count));
+        p.trade
+            .as_mut()
+            .unwrap()
+            .items
+            .push((grid, slot, count, item.id));
         self.trade_unlock_both(id, partner);
         self.send_to(id, ServerMessage::TradeAddItem { grid, slot, count });
         self.send_to(partner, ServerMessage::TradeItemAdded { item: instance });
@@ -272,9 +282,16 @@ impl World {
                 return;
             }
             let mut items = Vec::new();
-            for (g, s, c) in &ta.items {
+            for (g, s, c, item_id) in &ta.items {
                 match pa.bag.grid(*g).get(*s as usize).cloned().flatten() {
-                    Some(it) if it.count >= *c => items.push(UserItem { count: *c, ..it }),
+                    Some(it)
+                        if it.id == *item_id
+                            && it.count >= *c
+                            && !it.bound
+                            && self.data.items.get(&it.info).is_some_and(|d| d.can_trade) =>
+                    {
+                        items.push(UserItem { count: *c, ..it })
+                    }
                     _ => {
                         self.trade_system(a, "Your offered items changed; trade cancelled.");
                         self.trade_system(b, "Your partner's items changed; trade cancelled.");
@@ -321,7 +338,7 @@ impl World {
                     .and_then(|o| o.player_mut())
                     .unwrap();
                 let cells = pa.trade.as_ref().unwrap().items.clone();
-                for (g, s, c) in cells {
+                for (g, s, c, _) in cells {
                     if let Some(ch) = pa.bag.take(g, s, c) {
                         changes_a.push(ch);
                     }

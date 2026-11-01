@@ -60,9 +60,6 @@ impl TextLayer {
     fn buffer(&mut self, text: &str, size: u32) -> &Buffer {
         let key = (text.to_string(), size);
         if !self.buffers.contains_key(&key) {
-            if self.buffers.len() > 2000 {
-                self.buffers.clear();
-            }
             let mut b = Buffer::new(
                 &mut self.font_system,
                 Metrics::new(size as f32, size as f32 * 1.3),
@@ -205,5 +202,10 @@ impl TextLayer {
 
     pub fn trim(&mut self) {
         self.atlas.trim();
+        // A queued label can still need any buffer added earlier this frame.
+        // Evict only after every layer has rendered.
+        if self.buffers.len() > 2000 {
+            self.buffers.clear();
+        }
     }
 }

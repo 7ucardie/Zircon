@@ -162,6 +162,10 @@ pub struct AiProfile {
     /// Doom Claw: stationary parts boss; only attackers within 10 hurt it;
     /// its claws, spit and wave deal class-reduced damage with pushes.
     pub doom_claw: bool,
+    /// Zircon `NeedHarvest` / `HarvestCount`: 0 means the corpse drops on
+    /// death as usual. Anything higher and the corpse holds its drops until
+    /// the killer butchers it, and this many swings land on nothing first.
+    pub harvest_count: i32,
     /// Healer Ant: heals injured allies in view with a ticking heal instead
     /// of fighting when one needs it.
     pub heals_allies: bool,
@@ -221,6 +225,7 @@ impl Default for AiProfile {
             mode_windows: false,
             phase: None,
             doom_claw: false,
+            harvest_count: 0,
             heals_allies: false,
             purify_chance: 0,
             purify_every_ms: 0,
@@ -460,6 +465,7 @@ pub fn profile(ai: i32) -> AiProfile {
             p.spell = Some(Spell::Random(vec![
                 Spell::FireWall,
                 line(12, -2, 2, m::MONSTER_SCORCHED_EARTH, element::FIRE),
+                line(12, -2, 2, m::MONSTER_SCORCHED_EARTH, element::FIRE),
             ]));
             p.spell_chance_near = 5;
             p.spell_chance_far = 5;
@@ -472,7 +478,7 @@ pub fn profile(ai: i32) -> AiProfile {
             p.attack_range = 2;
             p.hit_poison = poison(poison_kind::RED, 5, 2, 10);
         }
-        64 => p.attack_range = 2,
+        64 | 137 => p.attack_range = 2,
         25 => {
             p.self_aoe = 1;
             p.self_aoe_chance = 6;
@@ -750,7 +756,7 @@ pub fn profile(ai: i32) -> AiProfile {
         107 => {
             p.spell = Some(sama_kit(
                 m::ADAMANTINE_FIRE_BALL,
-                m::MONSTER_SCORCHED_EARTH,
+                m::SCORCHED_EARTH,
                 m::FIRE_STORM,
                 m::SAMA_GUARDIAN_FIRE,
                 element::FIRE,
@@ -790,11 +796,11 @@ pub fn profile(ai: i32) -> AiProfile {
         111 => {
             p.spell = Some(sama_kit(
                 m::ADAMANTINE_FIRE_BALL,
-                m::MONSTER_SCORCHED_EARTH,
+                m::SCORCHED_EARTH,
                 m::FIRE_STORM,
                 m::SAMA_GUARDIAN_FIRE,
                 element::FIRE,
-                Some(m::SAMA_GUARDIAN_FIRE),
+                Some(m::SAMA_PHOENIX_FIRE),
             ))
         }
         112 => {
@@ -804,7 +810,7 @@ pub fn profile(ai: i32) -> AiProfile {
                 m::ICE_STORM,
                 m::SAMA_GUARDIAN_ICE,
                 element::ICE,
-                Some(m::SAMA_GUARDIAN_ICE),
+                Some(m::SAMA_BLACK_ICE),
             ))
         }
         113 => {
@@ -814,7 +820,7 @@ pub fn profile(ai: i32) -> AiProfile {
                 m::LIGHTNING_WAVE,
                 m::SAMA_GUARDIAN_LIGHTNING,
                 element::LIGHTNING,
-                Some(m::SAMA_GUARDIAN_LIGHTNING),
+                Some(m::SAMA_BLUE_LIGHTNING),
             ))
         }
         114 => {
@@ -824,15 +830,15 @@ pub fn profile(ai: i32) -> AiProfile {
                 m::DRAGON_TORNADO,
                 m::SAMA_GUARDIAN_WIND,
                 element::WIND,
-                Some(m::SAMA_GUARDIAN_WIND),
+                Some(m::SAMA_WHITE_WIND),
             ))
         }
         115 => {
             p.attack_range = 12;
             p.spell = Some(Spell::Random(vec![
-                aoe(15, m::SAMA_GUARDIAN_FIRE, element::FIRE),
-                aoe(15, m::SAMA_GUARDIAN_WIND, element::ICE),
-                aoe(15, m::SAMA_GUARDIAN_LIGHTNING, element::LIGHTNING),
+                aoe(15, m::SAMA_PROPHET_FIRE, element::FIRE),
+                aoe(15, m::SAMA_PROPHET_WIND, element::ICE),
+                aoe(15, m::SAMA_PROPHET_LIGHTNING, element::LIGHTNING),
             ]));
             p.spell_chance_near = 1;
             p.spell_chance_far = 1;
@@ -930,7 +936,37 @@ pub fn profile(ai: i32) -> AiProfile {
         74 => p.purify_every_ms = 20_000,
         _ => {}
     }
+    if (107..=114).contains(&ai) {
+        p.attack_range = 2;
+        p.spell_chance_near = 5;
+        p.spell_chance_far = 5;
+    }
+    // `NeedHarvest` / `HarvestCount` sit beside the class in Zircon's
+    // registry rather than inside it, so they are applied separately: an
+    // AI can be any shape and still need butchering.
+    p.harvest_count = harvest_count(ai);
     p
+}
+
+/// Zircon `MonsterRegistrations.RegisterAll`: the `HarvestCount` each AI
+/// class registers alongside `NeedHarvest = true`. 0 means the corpse is
+/// not harvested and drops on death.
+pub fn harvest_count(ai: i32) -> i32 {
+    match ai {
+        // Chicken.
+        1 => 2,
+        // Deer, Sheep, Cow, Pig.
+        2 => 3,
+        // Scorpion, Wolf.
+        3 => 3,
+        // Carnivorous Plant.
+        5 => 2,
+        // Spitting Spider, Visceral Worm, Blood Tiger.
+        6 => 2,
+        // Wedge Moth, Spider Bat, Cave Maggot.
+        8 => 2,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
@@ -950,5 +986,22 @@ mod tests {
         // Unregistered ids are plain melee.
         let p = profile(32);
         assert!(!p.passive && p.attack_range == 1 && p.spell.is_none());
+    }
+
+    /// The six classes Zircon registers with `NeedHarvest = true`, and their
+    /// counts. Nothing else is harvested.
+    #[test]
+    fn harvest_counts_match_the_registry() {
+        assert_eq!(profile(1).harvest_count, 2);
+        assert_eq!(profile(2).harvest_count, 3);
+        assert_eq!(profile(3).harvest_count, 3);
+        assert_eq!(profile(5).harvest_count, 2);
+        assert_eq!(profile(6).harvest_count, 2);
+        assert_eq!(profile(8).harvest_count, 2);
+        // The classes that share an arm with 6 do not harvest.
+        assert_eq!(profile(14).harvest_count, 0);
+        assert_eq!(profile(42).harvest_count, 0);
+        assert_eq!(profile(0).harvest_count, 0);
+        assert_eq!(profile(-1).harvest_count, 0);
     }
 }

@@ -103,6 +103,25 @@ impl Game {
             .map(|o| o.id)
             .collect();
         let mut effects = self.effects.clone();
+        // Reuse the reference teleport burst as a looping exit beacon. The
+        // sidecar is visual metadata only; the server still performs travel.
+        for portal in &self.portal_markers {
+            effects.push(Effect {
+                library: effects::MAGIC,
+                start: 110 + ((now / 100) % 10) as u32,
+                count: 1,
+                delay_ms: 1000,
+                // Screen blending uses RGB directly, so dim the colour too.
+                color: [0.6, 0.6, 0.6, 0.6],
+                anchor: Anchor::Cell(Point {
+                    x: portal.position.0,
+                    y: portal.position.1,
+                }),
+                direction: None,
+                started: now,
+                blend: Blend::Screen,
+            });
+        }
         for id in celestial {
             effects.push(Effect {
                 library: effects::MAGIC_EX2,
@@ -190,7 +209,7 @@ impl Game {
                         x + info.offset_x as f32,
                         y + info.offset_y as f32,
                         p.color,
-                        Blend::Screen,
+                        p.blend,
                     );
                 }
             }

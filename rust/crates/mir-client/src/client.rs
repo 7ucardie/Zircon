@@ -24,8 +24,8 @@ pub struct Client {
     conn: Option<Connection>,
     server_addr: String,
     connected: bool,
-    last_ping: u64,
     reconnect_at: u64,
+    disconnect_reason: Option<String>,
     pub debug: bool,
     /// Developer automation: `ZIRCON_AUTOLOGIN=email:password` logs in (creating
     /// the account when missing); `ZIRCON_AUTOSTART=name` enters the world with
@@ -58,8 +58,8 @@ impl Client {
             conn: None,
             server_addr,
             connected: false,
-            last_ping: 0,
             reconnect_at: 0,
+            disconnect_reason: None,
             debug: true,
             auto_login: std::env::var("ZIRCON_AUTOLOGIN").ok().and_then(|v| {
                 v.split_once(':')
@@ -90,11 +90,19 @@ impl Client {
                     version: PROTOCOL_VERSION,
                 });
                 self.conn = Some(c);
-                self.set_status(format!("Connecting to {}...", self.server_addr));
+                let status = match &self.disconnect_reason {
+                    Some(reason) => format!("Connection lost: {reason}. Reconnecting..."),
+                    None => format!("Connecting to {}...", self.server_addr),
+                };
+                self.set_status(status);
             }
             Err(e) => {
                 self.conn = None;
-                self.set_status(format!("Cannot reach {}: {e}", self.server_addr));
+                let status = match &self.disconnect_reason {
+                    Some(reason) => format!("Connection lost: {reason}. Reconnect failed: {e}"),
+                    None => format!("Cannot reach {}: {e}", self.server_addr),
+                };
+                self.set_status(status);
             }
         }
     }
@@ -139,15 +147,21 @@ impl Client {
                     self.connected = false;
                     self.game.leave_world();
                     self.scene = Scene::Login(Box::new(LoginScene::new()));
-                    self.set_status(format!("Disconnected: {why}"));
+                    self.disconnect_reason = Some(if why == "server closed" {
+                        self.disconnect_reason
+                            .take()
+                            .unwrap_or_else(|| "server stopped or closed the connection".into())
+                    } else {
+                        why
+                    });
+                    self.set_status(format!(
+                        "Connection lost: {}. Reconnecting...",
+                        self.disconnect_reason.as_deref().unwrap()
+                    ));
                     self.reconnect_at = now + 2000;
                     return;
                 }
             }
-        }
-        if now >= self.last_ping + 5000 {
-            self.last_ping = now;
-            self.send(ClientMessage::Ping { nonce: now as u32 });
         }
     }
 
@@ -155,12 +169,23 @@ impl Client {
         match msg {
             ServerMessage::Connected => {
                 self.connected = true;
-                self.set_status("Connected. Log in or create an account.".into());
+                let status = match &self.disconnect_reason {
+                    Some(reason) => {
+                        format!("Connection lost: {reason}. Reconnected; log in again.")
+                    }
+                    None => "Connected. Log in or create an account.".into(),
+                };
+                self.set_status(status);
                 if let Some((email, password)) = self.auto_login.clone() {
                     self.send(ClientMessage::Login { email, password });
                 }
             }
-            ServerMessage::Rejected { reason } => self.set_status(format!("Rejected: {reason}")),
+            ServerMessage::Rejected { reason } => {
+                if reason.starts_with("Kicked") || reason.starts_with("Account banned") {
+                    self.disconnect_reason = Some(reason.clone());
+                }
+                self.set_status(format!("Rejected: {reason}"));
+            }
             ServerMessage::NewAccountResult(r) => {
                 if let Some((email, password)) = self.auto_login.clone() {
                     if matches!(r, mir_proto::NewAccountResult::Success) {
@@ -173,6 +198,7 @@ impl Client {
             }
             ServerMessage::LoginResult(r) => match r {
                 mir_proto::LoginResult::Success { characters } => {
+                    self.disconnect_reason = None;
                     if let Some(name) = self.auto_start.clone() {
                         match characters
                             .iter()

@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 
 use anyhow::{Context, Result};
-use mir_formats::mirdb::{self, region_points, Collection, MirDb, Record, Value};
+use mir_formats::mirdb::{self, region_points, stat, Collection, MirDb, Record, Value};
 
 #[derive(Debug, Clone)]
 pub struct MapDef {
@@ -129,11 +129,49 @@ pub struct RespawnDef {
     pub monster: i32,
     pub region: i32,
     pub event_spawn: bool,
+    pub drop_set: i32,
+    pub easter_event_chance: i32,
     /// Minutes (Zircon multiplies by 60 into seconds).
     pub delay: i32,
     pub count: i32,
     pub announce: bool,
     pub respawn_index: i32,
+}
+
+/// Legacy `EventInfo` with its final `EventAction` boss respawn. The old
+/// database's event schema differs from the current C# event engine.
+#[derive(Debug, Clone)]
+pub struct WorldEventDef {
+    pub index: i32,
+    pub description: String,
+    pub boss_respawn: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct LegacyEventDef {
+    pub index: i32,
+    pub description: String,
+    pub max_value: i32,
+    pub targets: Vec<LegacyEventTarget>,
+    pub actions: Vec<LegacyEventAction>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LegacyEventTarget {
+    pub monster: i32,
+    pub drop_set: i32,
+    pub value: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct LegacyEventAction {
+    pub trigger_value: i32,
+    pub kind: i32,
+    pub message: String,
+    pub monster: i32,
+    pub respawn: i32,
+    pub map: i32,
+    pub region: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -315,6 +353,35 @@ pub struct FameDef {
     pub rewards: Vec<(i32, i32)>,
 }
 
+/// `StoreInfo`: one row of the in-game store (Zircon's `MarketPlaceDialog`
+/// Store tab). `filter` is the comma-separated tag list the dialog turns
+/// into its drop-down, and `duration` is a lifetime in seconds (0 = forever).
+#[derive(Debug, Clone)]
+pub struct StoreDef {
+    pub index: i32,
+    pub item: i32,
+    /// Game-gold price per unit.
+    pub price: i32,
+    /// Hunt-gold price per unit; 0 means "charge `price` in hunt gold".
+    pub hunt_gold_price: i32,
+    /// Tags, already split and trimmed.
+    pub filters: Vec<String>,
+    pub available: bool,
+    pub duration: i32,
+}
+
+/// Zircon `DisciplineInfo`: one rung of the discipline track, bought with
+/// character level and gold, granting a focus-point pool.
+#[derive(Debug, Clone)]
+pub struct DisciplineDef {
+    pub index: i32,
+    pub level: i32,
+    pub required_level: i32,
+    pub required_experience: i64,
+    pub required_gold: u64,
+    pub focus_points: i32,
+}
+
 #[derive(Debug, Clone)]
 pub struct CurrencyDef {
     pub index: i32,
@@ -335,6 +402,8 @@ pub struct ItemDef {
     pub item_type: u8,
     /// Zircon `ItemEffect`: Experience 2, PickAxe 5 ...
     pub effect: u8,
+    /// Zircon `ItemInfo.ExteriorEffect`.
+    pub exterior_effect: u8,
     /// `RequiredClass` flags (Warrior=1, Wizard=2, Taoist=4, Assassin=8).
     pub required_class: u8,
     /// `RequiredGender` flags (Male=1, Female=2).
@@ -350,6 +419,7 @@ pub struct ItemDef {
     pub start_item: bool,
     pub sell_rate: f64,
     pub can_sell: bool,
+    pub can_repair: bool,
     pub can_drop: bool,
     pub can_trade: bool,
     pub can_store: bool,
@@ -411,6 +481,7 @@ pub struct DropDef {
     pub chance: i32,
     pub amount: i32,
     pub drop_set: i32,
+    pub easter_event: bool,
     pub part_only: bool,
 }
 
@@ -419,6 +490,8 @@ pub struct NpcPageDef {
     pub index: i32,
     pub description: String,
     pub dialog_type: i32,
+    /// Optional `CurrencyInfo` index; absent pages use Gold.
+    pub currency: Option<i32>,
     pub say: String,
     pub success_page: i32,
     pub arguments: String,
@@ -429,8 +502,16 @@ pub struct NpcPageDef {
     pub goods: Vec<(i32, f64)>,
     pub checks: Vec<NpcCheckDef>,
     pub actions: Vec<NpcActionDef>,
+    pub values: Vec<NpcValueDef>,
     /// Item types accepted by a sell/repair page.
     pub types: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NpcValueDef {
+    pub id: i32,
+    pub value_type: i32,
+    pub field_type: i32,
 }
 
 #[derive(Debug, Clone)]
@@ -493,11 +574,108 @@ pub struct MovementDef {
 }
 
 /// Zircon `Globals.ExperienceList`: experience needed at each level.
-pub const EXPERIENCE: [u64; 41] = [
-    0, 100, 200, 300, 400, 600, 900, 1200, 1700, 2500, 6000, 8000, 10000, 15000, 30000, 40000,
-    50000, 70000, 100000, 120000, 140000, 250000, 300000, 350000, 400000, 500000, 700000, 1000000,
-    1400000, 1800000, 2000000, 2400000, 2800000, 3200000, 3600000, 4000000, 4800000, 5600000,
-    8200000, 9000000, 11000000,
+pub const EXPERIENCE: [u64; 101] = [
+    0,
+    100,
+    200,
+    300,
+    400,
+    600,
+    900,
+    1200,
+    1700,
+    2500,
+    6000,
+    8000,
+    10000,
+    15000,
+    30000,
+    40000,
+    50000,
+    70000,
+    100000,
+    120000,
+    140000,
+    250000,
+    300000,
+    350000,
+    400000,
+    500000,
+    700000,
+    1000000,
+    1400000,
+    1800000,
+    2000000,
+    2400000,
+    2800000,
+    3200000,
+    3600000,
+    4000000,
+    4800000,
+    5600000,
+    8200000,
+    9000000,
+    11000000,
+    14000000,
+    18000000,
+    22000000,
+    25000000,
+    30000000,
+    35000000,
+    40000000,
+    50000000,
+    60000000,
+    70000000,
+    85000000,
+    110000000,
+    135000000,
+    145000000,
+    150000000,
+    175000000,
+    180000000,
+    200000000,
+    220000000,
+    230000000,
+    240000000,
+    250000000,
+    260000000,
+    270000000,
+    280000000,
+    300000000,
+    320000000,
+    340000000,
+    360000000,
+    380000000,
+    400000000,
+    800000000,
+    1400000000,
+    2200000000,
+    6530000000,
+    12000000000,
+    30000000000,
+    75000000000,
+    150000000000,
+    175000000000,
+    300000000000,
+    430000000000,
+    570000000000,
+    700000000000,
+    800000000000,
+    900000000000,
+    3000000000000,
+    6000000000000,
+    9000000000000,
+    13000000000000,
+    17000000000000,
+    144000000000000,
+    146000000000000,
+    149000000000000,
+    162000000000000,
+    166000000000000,
+    172000000000000,
+    180000000000000,
+    188000000000000,
+    200000000000000,
 ];
 
 /// One finding of [`GameData::validate`].
@@ -550,11 +728,22 @@ pub struct CompanionLevelDef {
     pub max_hunger: i32,
 }
 
+/// One weighted stat roll unlocked at a companion level.
+#[derive(Debug, Clone)]
+pub struct CompanionSkillDef {
+    pub level: i32,
+    pub stat: i32,
+    pub max_amount: i32,
+    pub weight: i32,
+}
+
 #[derive(Debug)]
 pub struct GameData {
     pub maps: BTreeMap<i32, MapDef>,
     pub regions: HashMap<i32, RegionDef>,
     pub respawns: Vec<RespawnDef>,
+    pub world_events: Vec<WorldEventDef>,
+    pub legacy_events: Vec<LegacyEventDef>,
     pub monsters: HashMap<i32, MonsterDef>,
     pub safe_zones: Vec<SafeZoneDef>,
     pub mines: Vec<MineDef>,
@@ -563,10 +752,15 @@ pub struct GameData {
     pub castles: Vec<CastleDef>,
     pub guards: Vec<GuardDef>,
     pub currencies: Vec<CurrencyDef>,
+    /// `StoreInfo`: the in-game store's stock.
+    pub stores: Vec<StoreDef>,
     /// Zircon `FameInfo` titles in promotion order.
     pub fames: Vec<FameDef>,
+    /// Zircon `DisciplineInfo`, ordered by level.
+    pub disciplines: Vec<DisciplineDef>,
     pub companions: Vec<CompanionDef>,
     pub companion_levels: Vec<CompanionLevelDef>,
+    pub companion_skills: Vec<CompanionSkillDef>,
     pub quests: HashMap<i32, QuestDef>,
     pub base_stats: Vec<BaseStatDef>,
     pub npcs: Vec<NpcDef>,
@@ -589,6 +783,16 @@ impl GameData {
     pub fn magic_by_index(&self, index: i32) -> Option<&MagicDef> {
         self.magics.values().find(|m| m.index == index)
     }
+}
+
+/// Zircon splits `StoreInfo.Filter` on commas and trims each tag to build
+/// the store's drop-down, so the loader does the same once.
+pub fn split_filters(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn i32_of(c: &Collection, r: &Record, name: &str) -> i32 {
@@ -657,7 +861,7 @@ impl GameData {
             .collect();
 
         let c = get("RespawnInfo")?;
-        let respawns = c
+        let respawns: Vec<RespawnDef> = c
             .records
             .iter()
             .map(|r| RespawnDef {
@@ -665,6 +869,8 @@ impl GameData {
                 monster: i32_of(c, r, "Monster"),
                 region: i32_of(c, r, "Region"),
                 event_spawn: c.bool_or(r, "EventSpawn", false),
+                drop_set: i32_of(c, r, "DropSet"),
+                easter_event_chance: i32_of(c, r, "EasterEventChance"),
                 delay: i32_of(c, r, "Delay"),
                 count: i32_of(c, r, "Count"),
                 announce: c.bool_or(r, "Announce", false),
@@ -672,6 +878,79 @@ impl GameData {
             })
             .filter(|r| r.monster != 0 && r.region != 0)
             .collect();
+
+        // The installed System.db predates WorldEventInfo. Its final Type=4
+        // action activates an event-only RespawnInfo; a negative EventTarget
+        // identifies the boss whose death closes the event.
+        let mut world_events = Vec::new();
+        let mut legacy_events = Vec::new();
+        if let (Some(events), Some(targets), Some(actions)) = (
+            db.collection("EventInfo"),
+            db.collection("EventTarget"),
+            db.collection("EventAction"),
+        ) {
+            for event in &events.records {
+                let index = events.index(event);
+                let max_value = i32_of(events, event, "MaxValue");
+                let mut actions_for_event: Vec<_> = actions
+                    .records
+                    .iter()
+                    .filter(|action| i32_of(actions, action, "Event") == index)
+                    .filter(|action| matches!(i32_of(actions, action, "Type"), 2..=5 | 7 | 8))
+                    .map(|action| LegacyEventAction {
+                        trigger_value: i32_of(actions, action, "TriggerValue"),
+                        kind: i32_of(actions, action, "Type"),
+                        message: actions.str_or(action, "StringParameter1", "").to_string(),
+                        monster: i32_of(actions, action, "MonsterParameter1"),
+                        respawn: i32_of(actions, action, "RespawnParameter1"),
+                        map: i32_of(actions, action, "MapParameter1"),
+                        region: i32_of(actions, action, "RegionParameter1"),
+                    })
+                    .collect();
+                actions_for_event.sort_by_key(|action| action.trigger_value);
+                legacy_events.push(LegacyEventDef {
+                    index,
+                    description: events.str_or(event, "Description", "").to_string(),
+                    max_value,
+                    targets: targets
+                        .records
+                        .iter()
+                        .filter(|target| i32_of(targets, target, "Event") == index)
+                        .map(|target| LegacyEventTarget {
+                            monster: i32_of(targets, target, "Monster"),
+                            drop_set: i32_of(targets, target, "DropSet"),
+                            value: i32_of(targets, target, "Value"),
+                        })
+                        .collect(),
+                    actions: actions_for_event,
+                });
+                let boss = targets.records.iter().find(|target| {
+                    i32_of(targets, target, "Event") == index
+                        && i32_of(targets, target, "Value") == -max_value
+                });
+                let respawn = actions.records.iter().find(|action| {
+                    i32_of(actions, action, "Event") == index
+                        && i32_of(actions, action, "TriggerValue") == max_value
+                        && i32_of(actions, action, "Type") == 4
+                });
+                if let (Some(boss), Some(action)) = (boss, respawn) {
+                    let boss_respawn = i32_of(actions, action, "RespawnParameter1");
+                    if respawns.iter().any(|r: &RespawnDef| {
+                        r.index == boss_respawn
+                            && r.event_spawn
+                            && r.monster == i32_of(targets, boss, "Monster")
+                    }) {
+                        world_events.push(WorldEventDef {
+                            index,
+                            description: events.str_or(event, "Description", "").to_string(),
+                            boss_respawn,
+                        });
+                    }
+                }
+            }
+        }
+        world_events.sort_by_key(|event| event.index);
+        legacy_events.sort_by_key(|event| event.index);
 
         let mut monster_stats: HashMap<i32, HashMap<i32, i32>> = HashMap::new();
         let c = get("MonsterInfoStat")?;
@@ -779,7 +1058,7 @@ impl GameData {
             }
         }
         let c = get("ItemInfo")?;
-        let items: HashMap<i32, ItemDef> = c
+        let mut items: HashMap<i32, ItemDef> = c
             .records
             .iter()
             .map(|r| {
@@ -789,6 +1068,7 @@ impl GameData {
                     name: c.str_or(r, "ItemName", "").to_string(),
                     item_type: i32_of(c, r, "ItemType") as u8,
                     effect: i32_of(c, r, "ItemEffect") as u8,
+                    exterior_effect: i32_of(c, r, "ExteriorEffect") as u8,
                     required_class: i32_of(c, r, "RequiredClass") as u8,
                     required_gender: i32_of(c, r, "RequiredGender") as u8,
                     required_type: i32_of(c, r, "RequiredType") as u8,
@@ -798,10 +1078,17 @@ impl GameData {
                     durability: i32_of(c, r, "Durability"),
                     price: i32_of(c, r, "Price"),
                     weight: i32_of(c, r, "Weight"),
-                    stack_size: i32_of(c, r, "StackSize").max(1),
+                    stack_size: if i32_of(c, r, "ItemType") as u8
+                        == mir_proto::item_type::CONSUMABLE
+                    {
+                        999
+                    } else {
+                        i32_of(c, r, "StackSize").max(1)
+                    },
                     start_item: c.bool_or(r, "StartItem", false),
                     sell_rate: c.float_or(r, "SellRate", 0.0),
                     can_sell: c.bool_or(r, "CanSell", true),
+                    can_repair: c.bool_or(r, "CanRepair", true),
                     can_trade: c.bool_or(r, "CanTrade", true),
                     can_store: c.bool_or(r, "CanStore", true),
                     rarity: i32_of(c, r, "Rarity") as u8,
@@ -813,6 +1100,16 @@ impl GameData {
                 (index, d)
             })
             .collect();
+
+        // This asset pack leaves both fifth-tier mana potions without a Mana
+        // stat. Earlier tiers increase by 70 (40, 110, 180, 250).
+        for index in [147, 152] {
+            if let Some(item) = items.get_mut(&index) {
+                if item.name.starts_with("!Mana ") && item.stat(stat::MANA) == 0 {
+                    item.stats.insert(stat::MANA, 320);
+                }
+            }
+        }
 
         // A set's piece count is the `SetInfo.Items` association read from
         // the item side: every `ItemInfo` naming this set is one piece.
@@ -881,6 +1178,7 @@ impl GameData {
                     chance: i32_of(c, r, "Chance"),
                     amount: i32_of(c, r, "Amount"),
                     drop_set: i32_of(c, r, "DropSet"),
+                    easter_event: c.bool_or(r, "EasterEvent", false),
                     part_only: c.bool_or(r, "PartOnly", false),
                 })
                 .filter(|d| d.monster != 0 && d.item != 0)
@@ -898,6 +1196,7 @@ impl GameData {
                         index,
                         description: c.str_or(r, "Description", "").to_string(),
                         dialog_type: i32_of(c, r, "DialogType"),
+                        currency: c.int(r, "Currency").map(|v| v as i32).filter(|v| *v != 0),
                         say: c.str_or(r, "Say", "").to_string(),
                         success_page: i32_of(c, r, "SuccessPage"),
                         arguments: c.str_or(r, "Arguments", "").to_string(),
@@ -906,6 +1205,7 @@ impl GameData {
                         goods: Vec::new(),
                         checks: Vec::new(),
                         actions: Vec::new(),
+                        values: Vec::new(),
                         types: Vec::new(),
                     };
                     (index, p)
@@ -963,6 +1263,17 @@ impl GameData {
                         item1: i32_of(c, r, "ItemParameter1"),
                         map1: i32_of(c, r, "MapParameter1"),
                         stat1: i32_of(c, r, "StatParameter1"),
+                    });
+                }
+            }
+        }
+        if let Some(c) = db.collection("NPCValue") {
+            for r in &c.records {
+                if let Some(p) = npc_pages.get_mut(&i32_of(c, r, "Page")) {
+                    p.values.push(NpcValueDef {
+                        id: i32_of(c, r, "ValueID"),
+                        value_type: i32_of(c, r, "ValueType"),
+                        field_type: i32_of(c, r, "FieldType"),
                     });
                 }
             }
@@ -1145,6 +1456,23 @@ impl GameData {
             None => Vec::new(),
         };
 
+        let stores = match db.collection("StoreInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| StoreDef {
+                    index: c.index(r),
+                    item: i32_of(c, r, "Item"),
+                    price: i32_of(c, r, "Price"),
+                    hunt_gold_price: i32_of(c, r, "HuntGoldPrice"),
+                    filters: split_filters(c.str_or(r, "Filter", "")),
+                    available: c.bool_or(r, "Available", false),
+                    duration: i32_of(c, r, "Duration"),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+
         let currencies = match db.collection("CurrencyInfo") {
             Some(c) => c
                 .records
@@ -1160,6 +1488,22 @@ impl GameData {
                 .collect(),
             None => Vec::new(),
         };
+        let mut disciplines: Vec<DisciplineDef> = match db.collection("DisciplineInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| DisciplineDef {
+                    index: c.index(r),
+                    level: i32_of(c, r, "Level"),
+                    required_level: i32_of(c, r, "RequiredLevel"),
+                    required_experience: c.int_or(r, "RequiredExperience", 0),
+                    required_gold: i32_of(c, r, "RequiredGold").max(0) as u64,
+                    focus_points: i32_of(c, r, "FocusPoints"),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        disciplines.sort_by_key(|d| d.level);
         let mut fames: Vec<FameDef> = match db.collection("FameInfo") {
             Some(c) => c
                 .records
@@ -1221,6 +1565,19 @@ impl GameData {
                     inventory_space: i32_of(c, r, "InventorySpace"),
                     inventory_weight: i32_of(c, r, "InventoryWeight"),
                     max_hunger: i32_of(c, r, "MaxHunger"),
+                })
+                .collect(),
+            None => Vec::new(),
+        };
+        let companion_skills = match db.collection("CompanionSkillInfo") {
+            Some(c) => c
+                .records
+                .iter()
+                .map(|r| CompanionSkillDef {
+                    level: i32_of(c, r, "Level"),
+                    stat: i32_of(c, r, "StatType"),
+                    max_amount: i32_of(c, r, "MaxAmount"),
+                    weight: i32_of(c, r, "Weight"),
                 })
                 .collect(),
             None => Vec::new(),
@@ -1319,6 +1676,8 @@ impl GameData {
             maps,
             regions,
             respawns,
+            world_events,
+            legacy_events,
             monsters,
             safe_zones,
             mines,
@@ -1327,9 +1686,12 @@ impl GameData {
             castles,
             guards,
             currencies,
+            stores,
             fames,
+            disciplines,
             companions,
             companion_levels,
+            companion_skills,
             quests,
             base_stats,
             npcs,
@@ -1486,6 +1848,25 @@ impl GameData {
             .max_by_key(|b| b.level)
     }
 
+    /// Continue HP and MP growth past the last database row. The source
+    /// database ends at level 90; use its final ten-level trend above that.
+    pub fn player_base_stat(&self, class: u8, level: i32) -> Option<BaseStatDef> {
+        let mut base = self.base_stat(class, level)?.clone();
+        if level > base.level {
+            let earlier = self.base_stat(class, base.level - 10)?;
+            let span = (base.level - earlier.level).max(1) as i64;
+            let extra = (level - base.level) as i64;
+            let extend = |current: i32, previous: i32| {
+                (current as i64 + (current as i64 - previous as i64).max(0) * extra / span)
+                    .clamp(0, i32::MAX as i64) as i32
+            };
+            base.health = extend(base.health, earlier.health);
+            base.mana = extend(base.mana, earlier.mana);
+            base.level = level;
+        }
+        Some(base)
+    }
+
     /// Safe zones a new character of this class may start in.
     pub fn start_zones(&self, class_flag: u8) -> Vec<&SafeZoneDef> {
         self.safe_zones
@@ -1499,7 +1880,15 @@ impl GameData {
     }
 
     pub fn max_experience(level: i32) -> u64 {
-        EXPERIENCE.get(level.max(0) as usize).copied().unwrap_or(0)
+        if level >= mir_proto::MAX_PLAYER_LEVEL {
+            return 0;
+        }
+        let level = level.max(0) as usize;
+        EXPERIENCE.get(level).copied().unwrap_or_else(|| {
+            let last = EXPERIENCE.len() - 1;
+            let step = EXPERIENCE[last] - EXPERIENCE[last - 1];
+            EXPERIENCE[last] + (level - last) as u64 * step
+        })
     }
 }
 

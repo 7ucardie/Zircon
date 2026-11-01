@@ -401,7 +401,7 @@ impl World {
         let cs = self.objects[&caster].stats;
         let power = self.roll_range(pmin, pmax);
         let dc = self.roll_dc(cs);
-        let sp = self.roll_range(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc));
+        let sp = self.roll_lucky(cs.min_mc.min(cs.min_sc), cs.max_mc.min(cs.max_sc), cs.luck);
         let clevel = self.level_of(&self.objects[&caster]);
         match pm.magic {
             m::CRUSHING_WAVE => {
@@ -556,30 +556,14 @@ impl World {
                     .map(|p| p.pets.clone())
                     .unwrap_or_default();
                 if let Some(existing) = pets.iter().copied().find(|p| self.monster_flag(*p) == 4) {
-                    let to = if self.maps[&cmap]
-                        .file
-                        .is_walkable(pm.location.x, pm.location.y)
-                        && !self.cell_blocked(cmap, pm.location, false)
-                    {
-                        pm.location
-                    } else {
-                        cloc
-                    };
+                    let to = self.summon_placement(cmap, pm.location, cloc);
                     self.teleport_object(existing, to);
                     return;
                 }
                 if pets.len() >= 2 {
                     return;
                 }
-                let spot = if self.maps[&cmap]
-                    .file
-                    .is_walkable(pm.location.x, pm.location.y)
-                    && !self.cell_blocked(cmap, pm.location, false)
-                {
-                    pm.location
-                } else {
-                    cloc
-                };
+                let spot = self.summon_placement(cmap, pm.location, cloc);
                 self.create_monster(def_index, cmap, spot, None, Some(caster), level * 2);
                 self.level_magic(caster, pm.magic);
             }
@@ -609,7 +593,7 @@ impl World {
                         },
                     ));
                 }
-                let sc = self.roll_range(cs.min_sc, cs.max_sc);
+                let sc = self.roll_lucky(cs.min_sc, cs.max_sc, cs.luck);
                 let boom = pet_max * power / 100 + sc * 3;
                 let victims: Vec<ObjectId> = self
                     .on_map(pet_map)
@@ -805,7 +789,8 @@ impl World {
                 if let Some(o) = self.objects.get_mut(&t) {
                     o.poisons.retain(|p| p.kind != poison_kind::BINDING);
                 }
-                let sc = self.roll_range(cs.min_sc, cs.max_sc);
+                self.send_poison_status(t);
+                let sc = self.roll_lucky(cs.min_sc, cs.max_sc, cs.luck);
                 let ts = self.objects[&t].stats;
                 let dealt = sc * (level + 1) - self.roll_range(ts.min_mr, ts.max_mr);
                 if dealt > 0 && self.damage(t, caster, dealt, element::HOLY, true) > 0 {

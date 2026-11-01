@@ -1,5 +1,21 @@
 use super::*;
 
+fn confirm_belt_key(pending: &mut Option<(u8, u64)>, slot: u8, now: u64) -> bool {
+    let confirmed =
+        pending.is_some_and(|(previous, at)| previous == slot && now.saturating_sub(at) <= 450);
+    *pending = (!confirmed).then_some((slot, now));
+    confirmed
+}
+
+fn spell_bar_slot((x, y): (f32, f32), height: i32) -> Option<u8> {
+    let top = height as f32 - 140.0;
+    let x = x - 10.0;
+    if !(top..top + 36.0).contains(&y) || !(0.0..12.0 * 37.0).contains(&x) {
+        return None;
+    }
+    (x % 37.0 < 36.0).then_some((x / 37.0) as u8 + 1)
+}
+
 impl Game {
     /// True while any text box anywhere owns the keyboard, so world
     /// shortcuts stay out of the way of typing.
@@ -7,10 +23,22 @@ impl Game {
         self.windows.typing()
             || self.friends_window.typing()
             || self.fortune.typing()
+            || self.dungeon_codex.typing()
             || self.chat_options.typing()
+            || self.character_services.typing()
     }
 
     pub(super) fn hit_test(&mut self, width: i32, height: i32) -> Option<ObjectId> {
+        // Labels move to avoid overlap; use their displayed bounds, not the floor sprite.
+        if let Some(&(id, _, _, _)) = self.item_label_rects.iter().rev().find(|&&(id, x, y, w)| {
+            self.objects.get(&id).is_some_and(|o| o.is_item())
+                && self.mouse.0 >= x
+                && self.mouse.0 < x + w
+                && self.mouse.1 >= y
+                && self.mouse.1 < y + 15.0
+        }) {
+            return Some(id);
+        }
         let view = View::new(width, height, self.user());
         let (mx, my) = (self.mouse.0 as i32, self.mouse.1 as i32);
         let mut best: Option<(i32, ObjectId)> = None;
@@ -53,9 +81,9 @@ impl Game {
         if !map.is_walkable(p.x, p.y) {
             return true;
         }
-        self.objects
-            .values()
-            .any(|o| !o.dead && !o.is_item() && Some(o.id) != self.user && o.location == p)
+        self.objects.values().any(|o| {
+            !o.dead && !o.is_item() && !o.is_spell() && Some(o.id) != self.user && o.location == p
+        })
     }
 
     pub(super) fn handle_input(
@@ -65,7 +93,18 @@ impl Game {
         height: i32,
         conn: Option<&Connection>,
     ) {
-        self.chat_keys(now, conn);
+        if !self.dungeon_codex.typing() {
+            self.chat_keys(now, conn);
+        }
+        if self.windows.inventory_open
+            && self
+                .windows
+                .inventory_rect(width, height)
+                .contains(self.input.mouse.0, self.input.mouse.1)
+        {
+            self.lmb = false;
+            self.rmb = false;
+        }
         // A focused window text box owns the keyboard. The fortune search
         // and the chat-tab rename box live outside `WindowState`, so they
         // are asked separately.
@@ -74,10 +113,18 @@ impl Game {
             self.input.fkey = None;
             self.input.tab = false;
         }
+        if self.input.lmb_pressed && !self.chat.open {
+            if let Some(slot) = spell_bar_slot(self.input.mouse, height) {
+                self.windows.hover_magic = None;
+                self.function_key(slot, now, width, height, conn);
+                return;
+            }
+        }
         // Keyboard shortcuts, Zircon's `KeyBindAction` defaults: Q character,
         // W inventory, E magic, J quest log, `,` mail, Z belt, P group,
         // G guild, S storage, U companion, N menu, H help, A auto potion,
-        // M mount, T trade, Tab pick up, Ctrl+H attack mode, Alt+Q leave.
+        // M mount, T trade, Tab pick up, Ctrl+H attack mode, Ctrl+A pet mode,
+        // Alt+Q leave.
         let typing = self.text_entry_open();
         // A modifier is held, so the text event carries a control character
         // and `chord` names the physical letter instead.
@@ -87,6 +134,13 @@ impl Game {
                     if let Some(c) = conn {
                         c.send(ClientMessage::AttackMode {
                             mode: (self.attack_mode + 1) % (mir_proto::attack_mode::ALL + 1),
+                        });
+                    }
+                }
+                (Some('a'), true) => {
+                    if let Some(c) = conn {
+                        c.send(ClientMessage::PetMode {
+                            mode: (self.pet_mode + 1) % (mir_proto::pet_mode::NONE + 1),
                         });
                     }
                 }
@@ -101,6 +155,16 @@ impl Game {
         };
         for ch in shortcuts.chars() {
             match ch.to_ascii_lowercase() {
+                'b' => {
+                    if now >= self.action_time
+                        && self.user().is_some_and(|u| !u.dead)
+                        && self.user().is_some_and(|u| !u.mounted())
+                    {
+                        if let Some(cell) = self.nearest_corpse(1) {
+                            self.swing_harvest(cell, now, conn);
+                        }
+                    }
+                }
                 'w' => self.windows.inventory_open = !self.windows.inventory_open,
                 'q' => self.windows.character_open = !self.windows.character_open,
                 'e' => self.windows.skills_open = !self.windows.skills_open,
@@ -126,7 +190,15 @@ impl Game {
                 // Zircon opens these two from menus and an NPC, with no
                 // key of their own; K and O were free here.
                 'k' => self.fortune.open = !self.fortune.open,
+                'i' => {
+                    self.dungeon_codex.open = !self.dungeon_codex.open;
+                    if self.dungeon_codex.open {
+                        self.dungeon_codex.select_floor(&self.map_file);
+                    }
+                }
+                'y' => self.wardrobe.open = !self.wardrobe.open,
                 'o' => self.chat_options.open = !self.chat_options.open,
+                'd' => self.character_services.open = !self.character_services.open,
                 // Zircon cycles the minimap with V (shown, dimmed, hidden)
                 // and opens the big map with B; B is storage here, so the
                 // big map takes X.
@@ -148,7 +220,7 @@ impl Game {
             }
         }
         if let Some(slot) = self.input.digit {
-            self.belt_key(slot, now, conn);
+            self.belt_key(slot, now, conn, true);
         }
         if self.input.tab {
             if let Some(c) = conn {
@@ -178,7 +250,10 @@ impl Game {
             self.friends_window.open = false;
             self.windows.market.open = false;
             self.fortune.open = false;
+            self.dungeon_codex.open = false;
+            self.wardrobe.open = false;
             self.chat_options.open = false;
+            self.character_services.open = false;
             if self.trade.is_some() {
                 if let Some(c) = conn {
                     c.send(ClientMessage::TradeClose);
@@ -193,10 +268,15 @@ impl Game {
         if self.input.lmb_pressed || self.input.rmb_pressed {
             self.goal = None;
         }
+        // Keep clicks over UI for the UI, while clicks outside open panels
+        // still reach the world.
+        if self.ui_hover_last_frame {
+            return;
+        }
         let Some(user) = self.user() else {
             return;
         };
-        if user.dead {
+        if user.dead || user.poison_kinds & 8 != 0 {
             return;
         }
         let user_loc = user.location;
@@ -206,12 +286,14 @@ impl Game {
         // Interacting with a goal object once close enough.
         if let Some(gid) = self.goal {
             match self.objects.get(&gid) {
-                Some(g) if user_loc.distance(g.location) <= 1 => {
+                Some(g) if user_loc.distance(g.location) <= if g.room_door { 2 } else { 1 } => {
                     if let Some(c) = conn {
                         if g.is_item() {
-                            c.send(ClientMessage::PickUp);
+                            c.send(ClientMessage::PickUpItem { id: gid });
                         } else if g.is_npc() {
                             c.send(ClientMessage::NpcCall { id: gid });
+                        } else if g.room_door {
+                            c.send(ClientMessage::RoomDoorToggle { id: gid });
                         }
                     }
                     self.goal = None;
@@ -229,7 +311,7 @@ impl Game {
 
         if self.input.lmb_pressed {
             if let Some(target) = self.hovered.and_then(|id| self.objects.get(&id)) {
-                if target.is_npc() || target.is_item() {
+                if target.is_npc() || target.is_item() || target.room_door {
                     self.goal = Some(target.id);
                     return;
                 }
@@ -283,6 +365,29 @@ impl Game {
                     self.cast_rod(cell, now, conn);
                     return;
                 }
+            }
+        }
+        if self.lmb && self.user().is_some_and(|u| !u.mounted()) {
+            if let Some(cell) = self
+                .hovered
+                .and_then(|id| self.objects.get(&id))
+                .filter(|o| {
+                    o.dead
+                        && matches!(
+                            o.appearance,
+                            Appearance::Monster {
+                                skeleton: false,
+                                ..
+                            }
+                        )
+                })
+                .map(|o| o.location)
+                .filter(|p| user_loc.distance(*p) <= 1)
+            {
+                if now >= self.action_time {
+                    self.swing_harvest(cell, now, conn);
+                }
+                return;
             }
         }
         // Attack a hovered monster in melee range.
@@ -357,16 +462,23 @@ impl Game {
         self.step_toward(now, user_loc, target, run, conn);
     }
 
-    /// F1..F11: bind in the skill window, toggle a stance, or cast.
+    /// Spell slots 1..12: bind in the skill window, toggle a stance, or cast.
     /// Digit key: link the carried/hovered bag item to the belt slot, else
     /// use what the slot links to (Zircon `UseBelt01..10`).
-    pub(super) fn belt_key(&mut self, slot: u8, now: u64, conn: Option<&Connection>) {
+    pub(super) fn belt_key(
+        &mut self,
+        slot: u8,
+        now: u64,
+        conn: Option<&Connection>,
+        confirm_use: bool,
+    ) {
         let source = match self.windows.carrying {
             Some((mir_proto::Grid::Inventory, s)) => Some(s),
             _ => self.windows.hover_inventory,
         };
         if let Some(s) = source {
             if self.inventory.get(s as usize).map(|i| i.is_some()) == Some(true) {
+                self.belt_key_pending = None;
                 let link = crate::windows::link_for(&self.catalog, &self.inventory, s, slot);
                 self.windows.carrying = None;
                 self.apply_belt_link(link);
@@ -384,7 +496,17 @@ impl Game {
             return;
         };
         if let Some(inv) = crate::windows::belt_inventory_slot(&self.inventory, &link) {
-            self.try_use_item(inv, now, conn);
+            if !confirm_use || confirm_belt_key(&mut self.belt_key_pending, slot, now) {
+                self.try_use_item(inv, now, conn);
+            } else {
+                self.say(
+                    format!(
+                        "Press {} again to use belt item.",
+                        if slot == 9 { 0 } else { slot + 1 }
+                    ),
+                    now,
+                );
+            }
         }
     }
 
@@ -426,12 +548,7 @@ impl Game {
         // Binding: hovering a learned skill's icon in the skill window.
         if let Some(magic) = self.windows.hover_magic {
             if self.magics.iter().any(|m| m.magic == magic) {
-                if let Some(m) = self.magics.iter_mut().find(|m| m.key == f) {
-                    m.key = 0;
-                }
-                if let Some(m) = self.magics.iter_mut().find(|m| m.magic == magic) {
-                    m.key = f;
-                }
+                self.apply_magic_key(magic, f);
                 if let Some(c) = conn {
                     c.send(ClientMessage::MagicKey { magic, key: f });
                 }
@@ -439,9 +556,23 @@ impl Game {
             return;
         }
         let Some(magic) = self.magics.iter().find(|m| m.key == f).map(|m| m.magic) else {
+            self.say(format!("No spell bound to F{f}."), now);
             return;
         };
         self.use_skill(magic, now, width, height, conn);
+    }
+
+    pub(super) fn apply_magic_key(&mut self, magic: u16, key: u8) {
+        if key != 0 {
+            for known in &mut self.magics {
+                if known.key == key {
+                    known.key = 0;
+                }
+            }
+        }
+        if let Some(known) = self.magics.iter_mut().find(|known| known.magic == magic) {
+            known.key = key;
+        }
     }
 
     /// Use a learned skill: toggle, charge, arm or cast it.
@@ -499,18 +630,31 @@ impl Game {
         let Some(user) = self.user() else {
             return;
         };
-        if user.dead {
+        if user.dead || user.poison_kinds & 8 != 0 {
+            return;
+        }
+        if user.mounted() {
+            self.say("You cannot cast while riding.".into(), now);
             return;
         }
         let user_loc = user.location;
-        if (self.stats.level as i32) < def.need_level[0] {
+        if self.stats.level < def.need_level[0] {
             self.say(
                 format!("{} needs level {}.", def.name, def.need_level[0]),
                 now,
             );
             return;
         }
-        if now < self.magic_time || now < self.action_time {
+        let mobile_support = magic_type::is_mobile_support_cast(magic)
+            && (matches!(user.action, Action::Walking | Action::Running) || self.lmb || self.rmb);
+        if now < self.magic_time {
+            return;
+        }
+        if now < self.action_time && !mobile_support {
+            self.say(
+                format!("Finish your action before casting {}.", def.name),
+                now,
+            );
             return;
         }
         if self
@@ -584,7 +728,9 @@ impl Game {
             Direction::from_points(user_loc, target_loc)
         };
         self.magic_time = now + mir_proto::MAGIC_DELAY;
-        self.action_time = now + 600;
+        if !mobile_support {
+            self.action_time = now + 600;
+        }
         if magic == magic_type::SHOULDER_DASH {
             // No cast animation: the server streams dash steps.
             if let Some(c) = conn {
@@ -597,15 +743,17 @@ impl Game {
             }
             return;
         }
-        let action = cast_action(magic);
-        if let Some(u) = self.user_mut() {
-            u.queue.clear();
-            u.enqueue(Queued {
-                action,
-                direction,
-                location: user_loc,
-                distance: 0,
-            });
+        if !mobile_support {
+            let action = cast_action(magic);
+            if let Some(u) = self.user_mut() {
+                u.queue.clear();
+                u.enqueue(Queued {
+                    action,
+                    direction,
+                    location: user_loc,
+                    distance: 0,
+                });
+            }
         }
         if let Some(c) = conn {
             c.send(ClientMessage::Magic {
@@ -638,6 +786,56 @@ impl Game {
         if let Some(c) = conn {
             c.send(ClientMessage::Mining { direction });
         }
+    }
+
+    /// Swing at a corpse in front (Zircon `Harvest`). The server works out
+    /// which bodies are in reach and what they owe; the client only picks a
+    /// facing and plays the swing.
+    pub(super) fn swing_harvest(&mut self, cell: Point, now: u64, conn: Option<&Connection>) {
+        let Some(user_loc) = self.user().map(|u| u.location) else {
+            return;
+        };
+        let direction = Direction::from_points(user_loc, cell);
+        self.action_time = now + HARVEST_TIME;
+        if let Some(u) = self.user_mut() {
+            u.queue.clear();
+            u.enqueue(Queued {
+                action: Action::Harvest,
+                direction,
+                location: user_loc,
+                distance: 0,
+            });
+        }
+        if let Some(c) = conn {
+            c.send(ClientMessage::Harvest { direction });
+        }
+    }
+
+    /// The nearest corpse still showing flesh. The server checks ownership;
+    /// bones can be skipped because this viewer has nothing left to collect.
+    pub(super) fn nearest_corpse(&self, radius: i32) -> Option<Point> {
+        let user_loc = self.user()?.location;
+        let mut best: Option<(i32, Point)> = None;
+        for o in self.objects.values() {
+            if !o.dead {
+                continue;
+            }
+            let fleshy = matches!(
+                &o.appearance,
+                mir_proto::Appearance::Monster { skeleton, .. } if !*skeleton
+            );
+            if !fleshy {
+                continue;
+            }
+            let d = o.location.distance(user_loc);
+            if d > radius {
+                continue;
+            }
+            if best.is_none_or(|(bd, _)| d < bd) {
+                best = Some((d, o.location));
+            }
+        }
+        best.map(|(_, p)| p)
     }
 
     /// Cast the rod at a water cell (Zircon `FishingCast`).
@@ -767,5 +965,63 @@ impl Game {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod magic_key_tests {
+    use super::*;
+
+    #[test]
+    fn reassignment_and_unbinding_update_local_shortcuts() {
+        let mut game = Game::new(
+            Assets::new(std::env::temp_dir().join("zircon-shortcut-test-assets")),
+            ItemCatalog::empty(),
+        );
+        game.magics = vec![
+            MagicSummary {
+                magic: 1,
+                level: 0,
+                experience: 0,
+                key: 1,
+            },
+            MagicSummary {
+                magic: 2,
+                level: 0,
+                experience: 0,
+                key: 2,
+            },
+        ];
+
+        game.apply_magic_key(2, 1);
+        assert_eq!(
+            game.magics.iter().map(|m| m.key).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        game.apply_magic_key(2, 0);
+        assert_eq!(
+            game.magics.iter().map(|m| m.key).collect::<Vec<_>>(),
+            vec![0, 0]
+        );
+    }
+
+    #[test]
+    fn belt_number_needs_two_distinct_presses() {
+        let mut pending = None;
+        assert!(!confirm_belt_key(&mut pending, 1, 100));
+        assert_eq!(pending, Some((1, 100)));
+        assert!(confirm_belt_key(&mut pending, 1, 400));
+        assert_eq!(pending, None);
+        assert!(!confirm_belt_key(&mut pending, 1, 1000));
+        assert!(!confirm_belt_key(&mut pending, 2, 1100));
+        assert!(!confirm_belt_key(&mut pending, 2, 1600));
+    }
+
+    #[test]
+    fn spell_bar_clicks_match_visible_slots() {
+        assert_eq!(spell_bar_slot((10.0, 628.0), 768), Some(1));
+        assert_eq!(spell_bar_slot((47.0, 628.0), 768), Some(2));
+        assert_eq!(spell_bar_slot((452.0, 628.0), 768), Some(12));
+        assert_eq!(spell_bar_slot((46.0, 628.0), 768), None);
     }
 }

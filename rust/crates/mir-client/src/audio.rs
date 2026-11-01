@@ -34,7 +34,9 @@ pub struct Audio {
     loops: HashMap<u16, Player>,
     music: Option<u16>,
     /// Volume per channel, 0..1 (Zircon: 0..100 per `SoundType`).
-    pub volumes: [f32; CHANNELS],
+    volumes: [f32; CHANNELS],
+    preferences: crate::settings::Preferences,
+    gain: f32,
 }
 
 impl Audio {
@@ -45,7 +47,10 @@ impl Audio {
             None
         } else {
             match DeviceSinkBuilder::open_default_sink() {
-                Ok(s) => Some(s),
+                Ok(mut s) => {
+                    s.log_on_drop(false);
+                    Some(s)
+                }
                 Err(e) => {
                     tracing::warn!("no audio output: {e}");
                     None
@@ -62,16 +67,14 @@ impl Audio {
             }
             tracing::info!(count = files.len(), dir = %dir.display(), "sound files");
         }
-        let mut volumes = [0.5; CHANNELS];
-        volumes[2] = 0.3;
-        if let Some(v) = std::env::var("ZIRCON_VOLUME")
+        let preferences = crate::settings::Preferences::load();
+        let gain = std::env::var("ZIRCON_VOLUME")
             .ok()
             .and_then(|v| v.parse::<f32>().ok())
-        {
-            for x in volumes.iter_mut() {
-                *x *= v.clamp(0.0, 2.0);
-            }
-        }
+            .filter(|value| value.is_finite())
+            .unwrap_or(1.0)
+            .clamp(0.0, 2.0);
+        let volumes = channel_volumes(&preferences, gain);
         Audio {
             sink,
             files,
@@ -80,6 +83,27 @@ impl Audio {
             loops: HashMap::new(),
             music: None,
             volumes,
+            preferences,
+            gain,
+        }
+    }
+
+    /// Apply preferences to current voices as well as future playback.
+    pub fn set_preferences(&mut self, preferences: &crate::settings::Preferences) {
+        if self.preferences == *preferences {
+            return;
+        }
+        self.preferences = preferences.clone();
+        self.volumes = channel_volumes(preferences, self.gain);
+        for (index, player) in self
+            .voices
+            .iter()
+            .map(|(i, p)| (*i, p))
+            .chain(self.loops.iter().map(|(i, p)| (*i, p)))
+        {
+            if let Some((_, channel, _)) = sound_file(index) {
+                player.set_volume(self.volumes[(channel as usize).min(CHANNELS - 1)]);
+            }
         }
     }
 
@@ -170,5 +194,54 @@ impl Audio {
             p.stop();
         }
         self.music = None;
+    }
+}
+
+fn channel_volumes(preferences: &crate::settings::Preferences, gain: f32) -> [f32; CHANNELS] {
+    let mut volumes = [0.0; CHANNELS];
+    if !preferences.muted {
+        for (i, percent) in preferences.volumes.iter().enumerate() {
+            volumes[i + 1] = f32::from((*percent).min(100)) / 100.0 * gain;
+        }
+    }
+    volumes
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn changing_settings_updates_active_loops_and_voices_without_audio_device() {
+        let (mixer, _source) =
+            rodio::mixer::mixer(2.try_into().unwrap(), 44100.try_into().unwrap());
+        let music = Player::connect_new(&mixer);
+        let system = Player::connect_new(&mixer);
+        let system_index = (1..1000)
+            .find(|index| sound_file(*index).is_some_and(|(_, channel, _)| channel == 1))
+            .unwrap();
+        let preferences = crate::settings::Preferences::default();
+        let mut audio = Audio {
+            sink: None,
+            files: HashMap::new(),
+            cache: HashMap::new(),
+            voices: vec![(system_index, system)],
+            loops: HashMap::from([(1, music)]),
+            music: Some(1),
+            volumes: channel_volumes(&preferences, 0.5),
+            preferences,
+            gain: 0.5,
+        };
+        let mut changed = crate::settings::Preferences {
+            volumes: [80, 20, 50, 50, 50],
+            muted: false,
+            resolution: None,
+            show_fps: false,
+        };
+        audio.set_preferences(&changed);
+        assert!((audio.loops[&1].volume() - 0.1).abs() < 0.0001);
+        assert!((audio.voices[0].1.volume() - 0.4).abs() < 0.0001);
+        changed.muted = true;
+        audio.set_preferences(&changed);
+        assert_eq!(audio.loops[&1].volume(), 0.0);
+        assert_eq!(audio.voices[0].1.volume(), 0.0);
     }
 }

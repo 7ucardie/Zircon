@@ -121,7 +121,6 @@ impl World {
             }
             match effect {
                 spell_effect::FIRE_WALL => {
-                    let owner_is_monster = self.objects[&owner].is_monster();
                     let victims: Vec<ObjectId> = self.maps[&map]
                         .objects_at(loc)
                         .iter()
@@ -132,18 +131,7 @@ impl World {
                         })
                         .collect();
                     for v in victims {
-                        if owner_is_monster {
-                            // Zircon: `monster.Attack(ob, GetDC(), Fire)`.
-                            let s = self.objects[&owner].stats;
-                            let dc = self.roll_dc(s);
-                            let ts = self.objects[&v].stats;
-                            let dealt = dc - self.roll_range(ts.min_mr, ts.max_mr);
-                            if dealt > 0 {
-                                self.damage(v, owner, dealt, element::FIRE, true);
-                            }
-                        } else {
-                            self.magic_attack(owner, v, magic, element::FIRE, 60);
-                        }
+                        self.firewall_hit(owner, v, magic);
                     }
                 }
                 spell_effect::DEATH_CLOUD => {
@@ -158,17 +146,21 @@ impl World {
                                 .is_some_and(|c| c.hostile_to(&self.objects[v]))
                         })
                         .collect();
-                    let dc = self
-                        .objects
-                        .get(&owner)
-                        .map(|c| c.stats)
-                        .map(|s| self.roll_dc(s))
-                        .unwrap_or(0);
                     for v in victims {
-                        let ts = self.objects[&v].stats;
-                        let dealt = dc - self.roll_range(ts.min_mr, ts.max_mr);
-                        if dealt > 0 {
-                            self.damage(v, owner, dealt, element::DARK, true);
+                        // Zircon's death cloud delivers two fixed physical hits, not caster DC.
+                        for _ in 0..2 {
+                            self.pending_hits.push(PendingHit {
+                                time: now,
+                                attacker: owner,
+                                target_cell: (map, loc),
+                                power: 4000,
+                                target: Some(v),
+                                magics: Vec::new(),
+                                primary: true,
+                                raw: false,
+                                element: element::NONE,
+                                ranged: true,
+                            });
                         }
                     }
                 }
@@ -301,6 +293,29 @@ impl World {
                 }
                 _ => {}
             }
+        }
+    }
+
+    pub(super) fn firewall_hit(&mut self, owner: ObjectId, target: ObjectId, magic: u16) {
+        let Some(caster) = self.objects.get(&owner) else {
+            return;
+        };
+        let Some(victim) = self.objects.get(&target) else {
+            return;
+        };
+        if caster.dead || !caster.hostile_to(victim) {
+            return;
+        }
+        if caster.is_monster() {
+            let stats = caster.stats;
+            let target_stats = victim.stats;
+            let dc = self.roll_dc(stats);
+            let dealt = dc - self.roll_range(target_stats.min_mr, target_stats.max_mr);
+            if dealt > 0 {
+                self.damage(target, owner, dealt, element::FIRE, true);
+            }
+        } else {
+            self.magic_attack(owner, target, magic, element::FIRE, 60);
         }
     }
 
