@@ -52,7 +52,7 @@ The Windows CI job has not been run remotely; no changes were pushed.
 ## Existing limits
 
 The store still inherits the rewrite's lack of item flags (`Bound`, `Locked`,
-`Worthless`), as documented in the README. NPC weapon crafting was completed in the continuation below. The editor roadmap is tracked in `EDITOR_PLAN.md`.
+`Worthless`), as documented in the README. NPC weapon crafting was completed in the continuation below. The editor roadmap is tracked in PLANS.md.
 
 
 ## Continuation: NPC weapon crafting
@@ -126,7 +126,7 @@ Validation: **162 passed, 9 explicitly ignored**; formatting, strict Clippy,
 workspace build, Docker build and asset-backed container inspection passed.
 Native editor screenshots used a disposable database copy; the final image is
 `/tmp/zircon-editor-phase2/map-regions-final.png`. Original game assets and saves
-were not edited. Phase 3 (map tile painting) is next in `EDITOR_PLAN.md`.
+were not edited. Phase 3 (map tile painting) is next in PLANS.md.
 Changes remain local and uncommitted.
 
 ## Phase 3: tile painting and isolated test play
@@ -725,7 +725,7 @@ uncommitted; original assets, personal saves and C# sources were not modified.
 Still open: a complete visually verified wall/corner/doorway kit, automatic art
 compatibility and automatic perimeter generation. Recessed connections are now
 implemented and should no longer be listed as unfinished. See WALL_ASSEMBLY.md
-and EDITOR_PLAN.md for the current boundary between composition tools and art-kit
+and PLANS.md for the current boundary between composition tools and art-kit
 work.
 
 ## Parallel follow-up: checked starter kits and piece browser — 2026-09-15
@@ -905,7 +905,7 @@ under `/tmp/zircon-connected-mcp`; `smoke-report.json` records status
 `passed`, the exact tool list and unchanged-source checks from the smoke run.
 Read [MCP_AUTHORING.md](MCP_AUTHORING.md) for setup and workflows. Original sprite
 creation, animation contracts and PNG/sprite-sheet import remain planned in
-[SPRITE_AUTHORING_PLAN.md](SPRITE_AUTHORING_PLAN.md). Existing recolour/rescale
+[PLANS.md](PLANS.md). Existing recolour/rescale
 exports do not constitute new animated-art authoring.
 
 **Wood connected rooms** is now implemented in `wood_connected.rs` and the UI.
@@ -1135,7 +1135,7 @@ ordinary monster appearance allocation separate and preserves source art and
 FaceImage orientation. Final MCP gate smoke passes nine requests, including
 creation, relocation, export and sprite publication, at
 /tmp/zircon-gate-final-mcp. Earlier sprite/map/wearable MCP runs remain valid.
-Remaining larger map and sprite scope is listed in EDITOR_PLAN.md; this batch
+Remaining larger map and sprite scope is listed in PLANS.md; this batch
 does not claim arbitrary layouts or automatic creation of polished new motion.
 
 ## Varied rooms, static thresholds, and painted outfits (2026-09-23)

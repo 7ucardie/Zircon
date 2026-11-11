@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
     let mut items: Vec<_> = data.items.values().collect();
     items.sort_by_key(|item| item.index);
     let mut exported = BTreeSet::new();
-    let mut csv = BufWriter::new(File::create(output.join("item_ids.csv"))?);
+    let mut csv = BufWriter::new(File::create(output.join("data/item_ids.csv"))?);
     writeln!(csv, "id,name,type,image")?;
     let mut catalog = Vec::with_capacity(items.len());
     for item in items {

@@ -1,4 +1,9 @@
-# Editor and content-generation plan
+# Plans
+
+The design plans used to build the editor, sprite authoring and generated rooms, merged into one document. Delivered behaviour is in [EDITOR](EDITOR.md) and [SPRITE_AUTHORING](SPRITE_AUTHORING.md).
+
+## 1. Editor and content generation
+
 
 Status: Phase 1 (writers) landed 2026-09-12 in `mir-formats`; phase 2's
 generic data editor (`mir-editor`: tables, form, previews, relations, undo,
@@ -14,7 +19,7 @@ an enclosed-chamber mode preserves complete authored perimeters, and seeded
 room-and-corridor drafts preserve passage clearance. Freeform boundary-wall
 synthesis, WFC and AI generators remain open.
 
-## What exists today
+### What exists today
 
 | Tool | Where | What it edits |
 |---|---|---|
@@ -28,14 +33,14 @@ The Rust editor edits game content in `System.db` and tiles/collision/light in
 `.map` files. Cave terrain drafts can also be generated and tested;
 sprite-library authoring and the remaining content generators are later stages. The C# tools remain the reference implementation.
 
-## Goal
+### Goal
 
 A single desktop tool, `mir-editor`, that edits everything the Rust game
 consumes: `System.db` records, `.map` tiles/flags, `.Zl` sprites, and can
 generate new content (maps, monsters, items) with procedural generators and
 AI assistance, always validating against the game's rules before saving.
 
-## Phase 1: writers (foundation) — done
+### Phase 1: writers (foundation) — done
 
 Landed: `MirDb::to_bytes/save` (byte-identical on the shipped `System.db`),
 `Collection::set/push_record`, `MapFile::to_bytes/save/blank/cell_mut` with
@@ -57,7 +62,7 @@ Original plan:
    Acceptance: re-encode `StoreItems.Zl`, decode, compare with a tolerance.
 4. Backups: every save writes `<file>.bak-<timestamp>` first.
 
-## Phase 2: data editor (`mir-editor` crate, egui/eframe)
+### Phase 2: data editor (`mir-editor` crate, egui/eframe)
 
 - Generic table editor built from the MirDB mapping (like the C# grids): sort,
   filter, add, delete, edit cells with typed widgets; foreign keys resolved by
@@ -75,7 +80,7 @@ Original plan:
 - Hot reload: `mir-server --reload` (SIGHUP or admin command) re-reads
   `System.db` so edits show up without restarting.
 
-### Map/region panel delivered 2026-09-14
+#### Map/region panel delivered 2026-09-14
 
 - Maps tab: searchable map selector, fit/zoom/pan, walkability from `MapFile`,
   red spawn regions, green safe zones, blue other regions and yellow selection.
@@ -91,7 +96,7 @@ Original plan:
   restart: existing hot reload updates data and existing spawn parameters,
   but does not rebuild map placement caches. Tile artwork is not edited here.
 
-## Phase 3: map editor — core delivered
+### Phase 3: map editor — core delivered
 
 The **Tiles** workspace now provides:
 
@@ -132,9 +137,9 @@ Original phase outline:
 - Region tools: paint bit regions for spawns, safe zones and movements; place
   NPCs; test-walk from inside the editor by launching the client on the map.
 
-## Phase 4: content generation
+### Phase 4: content generation
 
-### Maps (procedural first, AI for intent)
+#### Maps (procedural first, AI for intent)
 
 Landed 2026-09-14: **Tiles → Generate cave draft** accepts an even size
 32–256 and a seed. Cellular automata retain the largest connected component;
@@ -213,7 +218,7 @@ future work.
    the LLM never writes tiles directly. Names, descriptions and quest hooks
    also come from the model.
 
-### Monsters
+#### Monsters
 
 Stat drafting landed 2026-09-14. The MonsterInfo detail panel previews a
 named variant at a target level before creating the new monster and linked
@@ -273,7 +278,7 @@ account progress and group adjustments are not simulated and odds are not tuned.
    image model with a sprite-sheet control net, reviewed frame by frame in the
    editor before import. Ship (a) and (b) first; treat (c) as research.
 
-### Sprite authoring delivered 2026-09-15
+#### Sprite authoring delivered 2026-09-15
 
 MonsterInfo now previews recolour/rescale variants and exports all 1000 slots of
 one shape into a complete private replacement library. Other shapes stay raw;
@@ -282,7 +287,7 @@ folders and original asset roots. It does not allocate a new MonsterImage ID:
 all records sharing the existing Image use the override. Part mixing and AI
 sprite-sheet generation remain open.
 
-### Items
+#### Items
 
 Local equipment drafts landed 2026-09-15: minimum-level weapons, armour and
 combat accessories use same-slot/class/rarity median core budgets, with bounded
@@ -296,7 +301,7 @@ icons and broader requirement support remain open.
 2. Icons: recoloured shipped icons or generated 36x36 icons via the same
    review-and-import path; ground sprites likewise.
 
-### Wall-piece authoring delivered 2026-09-15
+#### Wall-piece authoring delivered 2026-09-15
 
 Named reusable wall/corner/doorway/formation pieces now save all cell data to
 bounded versioned files, load across maps, and stamp as one undo operation.
@@ -307,7 +312,7 @@ Selections and joins remain manual. A category label does not provide doorway
 ports or corner compatibility. Automatic wall/corner/doorway synthesis and a
 complete verified kit remain open; see WALL_ASSEMBLY.md.
 
-### Explicit piece connections delivered 2026-09-15
+#### Explicit piece connections delivered 2026-09-15
 
 Pieces now declare cardinal edge openings with offset, width and an explicit
 compatibility profile. Collision validation checks opening depth and routes
@@ -321,7 +326,7 @@ corner route/rejection cases are covered. Automatic art compatibility, a full
 verified corner/door kit and arbitrary
 perimeter synthesis remain open.
 
-### Recessed connections delivered 2026-09-15
+#### Recessed connections delivered 2026-09-15
 
 Version 3 piece files retain inset connections along concave coverage boundaries.
 Joins preserve unused recessed openings and can fill them with further pieces.
@@ -332,7 +337,7 @@ native source-floor rendering were checked. This is composition support; the
 complete visually verified wall/corner/doorway kit and automatic perimeter
 assembly remain open.
 
-### Checked starter kits and candidate browser delivered 2026-09-15
+#### Checked starter kits and candidate browser delivered 2026-09-15
 
 The editor can capture a real D1006 convex north wall corner and its two
 source-adjacent approaches, plus a separate `0_000` palace doorway with its
@@ -350,7 +355,7 @@ Export validates all pieces first and writes only to a new directory, retaining
 asset references. Automatic perimeter generation and automatic visual seam
 compatibility remain open.
 
-### Extended north and checked south kits delivered 2026-09-15
+#### Extended north and checked south kits delivered 2026-09-15
 
 The north starter now has five pieces: the original NW approach and north
 corner, a deeper NE approach, the authored NE bend and a terminal wall body.
@@ -374,7 +379,7 @@ Further NW/NE wall repetition intersects neighboring decoration in D1006;
 see WALL_ASSEMBLY.md for exact constraints. A complete compatible perimeter
 kit and automatic perimeter generation remain open.
 
-### Whole-kit assembly delivered 2026-09-15
+#### Whole-kit assembly delivered 2026-09-15
 
 **Assemble whole kit** starts from the first catalogue entry and consumes each
 of at most 16 entries once. Each step requires exactly one fully valid next
@@ -393,7 +398,7 @@ This automates assembly of an authored kit. It does not infer visual seams,
 resolve ambiguous routes, supply a missing Wood doorway or generate a complete
 perimeter. The bounded doorway investigation is recorded in WALL_ASSEMBLY.md.
 
-### Source-specific Wood wall perimeter delivered 2026-09-16
+#### Source-specific Wood wall perimeter delivered 2026-09-16
 
 D1008 supplies checked repeatable bodies for all four diagonal orientations and
 four compatible authored corners. Source fingerprints, full-frame bounds and
@@ -445,11 +450,11 @@ Twelve stdio [MCP authoring tools](MCP_AUTHORING.md), including `world_perimeter
 41 JSON-RPC requests covering all twelve tools under
 `/tmp/zircon-connected-mcp`. `world_perimeter` accepts `rooms: 2` for a connected
 room bundle and defaults to one room. New silhouettes and animation import are
-planned in [SPRITE_AUTHORING_PLAN.md](SPRITE_AUTHORING_PLAN.md); existing sprite
+planned in [PLANS.md](PLANS.md); existing sprite
 recolour/rescale exports are delivered. New sprite import/creation remains a
 separate planned phase.
 
-## Milestones
+### Milestones
 
 | # | Deliverable | Visible result |
 |---|---|---|
@@ -463,7 +468,7 @@ separate planned phase.
 
 Each milestone lands as its own commit with CI green and a screenshot.
 
-## Decisions to confirm
+### Decisions to confirm
 
 - Editor UI: egui/eframe desktop app (single binary, no web stack) is the
   proposal; the alternative is a web UI served by the server.
@@ -473,7 +478,7 @@ Each milestone lands as its own commit with CI green and a screenshot.
   time, so shipped data stays untouched and a bad generation is one file
   delete away.
 
-## Delivered: first original sprite-authoring workflow
+### Delivered: first original sprite-authoring workflow
 
 PNG/reference export, explicit image/sheet imports, missing-slot authoring,
 runtime animation validation, editor playback preview, library builds and private
@@ -484,7 +489,7 @@ This supersedes earlier notes calling the entire sprite workflow planned;
 additional animation rigs and art-production features remain outside this slice.
 The user requested stopping after this task to conserve their weekly allowance.
 
-## Follow-up: item scale and wearable clothing
+### Follow-up: item scale and wearable clothing
 
 The user resumed work and noted that items looked small and clothing should have
 its own appearance. Item import now has explicit visible-art fitting and new
@@ -497,7 +502,7 @@ that Shape. Clothing authoring needs its own male/female/class-compatible body
 contracts, equipment layers and native equipped-motion review. Do not present a
 new clothing icon as a new wearable outfit.
 
-## Delivered follow-up: clothing, maps, sprite production and polish (2026-09-22)
+### Delivered follow-up: clothing, maps, sprite production and polish (2026-09-22)
 
 The user authorized these workstreams in that order, with independent tasks in
 parallel. This supersedes the earlier instruction to stop after item scaling.
@@ -529,7 +534,7 @@ rigs and an integrated drawing/compositing editor remain outside the delivered
 sprite tools. AI prompt-to-map orchestration (item 3) was not requested in this
 batch. See RECOVERY.md for exact checks and native artifacts.
 
-## Follow-up: varied Wood rooms and static thresholds (2026-09-23)
+### Follow-up: varied Wood rooms and static thresholds (2026-09-23)
 
 Connected Wood rooms now accept independent NW/NE wall repeats for each of two
 or three rooms. The editor restores these sizes from saved layout metadata.
@@ -553,7 +558,7 @@ This reuses source art rather than adding a bespoke Wood door sprite; it has
 no castle ownership or repair behavior. See [MCP authoring](MCP_AUTHORING.md)
 for placement and protocol requirements.
 
-## Follow-up: branched custom Wood walls (2026-09-23)
+### Follow-up: branched custom Wood walls (2026-09-23)
 
 `world_branch` now exports a T-shaped playable map with independently sized
 west, north and east passages (2–8 floor blocks each). It appends 64 generated
@@ -565,7 +570,7 @@ branch renders. The repeated stone texture remains draft art. Other branch
 graphs, organic perimeters and a general-purpose wall drawing UI remain larger
 authoring work.
 
-## Follow-up: connected Wood graphs, private art, and sprite motion (2026-09-23)
+### Follow-up: connected Wood graphs, private art, and sprite motion (2026-09-23)
 
 The earlier remaining-work notes above describe prior checkpoints. MCP
 `world_branch` now supports T, Y, cross, and connected graphs of 2–12 rooms
@@ -587,7 +592,7 @@ mounted captures. Their flat procedural artwork is a working authoring example,
 not final hand-painted clothing. Automatic pose design, arbitrary rigs, and
 production sprite illustration remain separate art work.
 
-## Current authoring pass (2026-09-23)
+### Current authoring pass (2026-09-23)
 
 The prior checkpoint above is superseded for these four items:
 
@@ -614,3 +619,192 @@ Private map and database asset views must be combined deliberately. An explicit
 `assets` path is caller-managed and must contain each required private library.
 Saving a map outside its bundle retains Wood art but does not also copy other
 private sprite libraries from that bundle.
+
+
+## 2. Original sprite authoring
+
+
+Status: the first authoring workflow and Jade Beetle demonstration are implemented.
+See [SPRITE_AUTHORING.md](SPRITE_AUTHORING.md) for the delivered behavior and
+limitations. The sections below retain the design and later-work scope.
+
+The installed assets provide animation layouts, frame timing, viewing directions,
+foot anchors, shadows, overlays, palette and scale references. Those are useful
+constraints for making new art. Recolouring or resizing an existing monster is
+already supported by `sprite_variant.rs`; genuinely new silhouettes and motion
+need an authoring workflow and visual review across the entire animation.
+
+### Deliverable and first scope
+
+Start with a new static item icon and one small eight-direction monster using an
+existing animation contract. Keep the original libraries read-only. Export each
+new asset as a separate versioned pack, with an import manifest mapping new
+ItemInfo/MonsterInfo records to the generated library and frame slots. Do not
+change the renderer to accommodate an inconsistent asset.
+
+1. **Reference and animation inventory.** Export a contact sheet and JSON contract
+   for a selected library: every action, direction, frame index/duration, empty
+   slot, image/shadow/overlay dimensions, foot anchor and offsets. Resolve frame
+   layouts from the same action tables the client uses. Record source library
+   checksums so later builds cannot silently use a different pack.
+2. **Editable authoring package.** Export lossless PNG layers and a manifest into
+   a new folder. Keep absent slots distinct from transparent frames. Support
+   authored PNG imports and a sprite-sheet importer with explicit cell dimensions
+   and action/direction mapping. Preserve scale and ground-contact guides.
+3. **New artwork.** Allow manual pixel-art drawing, part composition from selected
+   reference frames, and optional AI-generated concepts/frames. The AI receives
+   the animation contract and contact sheets; it produces editable PNGs, never
+   writes raw library indices or live game records. Start with a static icon,
+   then a single facing idle/walk cycle before expanding to all required actions.
+4. **Consistency checks and editor preview.** Reject missing required directions,
+   duplicate/conflicting slots, oversized surfaces, incompatible transparency,
+   out-of-range offsets and missing shadow/overlay declarations. Preview actions
+   in a loop with a ground grid, foot-anchor marker, original-reference toggle
+   and contact sheets. Check flicker, body-size drift, foot sliding and shadows
+   visually; dimensional validation alone cannot establish motion quality.
+5. **Pack builder.** Feed validated frames through the existing ZlBuilder codec.
+   Roundtrip-decode each written slot, compare alpha/shape within compression
+   tolerance, preserve slot numbering and explicit blanks, and export to a new
+   pack. Neutral export of an untouched source must preserve its raw slots.
+6. **Game integration.** Allocate an unused appearance mapping supported by the
+   client asset resolver and create draft ItemInfo/MonsterInfo records in a new
+   database snapshot. Show all actions in the editor, then spawn the monster in
+   an isolated Test Walk bundle. Keep balance and drops separate from artwork.
+
+### MCP extension
+
+Expose `sprite_reference`, `sprite_export_project`, `sprite_validate_project`,
+`sprite_build_pack`, and `sprite_preview_sheet` after the underlying authoring
+operations exist and are tested. Inputs and output PNG paths stay within the MCP
+project; installed libraries are only reference inputs. Return structured frame
+errors so an AI can repair one action/direction instead of regenerating an entire
+library. New packs and database revisions are explicit outputs; publication or
+replacement of installed assets remains a separate user action.
+
+### Completion criteria
+
+A new item icon and a recognizably new monster can be authored/imported, validated,
+previewed, packaged, linked to new database records and seen in the running client.
+All required idle, movement, attack, hit and death slots for the chosen contract
+work in every required direction; empty/unused slots remain valid. Rebuilds are
+repeatable from the authoring folder. Existing assets and render quality remain
+unchanged. AI-assisted motion generation is optional; it must pass the same
+contract and visual checks as hand-authored frames.
+
+Later work: multiple body-part layers and equipment variants, additional action
+contracts, palette tools, batch pack generation, animated effects and shared
+project manifests. Arbitrary new animation rigs are outside this initial scope.
+
+
+## 3. Wood perimeter generation
+
+
+Status: closed single-room and connected two-room Wood generation are implemented
+and visually checked. Final server traversal proof and consolidated verification
+are being recorded.
+This document describes the delivered recipes and remaining verification; it
+is not a claim of arbitrary room-outline or doorway synthesis.
+
+### Checked source roles
+
+D1008 supplies four repeatable diagonal wall bodies and four convex corner
+groups. Each retains complete source cells, collision, ground backing and wall
+art. Source fingerprints and all-frame bounds protect captures, including
+artwork anchored outside the selection. Neither sprites nor indices are rotated
+or mirrored. Ground variants can differ between repeated bodies; the tests
+separately establish exact source capture and matching repeated collision.
+
+The checked body and corner coordinates are recorded in
+[WALL_ASSEMBLY.md](WALL_ASSEMBLY.md), with implementation in
+`wood_wall_bodies.rs` and `wood_perimeter_kit.rs`. The earlier decorated D1006
+north/south kits remain reusable authored groups; their nonrepeatable approaches
+are not used as generic perimeter bodies.
+
+### Geometry and atomic composition
+
+`wood_perimeter.rs` places the west corner, NW bodies, north corner, NE bodies,
+east corner, SE bodies, south corner and SW bodies in clockwise order. NW and
+NE counts each accept 3–10. Measured corner approaches require SE=NW+2 and
+SW=NE. Accumulated even-grid translations must return exactly to the first seam.
+All 64 supported count combinations pass source-backed generation checks.
+
+`piece_composition.rs` accepts fixed placements and explicit seam pairs. It
+validates canvas bounds, complete asset frames, even placement, unique ownership,
+unique seam endpoints, profiles, widths and exact world alignment. Every paired
+endpoint is consumed simultaneously, permitting cycles without weakening
+`Piece::join`'s unused-port checks. The seam graph and walkable floor must be
+connected; remaining ports must face unowned space. A failed composition does
+not publish a partial map. A successful composition uses one document stamp.
+
+Limits are 64 placements, 512 seams and an even canvas of 2–256 cells per side.
+Covered cells cannot overlap; transparent coverage padding can. The resulting
+Document can exceed the reusable Piece format's 64×64 size limit without
+changing that format. Port profile equality is a geometry declaration; the
+built-in recipe additionally depends on reviewed body/corner artwork seams.
+
+### Interior, enclosure and persisted metadata
+
+The generator starts from blocked empty space and reserves each group's complete
+2×2 owned blocks. Flooding unowned blocks from outside identifies the exterior;
+only unowned blocks enclosed by the ring receive undecorated source floor from
+`generate::paint_floor`. Perimeter collision and artwork are never overwritten
+by the fill. Exterior blocks must remain nonwalkable. Final layout validation
+requires at least 64 walkable cells, one connected floor component and blocked
+map-border cells.
+
+The editor exposes **Wood wall perimeter** separately from **Enclosed chamber**,
+which copies a whole authored source room. `Layout.wall_repeats` records the
+counts; `Layout.wall_rooms` distinguishes one or two generated rooms and
+restores the mode on reload. Older layouts default to no repeat/room metadata. Existing navigation, export, private database bundles and Test Walk
+operate on the resulting map. `world_perimeter` exposes the same recipe through
+[MCP authoring](MCP_AUTHORING.md).
+
+Whole 48×54 and 58×64 rooms passed native editor/client inspection. Evidence is
+under `/tmp/zircon-perimeter-first`, with individual body and corner fixtures
+under `/tmp/zircon-wall-bodies-verified` and `/tmp/zircon-perimeter-kit-verified`.
+Final consolidated validation totals belong in [RECOVERY.md](RECOVERY.md).
+
+### Physical passage extension
+
+The game's teleport triggers do not create physical openings in a wall. The
+single-room recipe currently closes every wall and uses existing portal metadata.
+A physical entry needs complete wall ends plus a bounded landing, another room
+or a terminating corridor. An unexplained walkable breach to the canvas border
+is not a completed room connection.
+
+Two authored entry groups are available. The D10032 16×38 entry retains a whole
+room/corridor junction and uses its own profiles. The D1008 20×32 masked group in
+`wood_wall_entry.rs` retains a real passage between two complete wall turns and
+has four body-compatible seams: west NE, recessed east NW, east SE and east NE.
+Its exact source capture, four attached body seams and native source/isolated
+views pass. All four wall ends require surrounding geometry; it cannot replace
+one straight segment of the single-room recipe.
+
+Two clean D1008 concave turns also have passing source/body collision tests and
+native inspections: a 6×10 valley transitions NE to NW, and a 6×10 notch
+transitions SE to SW. `wood_connected.rs` now uses these with six convex corners
+and repeated bodies to form one closed outline around two rooms. Both NW and NE
+counts accept 3–6, giving 16 checked combinations.
+
+The concave origins must be separated by exactly 14 rows. A 6×4 rectangle of
+walkable floor between their complete collars forms the physical passage.
+Tests verify every floor cell is reachable, each side contains a substantial
+room, and blocking the passage column separates the two sides. The composer and
+interior fill retain the same ownership and enclosure guarantees as the single
+room. The separately captured four-seam junction is not used by this recipe.
+
+The UI mode is **Wood connected rooms**, selected by
+`ZIRCON_CAVE_MODE=wood-connected`; metadata uses `wall_rooms: 2` with the two
+repeat counts. MCP `world_perimeter` accepts `rooms: 2` and defaults to one room.
+Native editor/client inspection passed for the bundle under
+`/tmp/zircon-connected-mcp/connected`; the maximum 6/6 case passed under
+`/tmp/zircon-connected-final/{editor-6-6,game-6-6}.png`. The real-process MCP smoke run passed 41
+requests covering all twelve tools. A real actor and observer client verified
+16 authoritative walking steps through the passage with teleport routes disabled.
+The bounded Wood perimeter/physical-entry phase is complete. Consolidated checks
+are recorded in RECOVERY.md; this does not mark the whole editor roadmap complete.
+
+Arbitrary BSP and organic outlines need additional authored geometry recipes.
+Original sprite creation is a separate planned workflow in
+[PLANS.md](PLANS.md); renderer changes are not
+required by the completed wall recipe.

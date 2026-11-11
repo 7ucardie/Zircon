@@ -1,13 +1,13 @@
 # Installed equipment appearance audit
 
-[`equipment_appearance_audit.csv`](equipment_appearance_audit.csv) crosswalks every installed `ItemInfo` weapon, armour, helmet, shield, boot, and horse armour against the original C# `PlayerObject` library keys, Rust's runtime mapping, and the installed source sprite at the standing frame. Rows cover each gender and Assassin/non-Assassin rendering path. The CSV records the database's required class and gender flags; ineligible combinations are explicitly marked.
+[`equipment_appearance_audit.csv`](data/equipment_appearance_audit.csv) crosswalks every installed `ItemInfo` weapon, armour, helmet, shield, boot, and horse armour against the original C# `PlayerObject` library keys, Rust's runtime mapping, and the installed source sprite at the standing frame. Rows cover each gender and Assassin/non-Assassin rendering path. The CSV records the database's required class and gender flags; ineligible combinations are explicitly marked.
 
 Regenerate after changing the installed database or sprite collection:
 
 ```sh
 cd rust
 cargo run -q -p mir-formats --example equipment_audit -- \
-  /path/to/Database/System.db /path/to/Client > docs/equipment_appearance_audit.csv
+  /path/to/Database/System.db /path/to/Client > docs/data/equipment_appearance_audit.csv
 ```
 
 The current source pack has **zero C#–Rust library mismatches** across 1,226 rows. Of eligible paths, 498 have their standing sprite, 80 boots have no separate world layer in either client, 24 have no C# world mapping, 8 Royal/Blue Dragon horse-armour paths lack their source libraries, and 4 Assassin helmet paths lack the mapped source frame. The remaining 612 rows are ineligible class/gender combinations. The unmapped items are four shape-0 helmets and four shape-1000 thuribles; the thuribles still have their separate C# exterior effect. The missing frames are Assassin appearances for Headcover Of The Dragon Lord (ID 905) and Helmet Of Dragon Abyss (ID 935). This report distinguishes absent authored art from a wrong Rust library mapping; it does not claim every animation frame is present.

@@ -306,7 +306,7 @@ exterior cells. All 64 supported count combinations pass source-backed checks.
 Saved `wall_repeats` metadata restores the recipe parameters. Enclosed-layout
 validation now rejects all walkable map-border cells, including connected
 breaches from later edits. This is a newly assembled wall ring, not a copied
-whole source chamber. See [PERIMETER_DESIGN.md](PERIMETER_DESIGN.md).
+whole source chamber. See [PLANS.md](PLANS.md).
 
 The larger D10032 entry investigation also succeeded after replacing a
 rectangle with complete 2x2 ownership blocks. The seed rectangle
